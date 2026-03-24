@@ -1,0 +1,54 @@
+company,current_folder,provider_name,supplier_code,destination_path,notes,sender_emails
+"ARTESTA STORE, S.L.",ADOBE,ADOBE SYSTEMS SOFTWARE IRELAND LTD,ADOBE,expenses/opex/technology,,
+"ARTESTA STORE, S.L.","AP Photo","A P PHOTO INDUSTRIES, S.L.",APPHOTOES,expenses/cogs/manufacturing,,apphoto@apphoto.es
+"ARTESTA STORE, S.L.","AP Photo","A P PHOTO CANARIAS, S.L.",APPHOTOCAN,expenses/cogs/manufacturing,IGIC 7%,info@apphoto.net
+"ARTESTA STORE, S.L.",canva,CANVA PTY. LTD.,CANVA,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",chatgpt,OPENAI,OPENAI,expenses/opex/technology,Groups ChatGPT and API,
+"ARTESTA STORE, S.L.",CLARIS,"CLARIS GESTIO I DOCUMENTACIO, S.L.",CLARIS,expenses/opex/administration,,
+"ARTESTA STORE, S.L.",Correos,CORREOS,CORREOS,expenses/cogs/logistics,Peninsula/Baleares 21% IVA,
+"ARTESTA STORE, S.L.",Correos,CORREOS CANARIAS,CORREOSCAN,expenses/cogs/logistics,Canarias 7% IGIC,
+"ARTESTA STORE, S.L.",DCT,DCT GMBH,DCT,expenses/cogs/manufacturing,,
+"ARTESTA STORE, S.L.",GLS,GLS,GLS,expenses/cogs/logistics,OCR-based GLS parser via scanned PDF,info@rgtmensajeros.com
+"ARTESTA STORE, S.L.",godaddy,GODADDY,GODADDY,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Google,GOOGLE WORKSPACE,GOOGLEWORKSPACE,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Google,GOOGLE ADS,GOOGLEADS,expenses/opex/marketing,,
+"ARTESTA STORE, S.L.",Gorgias,GORGIAS INC,GORGIAS,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",HETZNER,HETZNER ONLINE GMBH,HETZNER,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",HANNUN,HANNUN,HANNUN,expenses/opex/administration,Bidirectional HANNUN relationship; incoming expense invoices and outgoing customer invoices,
+"ARTESTA STORE, S.L.",konvo,KONVO AI,KONVOAI,expenses/opex/technology,,
+"ARTESTA STORE, S.L.","mas movil","XFERA MOVILES, S.A.U.",MASMOVIL,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Meta,META PLATFORMS IRELAND LIMITED,METAADS,expenses/opex/marketing,,
+"ARTESTA STORE, S.L.",MICROSOFT,MICROSOFT IBERICA S.R.L.,MICROSOFT,expenses/opex/technology,,
+"ARTESTA STORE, S.L.","NODA Asesores","ASESORIA FISCAL NODA Y ASOCIADOS, S.L.",NODA,expenses/opex/administration,,
+"ARTESTA STORE, S.L.",Pressing,"PRESSING IMPRESSIO DIGITAL, S.A.",PRESSING,expenses/cogs/manufacturing,,
+"ARTESTA STORE, S.L.",ProductHERO,PRODUCTHERO,PRODUCTHERO,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",RAILWAY,RAILWAY CORPORATION,RAILWAY,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",QHANDS,QHANDS,QHANDS,income/shared-services,Outgoing CNC rental invoice,
+"ARTESTA STORE, S.L.",TOASTY,TOASTY,TOASTY,income/sales/marketplaces,Outgoing partner invoice,
+"ARTESTA STORE, S.L.",CHOOSE,CHOOSE,CHOOSE,income/sales/marketplaces,Outgoing partner invoice,
+"ARTESTA STORE, S.L.","709. Rappels",HOME DESIGN LABS S.L.,LIVITUM,income/other_income/rappels,Rappel issued to Livitum,
+"ARTESTA STORE, S.L.",Artlink,ART LINK BALTIC OU,ARTLINK,expenses/cogs/manufacturing,Frame purchases and related freight are treated as manufacturing,
+"ARTESTA STORE, S.L.",REVER,REVER,REVER,expenses/opex/technology,,
+"ARTESTA STORES (UK) LTD",REVER,REVER,REVER,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Artistas,ARTIST ROYALTIES,ROYALTIES,expenses/cogs/royalties,Artist royalties received and issued by Artesta,
+"ARTESTA STORE, S.L.",Shopify,SHOPIFY,SHOPIFY,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",SPRING,"INTERNATIONAL MAIL (SPAIN), S.L.",SPRINGGDS,expenses/cogs/logistics,Spring operating brand,
+"ARTESTA STORE, S.L.",TORRAS,"TORRAS ABOGADOS Y ECONOMISTAS ASOCIADOS, S.L.P.",TORRAS,expenses/opex/administration,,
+"ARTESTA STORE, S.L.",Nóminas,DOS CONSULTING,DOSCONSULTING,expenses/opex/staff,Monthly payroll management for SL,"[\"amaya@dosconsulting.net\", \"gemma@dosconsulting.net\", \"rosario@dosconsulting.net\"]"
+"ARTESTA STORE, S.L.",UPS,UPS,UPS,expenses/cogs/logistics,,"[\"rechnungswesen@ups.com\", \"defcr@ups.com\", \"importinfo@ups.com\"]"
+"ARTESTA STORE, S.L.",Vitaly,"VITALY HEALTH SERVICES, S.L.",VITALY,expenses/opex/administration,Annual prevention and occupational health service,
+"ARTESTA STORE, S.L.",YUMA,YUMA AI,YUMAAI,expenses/opex/technology,,
+"ARTESTA STORES (UK) LTD",Proco,PRECISION PRINTING CO. LTD,PROCO,expenses/cogs/manufacturing-logistics,Trading name PROCO,enquiries@precisionproco.co.uk
+"ARTESTA STORES (UK) LTD",Artlink,ART LINK BALTIC OU,ARTLINK,expenses/cogs/manufacturing,Frame purchases and related freight are treated as manufacturing,anu@artlink.ee
+"ARTESTA STORES (UK) LTD","port clearence",PORT CLEARANCE SERVICES LTD,PORTCLEARANCE,expenses/cogs/manufacturing,Import customs and clearance for frame purchases,
+"ARTESTA STORES (UK) LTD",202601_jondogo,JONDO UK,JONDO,expenses/cogs/manufacturing-logistics,,
+"ARTESTA STORES (UK) LTD",202602_jondogo,JONDO UK,JONDO,expenses/cogs/manufacturing-logistics,,
+"ARTESTA STORES (UK) LTD","Shared Services","ARTESTA STORE, S.L.",SHAREDSERVICESSL,expenses/opex/shared-services,Intercompany,
+"ARTESTA STORES (UK) LTD","Your Accounts and Taxes",YOUR ACCOUNTS AND TAXES,YOURACCOUNTSTAXES,expenses/opex/administration,UK accountancy and tax services,
+"ARTESTA INC",Continuum,CONTINUUM ADVISORY LLC,CONTINUUM,expenses/opex/administration,,
+"ARTESTA INC",iPostal,IPOSTAL1,IPOSTAL,expenses/opex/administration,Virtual mailbox and mailing address service,support@ipostal1.com
+"ARTESTA INC",QuickBooks,INTUIT INC.,QUICKBOOKS,expenses/opex/administration,Accounting software subscription,quickbooks@notification.intuit.com
+"ARTESTA INC",regus,REGUS,REGUS,expenses/opex/administration,,
+"ARTESTA INC",TGI,TODAY'S GRAPHICS INC,TGI,expenses/cogs/manufacturing-logistics,,
+"ARTESTA INC",tgi,TODAY'S GRAPHICS INC,TGI,expenses/cogs/manufacturing-logistics,,
+"ARTESTA INC",HANNUN,"ARTESTA STORE, S.L.",SHAREDSERVICESSL,expenses/opex/shared-services,Intercompany shared services,
