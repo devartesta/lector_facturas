@@ -621,7 +621,7 @@ def _fill_ltd_formulas(
         ws[f"{col}{pos['otros_gastos']}"] = f'=SUMIFS(\'g-expenses-ltd\'!$K:$K,\'g-expenses-ltd\'!$A:$A,{col}$1,\'g-expenses-ltd\'!$D:$D,"otros_gastos")'
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['shared_services']}+{col}{pos['administration']}+{col}{pos['technology']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
-        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}+{col}{pos['diferencias_divisas']}"
+        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}-{col}{pos['diferencias_divisas']}"
         ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
 
     for row_idx in range(4, pos["profit_pct"] + 1):

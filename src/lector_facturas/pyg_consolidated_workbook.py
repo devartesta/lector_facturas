@@ -420,7 +420,7 @@ def _compose_row(
     contributive_margin = turnover - cogs
     opex = marketing + staff + shared_services + administration + technology + otros_gastos
     expenses = cogs + opex
-    profit = turnover - expenses + diferencias_divisas
+    profit = turnover - expenses - diferencias_divisas
     return ConsolidatedEntityMonth(
         company_code=company_code,
         yyyymm=yyyymm,

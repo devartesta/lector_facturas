@@ -882,7 +882,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['otros_gastos']}"] = f'=SUMIFS(\'g-expenses-sl\'!$K:$K,\'g-expenses-sl\'!$A:$A,{col}$1,\'g-expenses-sl\'!$D:$D,"otros_gastos")'
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['marketing_header']}+{col}{pos['staff_header']}+{col}{pos['administration_header']}+{col}{pos['technology_header']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
-        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}+{col}{pos['diferencias_divisas']}"
+        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}-{col}{pos['diferencias_divisas']}"
         ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
     for row in range(4, pos["profit_pct"] + 1):
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
