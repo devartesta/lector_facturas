@@ -466,8 +466,7 @@ def _main_sheet(wb: Workbook, bundle: PygIncDataBundle) -> None:
     for idx, market in enumerate(DEFAULT_SALES_MARKETS):
         ws[f"A{row + idx}"] = f"      {market}"
     row += len(sales_rows)
-    pos["otros_ingresos"] = row; ws[f"A{row}"] = "  Otros ingresos"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Diferencias divisas"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["otros_ingresos"] = row; ws[f"A{row}"] = "  Otros ingresos"; ws[f"A{row}"].font = BOLD; row += 2
 
     pos["expenses"] = row; ws[f"A{row}"] = "Expenses"; ws[f"A{row}"].font = BOLD; row += 1
     pos["cogs"] = row; ws[f"A{row}"] = "  COGS"; ws[f"A{row}"].font = BOLD; row += 1
@@ -511,7 +510,8 @@ def _main_sheet(wb: Workbook, bundle: PygIncDataBundle) -> None:
     for idx, supplier in enumerate(DEFAULT_TECH_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(technology_rows)
-    pos["otros_gastos"] = row; ws[f"A{row}"] = "    Otros gastos"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["otros_gastos"] = row; ws[f"A{row}"] = "    Otros gastos"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Diferencias divisas"; ws[f"A{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
     pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD
 
@@ -589,7 +589,7 @@ def _fill_inc_formulas(
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-shopify-inc\'!$I:$I,\'i-shopify-inc\'!$A:$A,{col}$1,\'i-shopify-inc\'!$C:$C,TRIM($A{row}))'
         ws[f"{col}{pos['shopify']}"] = f"=SUM({col}{sales_rows[0]}:{col}{sales_rows[-1]})"
         ws[f"{col}{pos['product_sales']}"] = f"={col}{pos['shopify']}"
-        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['otros_ingresos']}+{col}{pos['diferencias_divisas']}"
+        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['otros_ingresos']}"
 
         for row in manufacturing_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'g-expenses-inc\'!$K:$K,\'g-expenses-inc\'!$A:$A,{col}$1,\'g-expenses-inc\'!$D:$D,"manufacturing",\'g-expenses-inc\'!$E:$E,TRIM($A{row}))'
@@ -621,7 +621,7 @@ def _fill_inc_formulas(
         ws[f"{col}{pos['otros_gastos']}"] = f'=SUMIFS(\'g-expenses-inc\'!$K:$K,\'g-expenses-inc\'!$A:$A,{col}$1,\'g-expenses-inc\'!$D:$D,"otros_gastos")'
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['shared_services']}+{col}{pos['administration']}+{col}{pos['technology']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
-        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}"
+        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}+{col}{pos['diferencias_divisas']}"
         ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
 
     for row_idx in range(4, pos["profit_pct"] + 1):
@@ -704,8 +704,7 @@ def _count_sheet_inc(wb: Workbook, bundle: PygIncDataBundle) -> None:
     for idx, market in enumerate(DEFAULT_SALES_MARKETS):
         lbl("C", row + idx, market)
     row += len(DEFAULT_SALES_MARKETS)
-    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 1
-    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 2
+    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 2
 
     pos["expenses"] = row; lbl("A", row, "Expenses", bold=True); row += 1
     pos["cogs"] = row; lbl("B", row, "COGS", bold=True); row += 1
@@ -747,6 +746,7 @@ def _count_sheet_inc(wb: Workbook, bundle: PygIncDataBundle) -> None:
         lbl("C", row + idx, supplier)
     row += len(DEFAULT_TECH_LINES)
     pos["otros_gastos"] = row; lbl("C", row, "Otros gastos", bold=True); row += 1
+    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 1
     max_data_row = row - 1
 
     # Write counts
@@ -756,8 +756,6 @@ def _count_sheet_inc(wb: Workbook, bundle: PygIncDataBundle) -> None:
 
     write_counts(pos["otros_ingresos"], lambda yyyymm: 1 if yyyymm in bundle.otros_ingresos_by_period else 0)
     leaf_rows.append(pos["otros_ingresos"])
-    write_counts(pos["diferencias_divisas"], lambda yyyymm: 1 if yyyymm in bundle.diferencias_divisas_by_period else 0)
-    leaf_rows.append(pos["diferencias_divisas"])
 
     for r, supplier in zip(manufacturing_rows_list, DEFAULT_MANUFACTURING_LINES):
         write_counts(r, lambda yyyymm, s=supplier: exp_sc[("manufacturing", s)][yyyymm])
@@ -791,10 +789,13 @@ def _count_sheet_inc(wb: Workbook, bundle: PygIncDataBundle) -> None:
     write_counts(pos["otros_gastos"], lambda yyyymm: otros_gastos_counts[yyyymm])
     leaf_rows.append(pos["otros_gastos"])
 
+    write_counts(pos["diferencias_divisas"], lambda yyyymm: 1 if yyyymm in bundle.diferencias_divisas_by_period else 0)
+    leaf_rows.append(pos["diferencias_divisas"])
+
     # Aggregate rows
     write_sum_rows(pos["shopify_header"], sales_rows_list)
     write_sum_rows(pos["product_sales"], sales_rows_list)
-    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["otros_ingresos"], pos["diferencias_divisas"]])
+    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["otros_ingresos"]])
     write_sum_rows(pos["manufacturing_header"], manufacturing_rows_list)
     write_sum_rows(pos["logistics_header"], logistics_rows_list)
     write_sum_rows(pos["payment_fees_header"], payment_fee_rows_list)

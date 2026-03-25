@@ -629,8 +629,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
     for idx, code in enumerate(service_codes):
         ws[f"C{row + idx}"] = code
     row += len(service_codes)
-    pos["otros_ingresos"] = row; ws[f"B{row}"] = "Otros ingresos"; ws[f"B{row}"].font = BOLD; row += 1
-    pos["diferencias_divisas"] = row; ws[f"B{row}"] = "Diferencias divisas"; ws[f"B{row}"].font = BOLD; row += 2
+    pos["otros_ingresos"] = row; ws[f"B{row}"] = "Otros ingresos"; ws[f"B{row}"].font = BOLD; row += 2
 
     pos["expenses"] = row; ws[f"A{row}"] = "Expenses"; ws[f"A{row}"].font = BOLD; row += 1
     pos["cogs"] = row; ws[f"B{row}"] = "COGS"; ws[f"B{row}"].font = BOLD; row += 1
@@ -701,7 +700,8 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
     for idx, supplier in enumerate(groups["technology"]):
         ws[f"C{row + idx}"] = supplier
     row += len(technology_rows)
-    pos["otros_gastos"] = row; ws[f"C{row}"] = "Otros gastos"; ws[f"C{row}"].font = BOLD; row += 2
+    pos["otros_gastos"] = row; ws[f"C{row}"] = "Otros gastos"; ws[f"C{row}"].font = BOLD; row += 1
+    pos["diferencias_divisas"] = row; ws[f"B{row}"] = "Diferencias divisas"; ws[f"B{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
     pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD
 
@@ -836,7 +836,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['supplies_header']}"] = f"={col}{pos['supplies_detail']}"
         ws[f"{col}{pos['services_header']}"] = f"=SUM({col}{service_rows[0]}:{col}{service_rows[-1]})"
         ws[f"{col}{pos['product_sales']}"] = f"={col}{pos['shopify_header']}+{col}{pos['marketplaces_header']}+{col}{pos['rappels_header']}+{col}{pos['supplies_header']}"
-        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['services_header']}+{col}{pos['otros_ingresos']}+{col}{pos['diferencias_divisas']}"
+        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['services_header']}+{col}{pos['otros_ingresos']}"
         for row in manufacturing_rows + logistics_rows + [pos["royalties_detail"]] + payment_fee_rows + marketing_rows + marketing_meta_detail_rows + marketing_google_detail_rows + staff_rows + administration_rows + [detail_row for rows in administration_detail_rows.values() for detail_row in rows] + technology_rows:
             if ws[f"C{row}"].value:
                 if row in payment_fee_rows:
@@ -882,7 +882,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['otros_gastos']}"] = f'=SUMIFS(\'g-expenses-sl\'!$K:$K,\'g-expenses-sl\'!$A:$A,{col}$1,\'g-expenses-sl\'!$D:$D,"otros_gastos")'
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['marketing_header']}+{col}{pos['staff_header']}+{col}{pos['administration_header']}+{col}{pos['technology_header']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
-        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}"
+        ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}+{col}{pos['diferencias_divisas']}"
         ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
     for row in range(4, pos["profit_pct"] + 1):
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
@@ -1004,8 +1004,7 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     for idx, code in enumerate(service_codes):
         lbl("C", row + idx, code)
     row += len(service_codes)
-    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 1
-    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 2
+    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 2
 
     pos["expenses"] = row; lbl("A", row, "Expenses", bold=True); row += 1
     pos["cogs"] = row; lbl("B", row, "COGS", bold=True); row += 1
@@ -1070,6 +1069,7 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
         lbl("C", row + idx, supplier)
     row += len(technology_rows_list)
     pos["otros_gastos"] = row; lbl("C", row, "Otros gastos", bold=True); row += 1
+    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 1
     max_data_row = row - 1
 
     # ── Write counts ─────────────────────────────────────────────────────────
@@ -1099,10 +1099,6 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     # Otros ingresos
     write_counts(pos["otros_ingresos"], lambda yyyymm: 1 if yyyymm in bundle.otros_ingresos_by_period else 0)
     leaf_rows.append(pos["otros_ingresos"])
-
-    # Diferencias divisas
-    write_counts(pos["diferencias_divisas"], lambda yyyymm: 1 if yyyymm in bundle.diferencias_divisas_by_period else 0)
-    leaf_rows.append(pos["diferencias_divisas"])
 
     # Manufacturing
     for r, supplier in zip(manufacturing_rows_list, groups["manufacturing"]):
@@ -1162,6 +1158,10 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     write_counts(pos["otros_gastos"], lambda yyyymm: min(1, exp_sc[("otros_gastos", "OTROSGASTOS")][yyyymm]))
     leaf_rows.append(pos["otros_gastos"])
 
+    # Diferencias divisas
+    write_counts(pos["diferencias_divisas"], lambda yyyymm: 1 if yyyymm in bundle.diferencias_divisas_by_period else 0)
+    leaf_rows.append(pos["diferencias_divisas"])
+
     # ── Aggregate rows (SUM of children) ────────────────────────────────────
     write_sum_rows(pos["shopify_header"], shopify_rows)
     write_sum_rows(pos["marketplaces_header"], marketplace_rows_list)
@@ -1169,7 +1169,7 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     write_sum_rows(pos["supplies_header"], [pos["supplies_detail"]])
     write_sum_rows(pos["services_header"], service_rows_list)
     write_sum_rows(pos["product_sales"], shopify_rows + marketplace_rows_list + [pos["rappels_detail"], pos["supplies_detail"]])
-    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["services_header"], pos["otros_ingresos"], pos["diferencias_divisas"]])
+    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["services_header"], pos["otros_ingresos"]])
     write_sum_rows(pos["manufacturing_header"], manufacturing_rows_list)
     write_sum_rows(pos["logistics_header"], logistics_rows_list)
     write_sum_rows(pos["royalties_header"], [pos["royalties_detail"]])

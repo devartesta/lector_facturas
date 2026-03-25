@@ -53,7 +53,6 @@ MAIN_LINES = [
     ("rappels", "  Rappels"),
     ("supplies", "  Supplies"),
     ("otros_ingresos", "  Otros ingresos"),
-    ("diferencias_divisas", "  Diferencias divisas"),
     ("expenses", "Expenses"),
     ("cogs", "  COGS"),
     ("manufacturing", "    Manufacturing"),
@@ -71,6 +70,7 @@ MAIN_LINES = [
     ("administration", "    Administration"),
     ("technology", "    Technology"),
     ("otros_gastos", "    Otros gastos"),
+    ("diferencias_divisas", "  Diferencias divisas"),
     ("profit", "PROFIT"),
     ("profit_pct", "% Profit / turnover"),
 ]
@@ -414,13 +414,13 @@ def _compose_row(
     technology: Decimal = Decimal("0"),
     otros_gastos: Decimal = Decimal("0"),
 ) -> ConsolidatedEntityMonth:
-    turnover = product_sales + marketplaces + services + rappels + supplies + otros_ingresos + diferencias_divisas
+    turnover = product_sales + marketplaces + services + rappels + supplies + otros_ingresos
     cogs = manufacturing + logistics + royalties + payment_fees
     gross_margin = product_sales - manufacturing
     contributive_margin = turnover - cogs
     opex = marketing + staff + shared_services + administration + technology + otros_gastos
     expenses = cogs + opex
-    profit = turnover - expenses
+    profit = turnover - expenses + diferencias_divisas
     return ConsolidatedEntityMonth(
         company_code=company_code,
         yyyymm=yyyymm,
