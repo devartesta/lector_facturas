@@ -495,3 +495,45 @@ El archivo `.env.local` se carga automáticamente por `settings.load_settings()`
 - Se puede verificar con: `GET https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=<token>`
 - Los archivos en Google Drive (Shared Drives) requieren `supportsAllDrives=true` en todas las llamadas a la API.
 - El error `403 insufficientFilePermissions` en el servidor Railway (pero no en local) puede deberse a restricciones de la cuenta de servicio en el Shared Drive. Workaround: usar `My Drive` en lugar de Shared Drive para los archivos de facturas, o asignar permisos explícitos al OAuth user en el Shared Drive.
+
+---
+
+## Problemas conocidos y soluciones
+
+### "Excel encontró un problema con el contenido" al abrir pyg_*.xlsx
+
+**Síntoma:** Excel muestra el diálogo de reparación al abrir un archivo P&G. En el log de reparación aparece `Vista de /xl/worksheets/sheetN.xml parte`.
+
+**Causa:** openpyxl genera XML inválido en el elemento `<sheetView>` cuando se combina `row_dimensions[row].hidden = True` + `merge_cells()` + `ws.freeze_panes` y después se llama a `insert_rows()` sobre la misma hoja. Esto afectaba a las hojas `Nº Facturas-*`.
+
+**Solución aplicada:**
+- Las hojas `Nº Facturas-*` se excluyen de `_add_back_links` (que hacía el `insert_rows`)
+- Se reemplazó `row_dimensions[1].hidden = True` por `row_dimensions[1].height = 1` (misma apariencia, sin el flag hidden que genera el XML conflictivo)
+
+### Facturas vuelven a `to-check` después de procesarse (error 403 en Drive)
+
+**Síntoma:** El worker-03 renombra la factura correctamente pero falla al moverla a la carpeta destino. El error es `Google Drive API request failed: 403 insufficientFilePermissions`. Ocurre en Railway pero no localmente con las mismas credenciales.
+
+**Causa conocida:** Restricción de permisos en el Shared Drive del servidor Railway. El mismo token OAuth funciona localmente porque el cliente local tiene acceso directo; el servidor Railway puede tener restricciones de red o de contexto en las llamadas a la API.
+
+**Estado:** pendiente de resolución. Los archivos afectados quedan en `invoices.ingestion_queue` con `parse_status='failed'` y pueden moverse manualmente a `to-process` para reintentarlo.
+
+### Diferencias divisas — convención de signos
+
+Los valores en `invoices.diferencias_divisas` se almacenan con el **signo contable**:
+- Pérdida de cambio → valor negativo (ej. -132.90)
+- Ganancia de cambio → valor positivo
+
+La fórmula en el P&G es `profit = turnover - cogs - opex - diferencias_divisas`. Dado que los valores son negativos, el resultado es `profit = ... - (-132.90) = ... + 132.90`, lo que **aumenta** el beneficio cuando hay pérdida de cambio negativa.
+
+> Si la convención cambia (valores almacenados como positivos para pérdidas), cambiar el signo en `_fill_ltd_formulas` / `_fill_sl_formulas` / `_fill_inc_formulas` y en `_compose_row` del consolidado.
+
+### Añadir un nuevo proveedor al P&G
+
+1. Añadir la fila en `providers_master.csv` con `supplier_code`, `category`, `subcategory`, `destination_path`.
+2. Si el proveedor cae en `opex/administration` o `opex/technology`, aparecerá automáticamente en el P&G en la siguiente generación.
+3. Si requiere un parser nuevo, crear `src/lector_facturas/parsers/<proveedor>.py` y registrarlo en `invoice_ingestion.py`.
+
+### Añadir un nuevo mes/año al P&G
+
+Los P&G generan siempre los 12 meses del año indicado (`year` parameter en el endpoint). Los meses sin datos quedan a cero. No se necesita configuración adicional.
