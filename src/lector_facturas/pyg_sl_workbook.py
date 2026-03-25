@@ -422,7 +422,6 @@ def _sheet(wb: Workbook, title: str, headers: list[str], rows: list[list[Any]]) 
 
 def _add_back_links(wb: Workbook) -> None:
     detail_sheets = (
-        "Nº Facturas-SL",
         "i-shopify-sl",
         "i-marketplaces-sl",
         "i-rappels-sl",
@@ -952,7 +951,7 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
             cell.alignment = Alignment(horizontal="center", vertical="center")
     ws["A2"].font = TITLE_FONT
     ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].hidden = True
+    ws.row_dimensions[1].height = 1
     ws.row_dimensions[2].height = ROW_HEIGHT
 
     # ── Build row layout (mirrors _main_sheet) ───────────────────────────────
