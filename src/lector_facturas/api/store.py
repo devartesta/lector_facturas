@@ -2790,6 +2790,131 @@ class ReviewStore:
                 "notes": str(row[4] or ""),
             }
 
+    # ------------------------------------------------------------------
+    # Frame purchases (supply.frame_purchases / supply.frame_purchase_lines)
+    # ------------------------------------------------------------------
+
+    def insert_frame_purchase(
+        self,
+        *,
+        fabricante: str,
+        purchase_date: str,  # ISO date string "YYYY-MM-DD"
+        currency: str,
+        notes: str = "",
+        lines: list[dict],  # [{frame_color, frame_size, quantity, unit_price}]
+    ) -> dict[str, Any]:
+        """Insert a frame purchase order with its line items. Returns the created purchase."""
+        if not self.database_url:
+            raise RuntimeError("frame_purchases requires DATABASE_URL")
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO supply.frame_purchases (fabricante, purchase_date, currency, notes)
+                VALUES (%s, %s::date, %s, %s)
+                RETURNING id, fabricante, purchase_date::text, currency, notes, created_at::text
+                """,
+                (fabricante, purchase_date, currency, notes),
+            ).fetchone()
+            purchase_id = row[0]
+            for line in lines:
+                conn.execute(
+                    """
+                    INSERT INTO supply.frame_purchase_lines
+                        (purchase_id, frame_color, frame_size, quantity, unit_price)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (purchase_id, line["frame_color"], line["frame_size"],
+                     int(line["quantity"]), str(line["unit_price"])),
+                )
+            return {
+                "id": row[0],
+                "fabricante": row[1],
+                "purchase_date": row[2],
+                "currency": row[3],
+                "notes": row[4] or "",
+                "created_at": row[5],
+                "lines": lines,
+            }
+
+    def get_frame_purchases(self, fabricante: str | None = None) -> list[dict[str, Any]]:
+        """Return all frame purchases with their lines, optionally filtered by fabricante."""
+        if not self.database_url:
+            return []
+        with self._connect() as conn:
+            if fabricante:
+                rows = conn.execute(
+                    """
+                    SELECT fp.id, fp.fabricante, fp.purchase_date::text, fp.currency,
+                           fp.notes, fp.created_at::text,
+                           fpl.frame_color, fpl.frame_size, fpl.quantity, fpl.unit_price::text
+                    FROM supply.frame_purchases fp
+                    JOIN supply.frame_purchase_lines fpl ON fpl.purchase_id = fp.id
+                    WHERE fp.fabricante = %s
+                    ORDER BY fp.purchase_date DESC, fp.id, fpl.frame_color, fpl.frame_size
+                    """,
+                    (fabricante,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT fp.id, fp.fabricante, fp.purchase_date::text, fp.currency,
+                           fp.notes, fp.created_at::text,
+                           fpl.frame_color, fpl.frame_size, fpl.quantity, fpl.unit_price::text
+                    FROM supply.frame_purchases fp
+                    JOIN supply.frame_purchase_lines fpl ON fpl.purchase_id = fp.id
+                    ORDER BY fp.purchase_date DESC, fp.id, fpl.frame_color, fpl.frame_size
+                    """,
+                ).fetchall()
+        # Group lines by purchase
+        purchases: dict[int, dict] = {}
+        for row in rows:
+            pid = row[0]
+            if pid not in purchases:
+                purchases[pid] = {
+                    "id": pid,
+                    "fabricante": row[1],
+                    "purchase_date": row[2],
+                    "currency": row[3],
+                    "notes": row[4] or "",
+                    "created_at": row[5],
+                    "lines": [],
+                }
+            purchases[pid]["lines"].append({
+                "frame_color": row[6],
+                "frame_size": row[7],
+                "quantity": row[8],
+                "unit_price": row[9],
+            })
+        return list(purchases.values())
+
+    def get_frame_consumption_daily(
+        self,
+        *,
+        fabricante: str,
+        date_from: str,  # ISO date "YYYY-MM-DD"
+        date_to: str,    # ISO date "YYYY-MM-DD"
+    ) -> list[dict[str, Any]]:
+        """Return daily frame consumption for a fabricante in a date range."""
+        if not self.database_url:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT fecha_ddmmaaaa::text, frame_color, frame_size,
+                       COALESCE(SUM(quantity), 0) AS quantity
+                FROM supply.consumo_marcos_diario
+                WHERE fabricante = %s
+                  AND fecha_ddmmaaaa BETWEEN %s::date AND %s::date
+                GROUP BY fecha_ddmmaaaa, frame_color, frame_size
+                ORDER BY fecha_ddmmaaaa, frame_color, frame_size
+                """,
+                (fabricante, date_from, date_to),
+            ).fetchall()
+        return [
+            {"fecha_ddmmaaaa": r[0], "frame_color": r[1], "frame_size": r[2], "quantity": r[3]}
+            for r in rows
+        ]
+
     def _payroll_documents_unique_index_sql(self) -> str:
         return f"""
             CREATE UNIQUE INDEX IF NOT EXISTS invoices_payroll_documents_unique_idx

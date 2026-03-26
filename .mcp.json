@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:GzuAahYStgmCVTkPVCNDaodpGyexTHjf@shinkansen.proxy.rlwy.net:33105/railway"
+      ]
+    }
+  }
+}

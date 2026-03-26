@@ -14,6 +14,9 @@ from lector_facturas.api.schemas import (
     DailyRunOut,
     DriveBootstrapIn,
     DriveBootstrapOut,
+    FramePurchaseIn,
+    FramePurchaseOut,
+    FrameStockSummaryOut,
     GoogleDriveStatusOut,
     IngestionQueueItemOut,
     MailSyncRunIn,
@@ -941,6 +944,77 @@ def create_app() -> FastAPI:
             period_yyyymm=period_yyyymm,
             amount_eur=amount_eur,
             notes=notes,
+        )
+
+    # ------------------------------------------------------------------
+    # Frame purchases / stock
+    # ------------------------------------------------------------------
+
+    @app.post("/supply/frame-purchases", response_model=FramePurchaseOut, status_code=201)
+    def create_frame_purchase(
+        body: FramePurchaseIn,
+        store: ReviewStore = Depends(get_store),
+        settings: AppSettings = Depends(get_settings),
+    ) -> FramePurchaseOut:
+        """Register a frame purchase order with unit prices per SKU (color × size).
+        fabricante: 'Proco' (LTD/GBP) or 'TGI' (INC/USD).
+        """
+        lines = [
+            {
+                "frame_color": line.frame_color,
+                "frame_size": line.frame_size,
+                "quantity": line.quantity,
+                "unit_price": str(line.unit_price),
+            }
+            for line in body.lines
+        ]
+        result = store.insert_frame_purchase(
+            fabricante=body.fabricante,
+            purchase_date=body.purchase_date.isoformat(),
+            currency=body.currency,
+            notes=body.notes,
+            lines=lines,
+        )
+        return FramePurchaseOut(**result)
+
+    @app.get("/supply/frame-purchases", response_model=list[FramePurchaseOut])
+    def list_frame_purchases(
+        fabricante: str | None = Query(default=None),
+        store: ReviewStore = Depends(get_store),
+    ) -> list[FramePurchaseOut]:
+        """List all registered frame purchases, optionally filtered by fabricante."""
+        rows = store.get_frame_purchases(fabricante=fabricante)
+        return [FramePurchaseOut(**r) for r in rows]
+
+    @app.get("/supply/frame-stock/{fabricante}/{yyyymm}", response_model=FrameStockSummaryOut)
+    def get_frame_stock(
+        fabricante: str,
+        yyyymm: str,
+        settings: AppSettings = Depends(get_settings),
+    ) -> FrameStockSummaryOut:
+        """Compute WAC-based stock summary for a fabricante and month (yyyymm).
+        Returns opening/closing stock values and consumed value.
+        fabricante: 'Proco' | 'TGI'
+        """
+        from lector_facturas.supply_stock import compute_frame_stock_summary
+        if not settings.database_url:
+            raise HTTPException(status_code=503, detail="DATABASE_URL not configured")
+        summary = compute_frame_stock_summary(
+            fabricante=fabricante,
+            yyyymm=yyyymm,
+            database_url=settings.database_url,
+        )
+        return FrameStockSummaryOut(
+            fabricante=summary.fabricante,
+            yyyymm=summary.yyyymm,
+            currency=summary.currency,
+            opening_units=summary.opening_units,
+            opening_value=summary.opening_value,
+            consumed_units=summary.consumed_units,
+            consumed_value=summary.consumed_value,
+            purchased_units=summary.purchased_units,
+            closing_units=summary.closing_units,
+            closing_value=summary.closing_value,
         )
 
     @app.get("/integrations/google-drive/status", response_model=GoogleDriveStatusOut)

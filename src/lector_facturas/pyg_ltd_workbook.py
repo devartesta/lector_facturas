@@ -119,6 +119,9 @@ class PygLtdDataBundle:
     fx_rate_rows: tuple[FxRateAuditRow, ...] = field(default_factory=tuple)
     otros_ingresos_by_period: dict[str, Decimal] = field(default_factory=dict)
     diferencias_divisas_by_period: dict[str, Decimal] = field(default_factory=dict)
+    frame_consumed_by_period: dict[str, Decimal] = field(default_factory=dict)
+    frame_opening_by_period: dict[str, Decimal] = field(default_factory=dict)
+    frame_closing_by_period: dict[str, Decimal] = field(default_factory=dict)
 
 
 def default_output_path(root: Path, year: int) -> Path:
@@ -301,6 +304,13 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
     )
     otros_ingresos_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in otros_ingresos}
     diferencias_divisas_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in diferencias_divisas}
+
+    from lector_facturas.supply_stock import compute_frame_stock_by_year
+    frame_stock = compute_frame_stock_by_year(fabricante="Proco", year=year, database_url=database_url)
+    frame_consumed_by_period = {k: v.consumed_value for k, v in frame_stock.items()}
+    frame_opening_by_period = {k: v.opening_value for k, v in frame_stock.items()}
+    frame_closing_by_period = {k: v.closing_value for k, v in frame_stock.items()}
+
     return PygLtdDataBundle(
         year=year,
         generated_at=datetime.now(UTC),
@@ -310,6 +320,9 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
         provider_catalog_rows=provider_rows,
         otros_ingresos_by_period=otros_ingresos_by_period,
         diferencias_divisas_by_period=diferencias_divisas_by_period,
+        frame_consumed_by_period=frame_consumed_by_period,
+        frame_opening_by_period=frame_opening_by_period,
+        frame_closing_by_period=frame_closing_by_period,
     )
 
 
@@ -475,6 +488,7 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     for idx, supplier in enumerate(DEFAULT_MANUFACTURING_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(manufacturing_rows)
+    pos["marcos_consumed"] = row; ws[f"A{row}"] = "      Consumo marcos"; row += 1
     pos["manufacturing_pct"] = row; ws[f"A{row}"] = "    % Manufacturing / sales"; ws[f"A{row}"].font = BOLD; row += 1
     pos["logistics"] = row; ws[f"A{row}"] = "    Logistics"; ws[f"A{row}"].font = BOLD; row += 1
     logistics_rows = list(range(row, row + len(DEFAULT_LOGISTICS_LINES)))
@@ -513,7 +527,9 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     pos["otros_gastos"] = row; ws[f"A{row}"] = "    Otros gastos"; ws[f"A{row}"].font = BOLD; row += 1
     pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Diferencias divisas"; ws[f"A{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD
+    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["stock_inicial"] = row; ws[f"A{row}"] = "Stock inicial marcos"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["stock_final"] = row; ws[f"A{row}"] = "Stock final marcos"; ws[f"A{row}"].font = BOLD
 
     _fill_ltd_formulas(
         ws,
@@ -533,6 +549,15 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         amount_dd = bundle.diferencias_divisas_by_period.get(yyyymm)
         if amount_dd is not None:
             ws.cell(row=pos["diferencias_divisas"], column=idx).value = float(amount_dd)
+        amount_mc = bundle.frame_consumed_by_period.get(yyyymm)
+        if amount_mc is not None and amount_mc != 0:
+            ws.cell(row=pos["marcos_consumed"], column=idx).value = float(amount_mc)
+        amount_si = bundle.frame_opening_by_period.get(yyyymm)
+        if amount_si is not None and amount_si != 0:
+            ws.cell(row=pos["stock_inicial"], column=idx).value = float(amount_si)
+        amount_sf = bundle.frame_closing_by_period.get(yyyymm)
+        if amount_sf is not None and amount_sf != 0:
+            ws.cell(row=pos["stock_final"], column=idx).value = float(amount_sf)
     _apply_ltd_layout(
         ws,
         pos=pos,
@@ -557,7 +582,8 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         pos["contributive_margin_pct"],
         pos["profit_pct"],
     }
-    for row_idx in range(3, pos["profit_pct"] + 1):
+    last_formatted_row = pos.get("stock_final", pos["profit_pct"])
+    for row_idx in range(3, last_formatted_row + 1):
         for col_idx in range(2, 18):
             ws.cell(row=row_idx, column=col_idx).number_format = PERCENT_FORMAT if row_idx in percent_rows else MONEY_FORMAT
     for col, width in (("A", 34), ("B", 2), ("C", 2), ("P", 14), ("Q", 3)):
@@ -604,7 +630,7 @@ def _fill_ltd_formulas(
         for row in technology_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'g-expenses-ltd\'!$K:$K,\'g-expenses-ltd\'!$A:$A,{col}$1,\'g-expenses-ltd\'!$D:$D,"technology",\'g-expenses-ltd\'!$E:$E,TRIM($A{row}))'
 
-        ws[f"{col}{pos['manufacturing']}"] = f"=SUM({col}{manufacturing_rows[0]}:{col}{manufacturing_rows[-1]})"
+        ws[f"{col}{pos['manufacturing']}"] = f"=SUM({col}{manufacturing_rows[0]}:{col}{manufacturing_rows[-1]})+{col}{pos['marcos_consumed']}"
         ws[f"{col}{pos['manufacturing_pct']}"] = f'=IFERROR({col}{pos["manufacturing"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['logistics']}"] = f"=SUM({col}{logistics_rows[0]}:{col}{logistics_rows[-1]})"
         ws[f"{col}{pos['logistics_pct']}"] = f'=IFERROR({col}{pos["logistics"]}/{col}{pos["product_sales"]},0)'
@@ -626,6 +652,10 @@ def _fill_ltd_formulas(
 
     for row_idx in range(4, pos["profit_pct"] + 1):
         ws[f"P{row_idx}"] = f"=SUM(D{row_idx}:O{row_idx})"
+    # Stock rows (informational, no TOTAL formula — just sum monthly values)
+    for key in ("stock_inicial", "stock_final"):
+        if key in pos:
+            ws[f"P{pos[key]}"] = f"=SUM(D{pos[key]}:O{pos[key]})"
 
 
 def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:

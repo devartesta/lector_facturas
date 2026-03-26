@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from decimal import Decimal
@@ -320,3 +320,49 @@ class PygConsolidatedSyncOut(BaseModel):
     drive_file_url: str = ""
     local_output_path: str
     replaced_file_ids: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Frame purchases / stock
+# ---------------------------------------------------------------------------
+
+class FramePurchaseLineIn(BaseModel):
+    frame_color: str
+    frame_size: str
+    quantity: int = Field(..., gt=0)
+    unit_price: Decimal = Field(..., ge=0)
+
+
+class FramePurchaseIn(BaseModel):
+    fabricante: str          # 'Proco' | 'TGI'
+    purchase_date: date
+    currency: str
+    notes: str = ""
+    lines: list[FramePurchaseLineIn] = Field(..., min_length=1)
+
+
+class FramePurchaseLineOut(FramePurchaseLineIn):
+    pass
+
+
+class FramePurchaseOut(BaseModel):
+    id: int
+    fabricante: str
+    purchase_date: str       # ISO date string
+    currency: str
+    notes: str
+    created_at: str
+    lines: list[FramePurchaseLineOut]
+
+
+class FrameStockSummaryOut(BaseModel):
+    fabricante: str
+    yyyymm: str
+    currency: str
+    opening_units: int
+    opening_value: Decimal
+    consumed_units: int
+    consumed_value: Decimal
+    purchased_units: int
+    closing_units: int
+    closing_value: Decimal
