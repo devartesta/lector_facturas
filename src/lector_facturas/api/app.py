@@ -41,6 +41,8 @@ from lector_facturas.api.schemas import (
     ReviewItemOut,
     ReviewDigestRunIn,
     ReviewDigestRunOut,
+    PaymentReconciliationSyncIn,
+    PaymentReconciliationSyncOut,
     StockDetailSyncOut,
     SupplierOut,
     ValidationProcessRunOut,
@@ -65,7 +67,7 @@ from lector_facturas.invoice_ingestion import (
     process_validation_drive_file,
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
-from lector_facturas.pyg_sync import sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
+from lector_facturas.pyg_sync import sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
     build_nightly_review_digest_email,
@@ -1122,6 +1124,38 @@ def create_app() -> FastAPI:
             mes_yyyymm=result.mes_yyyymm,
             drive_folder_id=result.drive_folder_id,
             drive_file_id=result.drive_file_id,
+            drive_file_name=result.drive_file_name,
+            drive_file_url=result.drive_file_url,
+        )
+
+    @app.post("/supply/payment-reconciliation/sync", response_model=PaymentReconciliationSyncOut)
+    def sync_payment_reconciliation(
+        payload: PaymentReconciliationSyncIn,
+        settings: AppSettings = Depends(get_settings),
+    ) -> PaymentReconciliationSyncOut:
+        """Build the payment reconciliation xlsx and upload it to Drive.
+
+        Compares finance.informe_vat_gestorias_detalle (accounting) against
+        invoices.payment_order_transactions (Shopify Payments + PayPal) for
+        the given company_code and period_yyyymm.
+        """
+        try:
+            result = sync_payment_reconciliation_to_drive(
+                settings=settings,
+                company_code=payload.company_code,
+                period_yyyymm=payload.period_yyyymm,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return PaymentReconciliationSyncOut(
+            company_code=result.company_code,
+            period_yyyymm=result.period_yyyymm,
+            shopify_only_accounting=result.shopify_only_accounting,
+            shopify_only_payment=result.shopify_only_payment,
+            shopify_amount_diff=result.shopify_amount_diff,
+            paypal_only_accounting=result.paypal_only_accounting,
+            paypal_only_payment=result.paypal_only_payment,
+            paypal_amount_diff=result.paypal_amount_diff,
             drive_file_name=result.drive_file_name,
             drive_file_url=result.drive_file_url,
         )

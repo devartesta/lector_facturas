@@ -10,6 +10,8 @@ from lector_facturas.pyg_ltd_workbook import build_pyg_ltd_workbook, collect_pyg
 from lector_facturas.pyg_sl_workbook import build_pyg_sl_workbook, collect_pyg_sl_data, default_output_path
 from lector_facturas.settings import AppSettings
 from lector_facturas.stock_detail_workbook import StockDetailBundle, collect_stock_detail, build_stock_detail_bytes
+from lector_facturas.payment_reconciliation import build_reconciliation
+from lector_facturas.payment_reconciliation_workbook import build_reconciliation_workbook
 from lector_facturas.folder_structure import ENTITY_ALIASES
 
 
@@ -317,6 +319,86 @@ def sync_stock_detail_to_drive(
         drive_file_id=str(created["id"]),
         drive_file_name=str(created["name"]),
         drive_file_url=str(created.get("webViewLink", "")),
+    )
+
+
+@dataclass(frozen=True)
+class PaymentReconciliationSyncResult:
+    company_code: str
+    period_yyyymm: str
+    drive_folder_id: str
+    drive_file_id: str
+    drive_file_name: str
+    drive_file_url: str
+    shopify_only_accounting: int
+    shopify_only_payment: int
+    shopify_amount_diff: int
+    paypal_only_accounting: int
+    paypal_only_payment: int
+    paypal_amount_diff: int
+
+
+def sync_payment_reconciliation_to_drive(
+    *,
+    settings: AppSettings,
+    company_code: str,
+    period_yyyymm: str,
+    drive_folder_id: str | None = None,
+) -> PaymentReconciliationSyncResult:
+    """Build the payment reconciliation xlsx and upload it to Drive.
+
+    Upload path: drive_folder_id (env RECONCILIATION_DRIVE_FOLDER_ID) or settings.drive_root_folder_id.
+    File name   : reconciliation_{company_code.lower()}_{period_yyyymm}.xlsx
+    """
+    import os
+
+    if not settings.google_oauth_ready:
+        raise RuntimeError("Google OAuth is not configured.")
+
+    database_url = _database_url()
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
+    env_folder = os.environ.get("RECONCILIATION_DRIVE_FOLDER_ID", "").strip()
+    target_folder_id = drive_folder_id or env_folder or settings.drive_root_folder_id
+    if not target_folder_id:
+        raise RuntimeError(
+            "Drive folder not configured. Set RECONCILIATION_DRIVE_FOLDER_ID or "
+            "GOOGLE_DRIVE_ROOT_FOLDER_ID."
+        )
+
+    report = build_reconciliation(
+        database_url=database_url,
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+    )
+    content = build_reconciliation_workbook(report)
+
+    file_name = f"reconciliation_{company_code.lower()}_{period_yyyymm}.xlsx"
+    client = GoogleDriveClient(settings.to_drive_config())
+    existing = client.list_files(parent_id=target_folder_id, name=file_name)
+    for item in existing:
+        client.trash_file(file_id=str(item["id"]))
+    created = client.upload_file(
+        name=file_name,
+        parent_id=target_folder_id,
+        content=content,
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    return PaymentReconciliationSyncResult(
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+        drive_folder_id=target_folder_id,
+        drive_file_id=str(created["id"]),
+        drive_file_name=str(created["name"]),
+        drive_file_url=str(created.get("webViewLink", "")),
+        shopify_only_accounting=len(report.shopify.only_accounting),
+        shopify_only_payment=len(report.shopify.only_payment),
+        shopify_amount_diff=len(report.shopify.amount_diff),
+        paypal_only_accounting=len(report.paypal.only_accounting),
+        paypal_only_payment=len(report.paypal.only_payment),
+        paypal_amount_diff=len(report.paypal.amount_diff),
     )
 
 

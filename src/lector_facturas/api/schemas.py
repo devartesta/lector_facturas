@@ -388,3 +388,21 @@ class StockDetailSyncOut(BaseModel):
     drive_file_id: str
     drive_file_name: str
     drive_file_url: str
+
+
+class PaymentReconciliationSyncIn(BaseModel):
+    company_code: str       # "SL", "LTD" or "INC"
+    period_yyyymm: str      # e.g. "202602"
+
+
+class PaymentReconciliationSyncOut(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    shopify_only_accounting: int
+    shopify_only_payment: int
+    shopify_amount_diff: int
+    paypal_only_accounting: int
+    paypal_only_payment: int
+    paypal_amount_diff: int
+    drive_file_name: str
+    drive_file_url: str
