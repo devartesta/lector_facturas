@@ -2915,6 +2915,128 @@ class ReviewStore:
             for r in rows
         ]
 
+    # ------------------------------------------------------------------
+    # Frame stock – materialized tables (v2)
+    # ------------------------------------------------------------------
+
+    def refresh_frame_consumption(
+        self,
+        *,
+        fabricante: str,
+        months: list[str],  # list of yyyymm strings
+    ) -> None:
+        """Refresh frame_consumption_valued + frame_stock_monthly for given months."""
+        if not self.database_url or not months:
+            return
+        from lector_facturas.supply_stock import refresh_frame_consumption_month
+        from psycopg.rows import dict_row
+        with self._connect() as conn:
+            for mes_yyyymm in sorted(months):
+                refresh_frame_consumption_month(fabricante, mes_yyyymm, conn)
+            conn.commit()
+
+    def set_frame_consumption_override(
+        self,
+        *,
+        fabricante: str,
+        mes_yyyymm: str,
+        frame_color: str,
+        frame_size: str,
+        quantity_override: int,
+        notes: str = "",
+    ) -> None:
+        """Set a manual quantity override for a SKU+month, then refresh that month."""
+        if not self.database_url:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO supply.frame_consumption_valued
+                    (fabricante, mes_yyyymm, frame_color, frame_size,
+                     quantity_system, quantity_effective, unit_wac_opening,
+                     wac_calculated_at, amount_system, amount_effective,
+                     quantity_override, override_notes, override_set_at, updated_at)
+                VALUES (%s, %s, %s, %s, 0, %s, 0, NOW(), 0, 0, %s, %s, NOW(), NOW())
+                ON CONFLICT (fabricante, mes_yyyymm, frame_color, frame_size) DO UPDATE SET
+                    quantity_override = EXCLUDED.quantity_override,
+                    override_notes    = EXCLUDED.override_notes,
+                    override_set_at   = NOW(),
+                    quantity_effective = EXCLUDED.quantity_override,
+                    updated_at        = NOW()
+                """,
+                (fabricante, mes_yyyymm, frame_color, frame_size,
+                 quantity_override, quantity_override, notes),
+            )
+            conn.commit()
+        # Re-run refresh to recompute amounts with the new override
+        self.refresh_frame_consumption(fabricante=fabricante, months=[mes_yyyymm])
+
+    def get_frame_sku_wac(
+        self,
+        *,
+        fabricante: str,
+        frame_color: str,
+        frame_size: str,
+    ) -> list[dict[str, Any]]:
+        """Return WAC history for a single SKU, newest first."""
+        if not self.database_url:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT effective_from::text, wac, units_on_hand, purchase_id,
+                       created_at::text
+                FROM supply.frame_sku_wac
+                WHERE fabricante = %s AND frame_color = %s AND frame_size = %s
+                ORDER BY effective_from DESC, id DESC
+                """,
+                (fabricante, frame_color, frame_size),
+            ).fetchall()
+        return [
+            {
+                "effective_from": r[0],
+                "wac": r[1],
+                "units_on_hand": r[2],
+                "purchase_id": r[3],
+                "created_at": r[4],
+            }
+            for r in rows
+        ]
+
+    def get_frame_stock_monthly(
+        self,
+        *,
+        fabricante: str,
+        mes_yyyymm: str,
+    ) -> dict[str, Any] | None:
+        """Return a single row from frame_stock_monthly, or None if not found."""
+        if not self.database_url:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT fabricante, mes_yyyymm, currency,
+                       opening_units, opening_value,
+                       purchased_units, purchased_value,
+                       consumed_units, consumed_value,
+                       closing_units, closing_value,
+                       calculated_at::text
+                FROM supply.frame_stock_monthly
+                WHERE fabricante = %s AND mes_yyyymm = %s
+                """,
+                (fabricante, mes_yyyymm),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fabricante": row[0], "mes_yyyymm": row[1], "currency": row[2],
+            "opening_units": row[3], "opening_value": row[4],
+            "purchased_units": row[5], "purchased_value": row[6],
+            "consumed_units": row[7], "consumed_value": row[8],
+            "closing_units": row[9], "closing_value": row[10],
+            "calculated_at": row[11],
+        }
+
     def _payroll_documents_unique_index_sql(self) -> str:
         return f"""
             CREATE UNIQUE INDEX IF NOT EXISTS invoices_payroll_documents_unique_idx

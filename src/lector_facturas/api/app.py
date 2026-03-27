@@ -14,8 +14,10 @@ from lector_facturas.api.schemas import (
     DailyRunOut,
     DriveBootstrapIn,
     DriveBootstrapOut,
+    FrameConsumptionOverrideIn,
     FramePurchaseIn,
     FramePurchaseOut,
+    FrameSkuWacEntryOut,
     FrameStockSummaryOut,
     GoogleDriveStatusOut,
     IngestionQueueItemOut,
@@ -39,6 +41,7 @@ from lector_facturas.api.schemas import (
     ReviewItemOut,
     ReviewDigestRunIn,
     ReviewDigestRunOut,
+    StockDetailSyncOut,
     SupplierOut,
     ValidationProcessRunOut,
 )
@@ -62,7 +65,7 @@ from lector_facturas.invoice_ingestion import (
     process_validation_drive_file,
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
-from lector_facturas.pyg_sync import sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive
+from lector_facturas.pyg_sync import sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
     build_nightly_review_digest_email,
@@ -975,6 +978,17 @@ def create_app() -> FastAPI:
             notes=body.notes,
             lines=lines,
         )
+        # Rebuild WAC history and refresh all affected months
+        if settings.database_url:
+            from lector_facturas.supply_stock import populate_sku_wac_for_purchase
+            from psycopg import connect
+            from psycopg.rows import dict_row as _dict_row
+            with connect(settings.database_url, row_factory=_dict_row) as conn:
+                months_to_refresh = populate_sku_wac_for_purchase(result["id"], conn)
+                conn.commit()
+            store.refresh_frame_consumption(
+                fabricante=body.fabricante, months=months_to_refresh
+            )
         return FramePurchaseOut(**result)
 
     @app.get("/supply/frame-purchases", response_model=list[FramePurchaseOut])
@@ -996,10 +1010,10 @@ def create_app() -> FastAPI:
         Returns opening/closing stock values and consumed value.
         fabricante: 'Proco' | 'TGI'
         """
-        from lector_facturas.supply_stock import compute_frame_stock_summary
+        from lector_facturas.supply_stock import get_frame_stock_summary
         if not settings.database_url:
             raise HTTPException(status_code=503, detail="DATABASE_URL not configured")
-        summary = compute_frame_stock_summary(
+        summary = get_frame_stock_summary(
             fabricante=fabricante,
             yyyymm=yyyymm,
             database_url=settings.database_url,
@@ -1015,6 +1029,101 @@ def create_app() -> FastAPI:
             purchased_units=summary.purchased_units,
             closing_units=summary.closing_units,
             closing_value=summary.closing_value,
+        )
+
+    @app.put(
+        "/supply/frame-consumption/{fabricante}/{mes_yyyymm}/{frame_color}/{frame_size}/override",
+        status_code=200,
+    )
+    def set_frame_consumption_override(
+        fabricante: str,
+        mes_yyyymm: str,
+        frame_color: str,
+        frame_size: str,
+        body: FrameConsumptionOverrideIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> dict:
+        """Set a manual quantity override for a SKU in a given month.
+
+        Useful for stock count adjustments (e.g. physical inventory).
+        The override replaces the system quantity for accounting purposes;
+        the original system quantity is preserved for reference.
+
+        After setting the override the month is automatically refreshed.
+        """
+        store.set_frame_consumption_override(
+            fabricante=fabricante,
+            mes_yyyymm=mes_yyyymm,
+            frame_color=frame_color,
+            frame_size=frame_size,
+            quantity_override=body.quantity_override,
+            notes=body.notes,
+        )
+        return {"status": "ok", "fabricante": fabricante, "mes_yyyymm": mes_yyyymm,
+                "frame_color": frame_color, "frame_size": frame_size,
+                "quantity_override": body.quantity_override}
+
+    @app.post("/supply/frame-consumption/refresh", status_code=200)
+    def refresh_frame_consumption(
+        fabricante: str = Query(...),
+        mes_yyyymm: str = Query(...),
+        store: ReviewStore = Depends(get_store),
+    ) -> dict:
+        """Manually trigger a refresh of frame_consumption_valued and frame_stock_monthly.
+
+        Normally called by the daily job for the current and previous month.
+        Pass fabricante ('TGI' or 'Proco') and mes_yyyymm ('202601').
+        """
+        store.refresh_frame_consumption(fabricante=fabricante, months=[mes_yyyymm])
+        return {"status": "ok", "fabricante": fabricante, "mes_yyyymm": mes_yyyymm}
+
+    @app.get(
+        "/supply/frame-sku-wac/{fabricante}/{frame_color}/{frame_size}",
+        response_model=list[FrameSkuWacEntryOut],
+    )
+    def get_frame_sku_wac(
+        fabricante: str,
+        frame_color: str,
+        frame_size: str,
+        store: ReviewStore = Depends(get_store),
+    ) -> list[FrameSkuWacEntryOut]:
+        """Return WAC history for a specific SKU (newest first).
+
+        Shows each purchase event that changed the WAC for this SKU,
+        including the resulting WAC and units on hand after the purchase.
+        """
+        rows = store.get_frame_sku_wac(
+            fabricante=fabricante,
+            frame_color=frame_color,
+            frame_size=frame_size,
+        )
+        return [FrameSkuWacEntryOut(**r) for r in rows]
+
+    @app.post("/supply/frame-stock-detail/sync", response_model=StockDetailSyncOut)
+    def sync_stock_detail(
+        fabricante: str,
+        mes_yyyymm: str,
+        settings: AppSettings = Depends(get_settings),
+    ) -> StockDetailSyncOut:
+        """Build and upload a per-SKU stock detail xlsx to the month's Drive folder.
+
+        Path: <root>/<entity>/<year>/<yyyymm>/expenses/cogs/stock/stock_{fabricante}_{yyyymm}.xlsx
+        """
+        try:
+            result = sync_stock_detail_to_drive(
+                settings=settings,
+                fabricante=fabricante,
+                mes_yyyymm=mes_yyyymm,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return StockDetailSyncOut(
+            fabricante=result.fabricante,
+            mes_yyyymm=result.mes_yyyymm,
+            drive_folder_id=result.drive_folder_id,
+            drive_file_id=result.drive_file_id,
+            drive_file_name=result.drive_file_name,
+            drive_file_url=result.drive_file_url,
         )
 
     @app.get("/integrations/google-drive/status", response_model=GoogleDriveStatusOut)

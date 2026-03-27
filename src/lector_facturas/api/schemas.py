@@ -366,3 +366,25 @@ class FrameStockSummaryOut(BaseModel):
     purchased_units: int
     closing_units: int
     closing_value: Decimal
+
+
+class FrameConsumptionOverrideIn(BaseModel):
+    quantity_override: int  # can be negative (stock return / correction)
+    notes: str = ""
+
+
+class FrameSkuWacEntryOut(BaseModel):
+    effective_from: str   # ISO date
+    wac: Decimal
+    units_on_hand: int
+    purchase_id: int
+    created_at: str
+
+
+class StockDetailSyncOut(BaseModel):
+    fabricante: str
+    mes_yyyymm: str
+    drive_folder_id: str
+    drive_file_id: str
+    drive_file_name: str
+    drive_file_url: str
