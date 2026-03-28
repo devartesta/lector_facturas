@@ -475,7 +475,7 @@ class GestoriaSyncResult:
     n_detalle_rows: int
 
 
-_GESTORIA_FOLDER_PATH = ["income", "sales", "vat"]
+_GESTORIA_FOLDER_PATH = ["income", "sales", "shopify"]
 
 
 def sync_gestoria_to_drive(
@@ -489,7 +489,7 @@ def sync_gestoria_to_drive(
 
     Default upload path (when drive_folder_id is not supplied):
       <root> / <entity> / <year> / <yyyymm> / income / sales / vat
-      e.g. ARTESTA - 6. Finances / Artesta Store, S.L / 2026 / 202602 / income / sales / vat
+      e.g. ARTESTA - 6. Finances / Artesta Store, S.L / 2026 / 202602 / income / sales / shopify
 
     File name: shopify_sales_{company_code.lower()}_{period_yyyymm}.xlsx
     """
