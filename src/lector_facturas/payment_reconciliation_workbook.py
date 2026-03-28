@@ -79,9 +79,9 @@ COLUMNS = [
     ("Importe pago",   14, RIGHT,  MONEY_FMT),
     ("Diferencia",     12, RIGHT,  MONEY_FMT),
     ("Link Shopify",   14, LEFT,   None),
-    ("T. regalo",       9, CENTER, None),
-    ("Estado disp.",   13, CENTER, None),
-    ("Comentarios",    35, LEFT,   None),
+    ("T. regalo",        9, CENTER, None),
+    ("Chargeback",      18, CENTER, None),
+    ("Comentarios",     35, LEFT,   None),
 ]
 
 # Section definitions: (attribute, title, explanation)
@@ -251,19 +251,31 @@ def _add_summary_sheet(
     c.font = WHITE_BOLD; c.fill = SECTION_FILL; c.alignment = LEFT
     row += 1
 
+    shopify_cbs = [r for r in report.chargeback_inventory if r.channel == "Shopify"]
+    paypal_cbs  = [r for r in report.chargeback_inventory if r.channel == "PayPal"]
+    shopify_open_impact = sum(
+        ((r.net_impact or Decimal("0")) for r in shopify_cbs if r.status == CB_OPEN),
+        Decimal("0"),
+    ).quantize(Decimal("0.01"))
+
     cb_summary = [
-        ("En disputa", n_open,
-         f"Importe retenido pendiente: {open_impact:,.2f}" if n_open else "Ninguno abierto"),
-        ("Ganado",     n_won,
-         "El canal de pago devolvió el importe. Ver pestaña Chargebacks para detalle."),
+        ("Shopify Payments", CB_OPEN,
+         sum(1 for r in shopify_cbs if r.status == CB_OPEN),
+         f"Retenido pendiente: {shopify_open_impact:,.2f}" if any(r.status == CB_OPEN for r in shopify_cbs) else "Ninguno abierto"),
+        ("Shopify Payments", CB_WON,
+         sum(1 for r in shopify_cbs if r.status == CB_WON),
+         "Disputas resueltas a nuestro favor. Ver pestaña Chargebacks."),
+        ("PayPal", CB_OPEN,
+         len(paypal_cbs),
+         "⚠ Estado no detectable automáticamente. Confirmar en el portal de PayPal."),
     ]
-    for label, count, note in cb_summary:
-        fill = CB_OPEN_FILL if label == "En disputa" else CB_WON_FILL
+    for channel_lbl, status, count, note in cb_summary:
+        fill = CB_OPEN_FILL if status == CB_OPEN else CB_WON_FILL
         ws.row_dimensions[row].height = ROW_H
         vals2 = [
-            ("Shopify + PayPal", LEFT, None, BOLD),
-            (label,  LEFT,   None, NORMAL),
-            (count,  CENTER, None, BOLD if count > 0 else NORMAL),
+            (channel_lbl,  LEFT, None, BOLD),
+            (status,       LEFT, None, NORMAL),
+            (count,        CENTER, None, BOLD if count > 0 else NORMAL),
             (None, RIGHT, None, NORMAL),
             (None, RIGHT, None, NORMAL),
             (None, RIGHT, None, NORMAL),
@@ -337,19 +349,24 @@ def _add_chargeback_sheet(
     c.fill = HEADER_FILL; c.alignment = CENTER
     row += 1
 
-    # Explanation
+    # Summary line
+    inventory   = report.chargeback_inventory
+    shopify_cbs = [r for r in inventory if r.channel == "Shopify"]
+    paypal_cbs  = [r for r in inventory if r.channel == "PayPal"]
+    n_shopify_open = sum(1 for r in shopify_cbs if r.status == CB_OPEN)
+    n_shopify_won  = sum(1 for r in shopify_cbs if r.status == CB_WON)
+    shopify_open_impact = sum(
+        ((r.net_impact or Decimal("0")) for r in shopify_cbs if r.status == CB_OPEN),
+        Decimal("0"),
+    ).quantize(Decimal("0.01"))
+
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
-    inventory = report.chargeback_inventory
-    n_open = sum(1 for r in inventory if r.status == CB_OPEN)
-    n_won  = sum(1 for r in inventory if r.status == CB_WON)
-    open_impact = sum(
-        (r.net_impact or Decimal("0")) for r in inventory if r.status == CB_OPEN
-    ).quantize(Decimal("0.01"))
     c = ws.cell(row=row, column=1,
-        value=(f"En disputa: {n_open} pedidos  |  Ganados: {n_won} pedidos"
-               f"  |  Impacto neto abierto: {open_impact:,.2f}"
-               f"  —  Los de color naranja requieren acción; los verdes ya están resueltos."))
+        value=(f"Shopify: {n_shopify_open} en disputa, {n_shopify_won} ganados "
+               f"(impacto abierto: {shopify_open_impact:,.2f})   |   "
+               f"PayPal: {len(paypal_cbs)} disputas — estado a confirmar en portal PayPal   |   "
+               f"Naranja = acción requerida · Verde = resuelto"))
     c.font = ITALIC_GREY; c.alignment = LEFT_WRAP
     row += 2
 
@@ -360,33 +377,102 @@ def _add_chargeback_sheet(
         c.alignment = LEFT
         return
 
-    # Column headers
+    # ---- Shopify section ----
+    row = _write_cb_section(
+        ws, row, last_col,
+        title="SHOPIFY PAYMENTS",
+        note=("Estado detectable automáticamente: 'En disputa' = retención activa sin reversal todavía; "
+              "'Ganado' = el canal devolvió el importe (dispute_reversal recibido)."),
+        items=shopify_cbs,
+        paypal_warning=False,
+    )
+
+    # ---- PayPal section ----
+    row = _write_cb_section(
+        ws, row, last_col,
+        title="PAYPAL",
+        note=("⚠ PayPal no genera una transacción de 'disputa resuelta' en nuestros datos (no hay T1112). "
+              "Todas las disputas aparecen como 'En disputa' aunque puedan estar ya cerradas. "
+              "Confirmar el estado real en el portal de PayPal (Resolution Center)."),
+        items=paypal_cbs,
+        paypal_warning=True,
+    )
+
+    ws.freeze_panes = "A4"
+
+
+def _write_cb_section(
+    ws: Any,
+    row: int,
+    last_col: str,
+    title: str,
+    note: str,
+    items: list[ChargebackInventoryRow],
+    paypal_warning: bool,
+) -> int:
+    """Write one channel block (header + col headers + rows + totals) in the chargeback sheet."""
+    ncols = len(CB_COLUMNS) - 1  # CB_COLUMNS includes Canal which we drop here
+    # We use CB_COLUMNS[1:] (skip the Canal column since it's in the section header)
+    detail_cols = CB_COLUMNS[1:]
+    detail_last = get_column_letter(len(detail_cols))
+
+    # Section header
+    ws.row_dimensions[row].height = ROW_H + 2
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1, value=title)
+    c.font = WHITE_BOLD; c.fill = SECTION_FILL; c.alignment = LEFT
+    row += 1
+
+    # Note
+    ws.row_dimensions[row].height = 30
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1, value=note)
+    c.font = Font(name="Calibri", size=9,
+                  italic=True,
+                  color="843C0C" if paypal_warning else "404040")
+    c.fill = LEGEND_FILL; c.alignment = LEFT_WRAP
+    row += 1
+
+    if not items:
+        ws.row_dimensions[row].height = ROW_H
+        ws.merge_cells(f"A{row}:{last_col}{row}")
+        c = ws.cell(row=row, column=1, value="✓ Sin chargebacks en los últimos 12 meses")
+        c.font = Font(name="Calibri", size=10, italic=True, color="548235")
+        c.alignment = LEFT
+        return row + 2
+
+    # Column headers (skip Canal column)
     ws.row_dimensions[row].height = ROW_H
-    for col, (header, _, _, _) in enumerate(CB_COLUMNS, 1):
+    for col, (header, _, _, _) in enumerate(detail_cols, 1):
         c = ws.cell(row=row, column=col, value=header)
         c.font = BOLD; c.fill = COL_HDR_FILL; c.alignment = CENTER; c.border = THIN
     row += 1
 
     # Data rows
-    for r in inventory:
+    for r in items:
         ws.row_dimensions[row].height = ROW_H
         fill = CB_OPEN_FILL if r.status == CB_OPEN else CB_WON_FILL
+        # For PayPal, we can't confirm status so always use open colour
+        if paypal_warning:
+            fill = CB_OPEN_FILL
+
+        rev_date_val = r.reversal_date if r.reversal_date else ("—" if not paypal_warning else "Desconocido")
+        rev_date_font = ITALIC_GREY if not r.reversal_date else None
 
         vals: list[tuple[Any, Alignment, str | None, Font | None]] = [
-            (r.channel,                LEFT,   None,      BOLD),
-            (r.order_name,             LEFT,   None,      None),
-            (r.order_date,             CENTER, None,      None),
-            (r.shipping_country_code,  CENTER, None,      None),
-            (r.currency,               CENTER, None,      None),
-            (r.accounting_amount,      RIGHT,  MONEY_FMT, None),
-            (r.withdrawal_date,        CENTER, None,      None),
-            (r.withdrawal_amount,      RIGHT,  MONEY_FMT, None),
-            (r.reversal_date or "—",   CENTER, None,      ITALIC_GREY if not r.reversal_date else None),
-            (r.reversal_amount,        RIGHT,  MONEY_FMT, None),
-            (r.net_impact,             RIGHT,  MONEY_FMT, BOLD),
-            (r.status,                 CENTER, None,      BOLD),
-            (None,                     LEFT,   None,      LINK_FONT),  # hyperlink placeholder
-            ("",                       LEFT,   None,      None),       # Comentarios
+            (r.order_name,            LEFT,   None,      BOLD),
+            (r.order_date,            CENTER, None,      None),
+            (r.shipping_country_code, CENTER, None,      None),
+            (r.currency,              CENTER, None,      None),
+            (r.accounting_amount,     RIGHT,  MONEY_FMT, None),
+            (r.withdrawal_date,       CENTER, None,      None),
+            (r.withdrawal_amount,     RIGHT,  MONEY_FMT, None),
+            (rev_date_val,            CENTER, None,      rev_date_font),
+            (r.reversal_amount,       RIGHT,  MONEY_FMT, None),
+            (r.net_impact,            RIGHT,  MONEY_FMT, BOLD),
+            (r.status if not paypal_warning else "Ver PayPal", CENTER, None, BOLD),
+            (None,                    LEFT,   None,      LINK_FONT),
+            ("",                      LEFT,   None,      None),
         ]
         for col, (value, align, fmt, font) in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=value)
@@ -394,41 +480,52 @@ def _add_chargeback_sheet(
             c.font = font if font else NORMAL
             if fmt: c.number_format = fmt
 
-        # Hyperlink (column 13)
+        # Hyperlink (column 12 = Link Shopify, now without Canal col)
         if r.shopify_url:
-            lc = ws.cell(row=row, column=13)
+            lc = ws.cell(row=row, column=12)
             lc.value = "Ver pedido"; lc.hyperlink = r.shopify_url; lc.font = LINK_FONT
 
         row += 1
 
-    # Totals
+    # Subtotals
     ws.row_dimensions[row].height = ROW_H
-    total_acct    = sum((r.accounting_amount  or Decimal("0")) for r in inventory).quantize(Decimal("0.01"))
-    total_w       = sum((r.withdrawal_amount  or Decimal("0")) for r in inventory).quantize(Decimal("0.01"))
-    total_v       = sum((r.reversal_amount    or Decimal("0")) for r in inventory).quantize(Decimal("0.01"))
-    total_net     = sum((r.net_impact         or Decimal("0")) for r in inventory).quantize(Decimal("0.01"))
+    _D0     = Decimal("0")
+    t_acct  = sum(((r.accounting_amount or _D0) for r in items), _D0).quantize(Decimal("0.01"))
+    t_w     = sum(((r.withdrawal_amount or _D0) for r in items), _D0).quantize(Decimal("0.01"))
+    t_v     = sum(((r.reversal_amount   or _D0) for r in items), _D0).quantize(Decimal("0.01"))
+    t_net   = sum(((r.net_impact        or _D0) for r in items), _D0).quantize(Decimal("0.01"))
     total_vals: list[tuple[Any, Alignment, str | None]] = [
-        (f"TOTAL ({len(inventory)} chargebacks)", LEFT, None),
-        (None, LEFT, None),
+        (f"TOTAL {title} ({len(items)})", LEFT, None),
+        (None, CENTER, None), (None, CENTER, None), (None, CENTER, None),
+        (t_acct, RIGHT, MONEY_FMT),
         (None, CENTER, None),
+        (t_w,   RIGHT, MONEY_FMT),
         (None, CENTER, None),
-        (None, CENTER, None),
-        (total_acct,  RIGHT, MONEY_FMT),
-        (None, CENTER, None),
-        (total_w,     RIGHT, MONEY_FMT),
-        (None, CENTER, None),
-        (total_v,     RIGHT, MONEY_FMT),
-        (total_net,   RIGHT, MONEY_FMT),
-        (None, CENTER, None),
-        (None, LEFT, None),
-        (None, LEFT, None),
+        (t_v,   RIGHT, MONEY_FMT),
+        (t_net, RIGHT, MONEY_FMT),
+        (None, CENTER, None), (None, LEFT, None), (None, LEFT, None),
     ]
     for col, (val, align, fmt) in enumerate(total_vals, 1):
         c = ws.cell(row=row, column=col, value=val)
         c.font = BOLD; c.fill = TOTAL_FILL; c.alignment = align; c.border = THIN
         if fmt: c.number_format = fmt
 
-    ws.freeze_panes = "A4"
+    return row + 2
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _cb_label(status: str | None, is_chargeback: bool) -> str:
+    """Human-readable chargeback label for the detail sheet column."""
+    if status == CB_WON:
+        return "Chargeback — Ganado"
+    if status == CB_OPEN:
+        return "Chargeback — En disputa"
+    if is_chargeback:
+        return "Chargeback"
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +638,8 @@ def _write_section(
             (data_row.payment_amount,         RIGHT,  MONEY_FMT, None),
             (data_row.diff,                   RIGHT,  MONEY_FMT, None),
             (None,                            LEFT,   None,      LINK_FONT),
-            ("Sí" if data_row.is_gift_card else "",   CENTER, None, None),
-            (data_row.chargeback_status or "",         CENTER, None, None),
+            ("Sí" if data_row.is_gift_card else "",                CENTER, None, None),
+            (_cb_label(data_row.chargeback_status, data_row.is_chargeback), CENTER, None, BOLD if data_row.is_chargeback else None),
             ("",                              LEFT,   None,      None),
         ]
         for col, (value, align, num_fmt, font_override) in enumerate(vals, 1):
