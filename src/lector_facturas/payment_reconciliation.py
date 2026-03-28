@@ -145,7 +145,7 @@ def build_reconciliation(
             FROM finance.informe_vat_gestorias_detalle
             WHERE order_month_yyyymm = %s
               AND payment_currency    = %s
-              AND shown_gross_presentment > 0
+              AND shown_gross_presentment <> 0
               AND (payment_gateway_names @> '["shopify_payments"]'::jsonb
                    OR payment_gateway_names @> '["paypal"]'::jsonb)
             GROUP BY order_name, order_date, shipping_country_code,
@@ -154,47 +154,60 @@ def build_reconciliation(
             (period_yyyymm, currency),
         ).fetchall()
 
-        # -- Payment: Shopify charges for this period --
-        # period_yyyymm on the payment side = when the charge was processed
+        # -- Payment: Shopify — charges + refunds + chargebacks/reversals.
+        # Usamos shopify_payout_transactions filtrado por transaction_date (fecha real
+        # del movimiento), que coincide con order_month_yyyymm de contabilidad.
+        # payment_order_transactions usaba period_yyyymm derivado de otra fecha y
+        # desviaba pedidos al mes incorrecto.
         shopify_pay_rows = conn.execute(
             """
             SELECT
                 order_name,
-                MAX(order_id)          AS order_id,
-                SUM(gross_amount)      AS importe_pago,
-                bool_or(is_chargeback) AS tiene_chargeback
-            FROM invoices.payment_order_transactions
-            WHERE company_code      = %s
-              AND platform          = 'shopify'
-              AND transaction_type  = 'charge'
-              AND period_yyyymm     = %s
-              AND affects_balance   = true
-              AND is_cancelled      = false
+                MAX(order_id)                          AS order_id,
+                SUM(amount)                            AS importe_pago,
+                bool_or(type = 'dispute_withdrawal')   AS tiene_chargeback
+            FROM invoices.shopify_payout_transactions
+            WHERE company_code  = %s
+              AND to_char(transaction_date AT TIME ZONE 'Europe/Madrid', 'YYYYMM') = %s
+              AND type IN ('charge', 'refund', 'dispute_withdrawal', 'dispute_reversal')
               AND order_name IS NOT NULL AND order_name <> ''
             GROUP BY order_name
             """,
             (company_code, period_yyyymm),
         ).fetchall()
 
-        # -- Payment: PayPal sales for this period --
+        # -- Payment: PayPal — sum ALL order-linked movements (cobros + reembolsos +
+        #    retenciones por disputa T1111).
+        # T1111 ("Retención por investigación de disputa") no tiene shopify_order_name
+        # y se almacena con bruto positivo, pero representa un débito real. Lo enlazamos
+        # via reference_transaction_id → transaction_id del T0006 y negamos su bruto.
         paypal_pay_rows = conn.execute(
             """
             SELECT
-                order_name,
-                MAX(order_id)          AS order_id,
-                SUM(gross_amount)      AS importe_pago,
-                bool_or(is_chargeback) AS tiene_chargeback
-            FROM invoices.payment_order_transactions
-            WHERE company_code      = %s
-              AND platform          = 'paypal'
-              AND transaction_type  = ANY(%s)
-              AND period_yyyymm     = %s
-              AND affects_balance   = true
-              AND is_cancelled      = false
-              AND order_name IS NOT NULL AND order_name <> ''
-            GROUP BY order_name
+                COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
+                                        AS order_name,
+                NULL::text              AS order_id,
+                SUM(
+                    CASE WHEN t.tipo = 'T1111' THEN -t.bruto ELSE t.bruto END
+                )                       AS importe_pago,
+                bool_or(t.tipo = 'T1111') AS tiene_chargeback
+            FROM invoices.paypal_transactions_raw t
+            LEFT JOIN invoices.paypal_transactions_raw parent
+                ON parent.transaction_id    = t.reference_transaction_id
+               AND parent.shopify_order_name IS NOT NULL
+               AND parent.shopify_order_name <> ''
+            WHERE t.company_code = %s
+              AND to_char(
+                    t.transaction_date AT TIME ZONE 'Europe/Madrid',
+                    'YYYYMM'
+                  ) = %s
+              AND (
+                   (t.shopify_order_name IS NOT NULL AND t.shopify_order_name <> '')
+                OR (parent.shopify_order_name IS NOT NULL AND parent.shopify_order_name <> '')
+              )
+            GROUP BY COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
             """,
-            (company_code, list(PAYPAL_SALE_TYPES), period_yyyymm),
+            (company_code, period_yyyymm),
         ).fetchall()
 
         # -- pedido_id for Shopify links (accounting-only orders have no GID) --
@@ -208,22 +221,51 @@ def build_reconciliation(
             (currency,),
         ).fetchall()
 
+        # -- Gift card orders (product is a gift card, not paid with gift card) --
+        gift_card_rows = conn.execute(
+            """
+            SELECT DISTINCT pedido_id AS order_name
+            FROM shopify.order_items
+            WHERE gift_card = true
+              AND pedido_id IS NOT NULL AND pedido_id <> ''
+            """,
+        ).fetchall()
+
     # Build lookup maps
     pedido_id_map: dict[str, str] = {r["order_name"]: r["pedido_id"] for r in pedido_rows}
-
-    # -- Accounting dict, split by channel --
-    shopify_acct: dict[str, dict] = {}
-    paypal_acct: dict[str, dict] = {}
-    for r in acct_rows:
-        gw = _parse_gateways(r.get("gateways_raw"))
-        if "shopify_payments" in gw:
-            shopify_acct[r["order_name"]] = dict(r)
-        if "paypal" in gw:
-            paypal_acct[r["order_name"]] = dict(r)
+    gift_card_orders: set[str] = {r["order_name"] for r in gift_card_rows}
 
     # -- Payment dicts --
     shopify_pay: dict[str, dict] = {r["order_name"]: dict(r) for r in shopify_pay_rows}
     paypal_pay: dict[str, dict] = {r["order_name"]: dict(r) for r in paypal_pay_rows}
+
+    # -- Accounting dict, split by channel --
+    # For orders with both "shopify_payments" and "paypal" in the gateway (mixed),
+    # assign to whichever channel actually has the charge in the payment side.
+    # If neither or both have it, keep in both.
+    shopify_acct: dict[str, dict] = {}
+    paypal_acct: dict[str, dict] = {}
+    for r in acct_rows:
+        gw = _parse_gateways(r.get("gateways_raw"))
+        has_shopify = "shopify_payments" in gw
+        has_paypal  = "paypal" in gw
+        if has_shopify and has_paypal:
+            # Mixed gateway: follow where the actual charge is
+            in_shopify_pay = r["order_name"] in shopify_pay
+            in_paypal_pay  = r["order_name"] in paypal_pay
+            if in_paypal_pay and not in_shopify_pay:
+                paypal_acct[r["order_name"]] = dict(r)
+            elif in_shopify_pay and not in_paypal_pay:
+                shopify_acct[r["order_name"]] = dict(r)
+            else:
+                # Both or neither: add to both channels
+                shopify_acct[r["order_name"]] = dict(r)
+                paypal_acct[r["order_name"]] = dict(r)
+        else:
+            if has_shopify:
+                shopify_acct[r["order_name"]] = dict(r)
+            if has_paypal:
+                paypal_acct[r["order_name"]] = dict(r)
 
     def _make_row(a: dict | None, p: dict | None, name: str) -> ReconciliationRow:
         accounting_amount = _dec(a["importe_contab"]) if a else None
@@ -243,7 +285,7 @@ def build_reconciliation(
             payment_amount=payment_amount,
             diff=diff,
             shopify_url=url,
-            is_gift_card=bool(a.get("gift_card")) if a else False,
+            is_gift_card=(name in gift_card_orders) or (bool(a.get("gift_card")) if a else False),
             is_chargeback=bool(p.get("tiene_chargeback")) if p else False,
         )
 

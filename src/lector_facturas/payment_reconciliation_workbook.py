@@ -64,6 +64,7 @@ COLUMNS = [
     ("Link Shopify",    14, LEFT,   None),
     ("T. regalo",        9, CENTER, None),
     ("Chargeback",      11, CENTER, None),
+    ("Comentarios",     35, LEFT,   None),
 ]
 
 SECTION_DEFS = [
@@ -199,6 +200,7 @@ def _write_section(ws: Any, row: int, title: str, rows: list[ReconciliationRow])
             (None,                           LEFT,   None,      LINK_FONT),   # hyperlink placeholder
             ("Sí" if data_row.is_gift_card  else "",  CENTER, None, None),
             ("Sí" if data_row.is_chargeback else "",  CENTER, None, None),
+            ("",                                      LEFT,   None, None),   # Comentarios (blank, for manual notes)
         ]
         for col, (value, align, num_fmt, font_override) in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=value)

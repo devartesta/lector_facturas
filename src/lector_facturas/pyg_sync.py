@@ -338,6 +338,17 @@ class PaymentReconciliationSyncResult:
     paypal_amount_diff: int
 
 
+# Maps company_code → Drive entity folder name (matches ENTITY_ALIASES / folder_structure)
+_COMPANY_ENTITY: dict[str, str] = {
+    "SL":  "Artesta Store, S.L",
+    "LTD": "Artesta Stores (UK) Ltd",
+    "INC": "Artesta Inc",
+}
+
+# Drive path under <entity>/<year>/<yyyymm>/
+_RECON_FOLDER_PATH = ["income", "sales", "shopify"]
+
+
 def sync_payment_reconciliation_to_drive(
     *,
     settings: AppSettings,
@@ -347,25 +358,20 @@ def sync_payment_reconciliation_to_drive(
 ) -> PaymentReconciliationSyncResult:
     """Build the payment reconciliation xlsx and upload it to Drive.
 
-    Upload path: drive_folder_id (env RECONCILIATION_DRIVE_FOLDER_ID) or settings.drive_root_folder_id.
-    File name   : reconciliation_{company_code.lower()}_{period_yyyymm}.xlsx
-    """
-    import os
+    Default upload path (when drive_folder_id is not supplied):
+      <root> / <entity> / <year> / <yyyymm> / income / sales / shopify
+      e.g. ARTESTA - 6. Finances / Artesta Store, S.L / 2026 / 202602 / income / sales / shopify
 
+    File name: cotejo_pagos_{company_code.lower()}_{period_yyyymm}.xlsx
+    """
     if not settings.google_oauth_ready:
         raise RuntimeError("Google OAuth is not configured.")
+    if not settings.drive_root_folder_id and not drive_folder_id:
+        raise RuntimeError("GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.")
 
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
-
-    env_folder = os.environ.get("RECONCILIATION_DRIVE_FOLDER_ID", "").strip()
-    target_folder_id = drive_folder_id or env_folder or settings.drive_root_folder_id
-    if not target_folder_id:
-        raise RuntimeError(
-            "Drive folder not configured. Set RECONCILIATION_DRIVE_FOLDER_ID or "
-            "GOOGLE_DRIVE_ROOT_FOLDER_ID."
-        )
 
     report = build_reconciliation(
         database_url=database_url,
@@ -374,8 +380,25 @@ def sync_payment_reconciliation_to_drive(
     )
     content = build_reconciliation_workbook(report)
 
-    file_name = f"reconciliation_{company_code.lower()}_{period_yyyymm}.xlsx"
     client = GoogleDriveClient(settings.to_drive_config())
+
+    if drive_folder_id:
+        target_folder_id = drive_folder_id
+    else:
+        # Navigate: root → entity → year → yyyymm → income → sales → shopify
+        entity_name = _COMPANY_ENTITY.get(company_code.upper())
+        if not entity_name:
+            raise ValueError(
+                f"Unknown company_code '{company_code}'. "
+                f"Expected one of: {list(_COMPANY_ENTITY)}"
+            )
+        year = period_yyyymm[:4]
+        folder_id = settings.drive_root_folder_id
+        for part in [entity_name, year, period_yyyymm] + _RECON_FOLDER_PATH:
+            folder_id = str(client.ensure_folder(name=part, parent_id=folder_id)["id"])
+        target_folder_id = folder_id
+
+    file_name = f"cotejo_pagos_{company_code.lower()}_{period_yyyymm}.xlsx"
     existing = client.list_files(parent_id=target_folder_id, name=file_name)
     for item in existing:
         client.trash_file(file_id=str(item["id"]))
