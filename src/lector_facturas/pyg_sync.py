@@ -403,18 +403,24 @@ def sync_payment_reconciliation_to_drive(
     existing = client.list_files(parent_id=target_folder_id, name=file_name)
 
     # Before trashing the existing file, read the Bank Transfer sheet to
-    # preserve manually entered Pagado / Fecha cobro values.
+    # preserve manually entered Pagado / Fecha cobro values, and read Comments
+    # from all sheets to preserve manually entered comments.
     existing_payments: dict[str, tuple[str, str | None]] = {}
+    existing_comments: dict[str, str] = {}
     if existing:
         try:
             from io import BytesIO as _BytesIO
             from openpyxl import load_workbook as _load_workbook
             existing_bytes = client.download_file_bytes(file_id=str(existing[0]["id"]))
             wb_prev = _load_workbook(_BytesIO(existing_bytes), data_only=True)
+
+            def _is_order_row(oname: Any) -> bool:
+                return bool(oname and "-" in str(oname) and len(str(oname)) > 3)
+
             if "Bank Transfers" in wb_prev.sheetnames or "Bank Transfer" in wb_prev.sheetnames:
                 ws_bt = wb_prev["Bank Transfers"] if "Bank Transfers" in wb_prev.sheetnames else wb_prev["Bank Transfer"]
                 # Rows 1-2 are title/subtitle, row 3 is column headers, data starts row 4.
-                # Col A = order_name, Col J (10) = Pagado, Col K (11) = Fecha cobro.
+                # Col A = order_name, Col J (10) = Pagado, Col K (11) = Fecha cobro, Col L (12) = Comments.
                 for bt_row in ws_bt.iter_rows(min_row=4, values_only=True):
                     order_name = bt_row[0]
                     if not order_name:
@@ -429,6 +435,44 @@ def sync_payment_reconciliation_to_drive(
                     if pagado in ("Sí", "Si"):   pagado = "Yes"
                     if pagado == "Pendiente":     pagado = "Pending"
                     existing_payments[order_name_str] = (pagado, fecha_cobro)
+                    # Preserve Comments (index 11)
+                    comment_val = bt_row[11] if len(bt_row) > 11 else None
+                    if comment_val:
+                        existing_comments[order_name_str] = str(comment_val).strip()
+
+            # Read Comments from Shopify Payments sheet (col index 10)
+            if "Shopify Payments" in wb_prev.sheetnames:
+                ws_sp = wb_prev["Shopify Payments"]
+                for sp_row in ws_sp.iter_rows(min_row=1, values_only=True):
+                    oname = sp_row[0] if sp_row else None
+                    if not _is_order_row(oname):
+                        continue
+                    comment_val = sp_row[10] if len(sp_row) > 10 else None
+                    if comment_val:
+                        existing_comments[str(oname).strip()] = str(comment_val).strip()
+
+            # Read Comments from PayPal sheet (col index 10)
+            if "PayPal" in wb_prev.sheetnames:
+                ws_pp = wb_prev["PayPal"]
+                for pp_row in ws_pp.iter_rows(min_row=1, values_only=True):
+                    oname = pp_row[0] if pp_row else None
+                    if not _is_order_row(oname):
+                        continue
+                    comment_val = pp_row[10] if len(pp_row) > 10 else None
+                    if comment_val:
+                        existing_comments[str(oname).strip()] = str(comment_val).strip()
+
+            # Read Comments from Chargebacks sheet (col index 12)
+            if "Chargebacks" in wb_prev.sheetnames:
+                ws_cb = wb_prev["Chargebacks"]
+                for cb_row in ws_cb.iter_rows(min_row=1, values_only=True):
+                    oname = cb_row[0] if cb_row else None
+                    if not _is_order_row(oname):
+                        continue
+                    comment_val = cb_row[12] if len(cb_row) > 12 else None
+                    if comment_val:
+                        existing_comments[str(oname).strip()] = str(comment_val).strip()
+
         except Exception as exc:
             # Non-fatal: if reading fails we regenerate without preserved data
             print(
@@ -436,7 +480,11 @@ def sync_payment_reconciliation_to_drive(
                 flush=True,
             )
 
-    content = build_reconciliation_workbook(report, existing_payments=existing_payments or None)
+    content = build_reconciliation_workbook(
+        report,
+        existing_payments=existing_payments or None,
+        existing_comments=existing_comments or None,
+    )
 
     for item in existing:
         client.trash_file(file_id=str(item["id"]))

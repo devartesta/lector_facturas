@@ -138,12 +138,16 @@ CB_COLUMNS = [
 def build_reconciliation_workbook(
     report: ReconciliationReport,
     existing_payments: dict[str, tuple[str, str | None]] | None = None,
+    existing_comments: dict[str, str] | None = None,
 ) -> bytes:
     """Return the xlsx as bytes.
 
     existing_payments maps order_name → (pagado, fecha_cobro) from a previously
     generated workbook, so manual user edits in the Bank Transfer sheet survive
     monthly regenerations.
+
+    existing_comments maps order_name → comment string from a previously generated
+    workbook, so manually entered comments in any sheet survive regeneration.
     """
     wb = Workbook()
     wb.remove(wb.active)  # remove default sheet
@@ -153,10 +157,10 @@ def build_reconciliation_workbook(
     month_label = f"{MONTH_NAMES_EN[month - 1]} {year}"
 
     _add_summary_sheet(wb, report, month_label, existing_payments=existing_payments)
-    _add_channel_sheet(wb, "Shopify Payments", report.shopify, report, month_label)
-    _add_channel_sheet(wb, "PayPal",           report.paypal,  report, month_label)
-    _add_bank_transfer_sheet(wb, report, month_label, existing_payments=existing_payments)
-    _add_chargeback_sheet(wb, report, month_label)
+    _add_channel_sheet(wb, "Shopify Payments", report.shopify, report, month_label, existing_comments=existing_comments)
+    _add_channel_sheet(wb, "PayPal",           report.paypal,  report, month_label, existing_comments=existing_comments)
+    _add_bank_transfer_sheet(wb, report, month_label, existing_payments=existing_payments, existing_comments=existing_comments)
+    _add_chargeback_sheet(wb, report, month_label, existing_comments=existing_comments)
     _add_gift_card_sheet(wb, report, month_label)
 
     buf = BytesIO()
@@ -501,6 +505,7 @@ def _add_chargeback_sheet(
     wb: Workbook,
     report: ReconciliationReport,
     month_label: str,
+    existing_comments: dict[str, str] | None = None,
 ) -> None:
     ws = wb.create_sheet("Chargebacks")
 
@@ -554,6 +559,7 @@ def _add_chargeback_sheet(
               "'Won' = channel returned the funds (dispute_reversal received)."),
         items=shopify_cbs,
         paypal_warning=False,
+        existing_comments=existing_comments,
     )
 
     # ---- PayPal section ----
@@ -565,6 +571,7 @@ def _add_chargeback_sheet(
               "Confirm actual status in the PayPal Resolution Center."),
         items=paypal_cbs,
         paypal_warning=True,
+        existing_comments=existing_comments,
     )
 
     ws.freeze_panes = "A4"
@@ -578,6 +585,7 @@ def _write_cb_section(
     note: str,
     items: list[ChargebackInventoryRow],
     paypal_warning: bool,
+    existing_comments: dict[str, str] | None = None,
 ) -> int:
     """Write one channel block (header + col headers + rows + totals) in the chargeback sheet."""
     ncols = len(CB_COLUMNS) - 1  # CB_COLUMNS includes Canal which we drop here
@@ -650,7 +658,7 @@ def _write_cb_section(
             (r.net_impact,            RIGHT,  MONEY_FMT, BOLD),
             (status_label,            CENTER, None,      BOLD),
             (None,                    LEFT,   None,      LINK_FONT),
-            ("",                      LEFT,   None,      None),
+            (existing_comments.get(r.order_name, "") if existing_comments else "", LEFT, None, None),
         ]
         for col, (value, align, fmt, font) in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=value)
@@ -729,6 +737,7 @@ def _add_channel_sheet(
     recon: ChannelReconciliation,
     report: ReconciliationReport,
     month_label: str,
+    existing_comments: dict[str, str] | None = None,
 ) -> None:
     ws = wb.create_sheet(channel)
 
@@ -762,7 +771,7 @@ def _add_channel_sheet(
 
     for attr, sec_title, sec_explanation in SECTION_DEFS:
         rows_data: list[ReconciliationRow] = getattr(recon, attr)
-        row = _write_section(ws, row, sec_title, sec_explanation, rows_data)
+        row = _write_section(ws, row, sec_title, sec_explanation, rows_data, existing_comments=existing_comments)
 
     ws.freeze_panes = "A4"
 
@@ -773,6 +782,7 @@ def _write_section(
     title: str,
     explanation: str,
     rows: list[ReconciliationRow],
+    existing_comments: dict[str, str] | None = None,
 ) -> int:
     ncols    = len(COLUMNS)
     last_col = get_column_letter(ncols)
@@ -826,7 +836,7 @@ def _write_section(
             (None,                            LEFT,   None,      LINK_FONT),
             ("Sí" if data_row.is_gift_card else "",                CENTER, None, None),
             (_cb_label(data_row.chargeback_status, data_row.is_chargeback), CENTER, None, BOLD if data_row.is_chargeback else None),
-            ("",                              LEFT,   None,      None),
+            (existing_comments.get(data_row.order_name, "") if existing_comments else "", LEFT, None, None),
         ]
         for col, (value, align, num_fmt, font_override) in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=value)
@@ -891,6 +901,7 @@ def _add_bank_transfer_sheet(
     report: ReconciliationReport,
     month_label: str,
     existing_payments: dict[str, tuple[str, str | None]] | None = None,
+    existing_comments: dict[str, str] | None = None,
 ) -> None:
     """Sheet listing manual-gateway (Bank Transfer) orders with payment tracking columns.
 
@@ -971,7 +982,7 @@ def _add_bank_transfer_sheet(
             (None,                      LEFT,   None,      LINK_FONT),  # link placeholder
             (pagado,                    CENTER, None,      BOLD),        # Pagado
             (fecha_cobro,               CENTER, None,      NORMAL),      # Fecha cobro
-            ("",                        LEFT,   None,      NORMAL),      # Comentarios
+            (existing_comments.get(o.order_name, "") if existing_comments else "", LEFT, None, NORMAL),  # Comentarios
         ]
         for col, (value, align, fmt, font) in enumerate(vals, 1):
             c = ws.cell(row=row, column=col, value=value)
