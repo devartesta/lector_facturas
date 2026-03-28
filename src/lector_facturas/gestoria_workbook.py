@@ -90,7 +90,8 @@ class GestoriaReportData:
     region: str          # "EU", "UK", "US"
     resumen_rows: list[dict]   # raw rows from DB (filtered by currency + is_hannun_tag=0)
     detalle_rows: list[dict]   # raw rows from DB (filtered by currency)
-    fees_by_order: dict[str, Decimal]  # order_name → Shopify payout fee (INC only, else {})
+    fees_by_order: dict[str, Decimal]   # order_name → Shopify payout fee (INC only, else {})
+    monthly_total_fee: Decimal          # SUM(total_cost_amount) from payment_fee_monthly_summary (INC only, else 0)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +146,7 @@ def collect_gestoria_data(
         ).fetchall()
 
         fees_by_order: dict[str, Decimal] = {}
+        monthly_total_fee: Decimal = Decimal("0")
         if region == "US" and detalle_rows:
             order_names = [r["order_name"] for r in detalle_rows if r.get("order_name")]
             if order_names:
@@ -165,6 +167,19 @@ def collect_gestoria_data(
                     if r.get("order_name")
                 }
 
+            # Monthly total from payment_fee_monthly_summary — same source as PYG INC
+            fee_summary = conn.execute(
+                """
+                SELECT COALESCE(SUM(total_cost_amount), 0) AS total
+                FROM invoices.payment_fee_monthly_summary
+                WHERE company_code = %s
+                  AND period_yyyymm = %s
+                """,
+                (company_code.upper(), period_yyyymm),
+            ).fetchone()
+            if fee_summary:
+                monthly_total_fee = _dec(fee_summary["total"])
+
     return GestoriaReportData(
         period_yyyymm=period_yyyymm,
         company_code=company_code.upper(),
@@ -173,6 +188,7 @@ def collect_gestoria_data(
         resumen_rows=[dict(r) for r in resumen_rows],
         detalle_rows=[dict(r) for r in detalle_rows],
         fees_by_order=fees_by_order,
+        monthly_total_fee=monthly_total_fee,
     )
 
 
@@ -447,6 +463,34 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
     _cell(row, 8, float(grand_net.quantize(Decimal("0.01"))),
           font=WHITE_BOLD, fill=HEADER_FILL, align=RIGHT, fmt=MONEY_FMT)
     _cell(row, 9, None, font=WHITE_BOLD, fill=HEADER_FILL, align=CENTER)
+    row += 1
+
+    # ── Shopify fees block (INC / US only) ────────────────────────────────────
+    if data.region == "US" and data.monthly_total_fee > Decimal("0"):
+        _blank_row(row); row += 1
+
+        _sh(row, ROW_H + 1)
+        ws.merge_cells(f"A{row}:E{row}")
+        _cell(
+            row, 1,
+            "Shopify payment fees  (= PYG payment_fee_monthly_summary)",
+            font=BOLD, fill=TOTAL_FILL, align=LEFT,
+        )
+        _cell(row, 6, float(data.monthly_total_fee.quantize(Decimal("0.01"))),
+              font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+        for col in [7, 8, 9]:
+            _cell(row, col, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
+        row += 1
+
+        # Net after fees
+        net_after_fees = (grand_net - data.monthly_total_fee).quantize(Decimal("0.01"))
+        _sh(row, ROW_H + 1)
+        ws.merge_cells(f"A{row}:E{row}")
+        _cell(row, 1, "Net sales after Shopify fees", font=BOLD, fill=TOTAL_FILL, align=LEFT)
+        _cell(row, 6, float(net_after_fees),
+              font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+        for col in [7, 8, 9]:
+            _cell(row, col, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
 
 
 # ---------------------------------------------------------------------------
