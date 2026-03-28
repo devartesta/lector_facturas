@@ -284,18 +284,41 @@ def _make_cell_writer(ws: Any, last_col: str, ncols: int):
 def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str) -> None:
     ws = wb.create_sheet("Summary")
 
-    # Column widths  A  B   C   D   E   F    G    H    I
-    col_widths = [8, 13, 13, 13, 10, 15, 15, 15, 10]
+    has_fees = data.region == "US"
+
+    # Column widths  A  B   C   D   E   F    G    H    I     J(INC only)
+    base_widths = [8, 13, 13, 13, 10, 15, 15, 15, 10]
+    col_widths  = base_widths[:8] + [13, 10] if has_fees else base_widths
+    #              A   B   C   D   E   F   G   H  fee  status
     for idx, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(idx)].width = w
 
-    LAST_COL = "I"
-    NCOLS    = 9
+    NCOLS    = len(col_widths)
+    LAST_COL = get_column_letter(NCOLS)
+
+    # column numbers (1-based)
+    COL_FEE    = 9 if has_fees else None   # new fee column (INC only)
+    COL_STATUS = 10 if has_fees else 9
 
     _sh, _cell, _blank_row = _make_cell_writer(ws, LAST_COL, NCOLS)
 
     generated_ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     period       = data.period_yyyymm
+
+    # Pre-compute per-country-key fee totals from fees_by_order + detalle_rows
+    from collections import defaultdict as _defaultdict
+    fees_by_ck: dict[str, Decimal] = _defaultdict(Decimal)
+    if has_fees:
+        ck_for_order: dict[str, str] = {}
+        for dr in data.detalle_rows:
+            oname = dr.get("order_name")
+            if oname:
+                ck_for_order[str(oname)] = str(
+                    dr.get("shipping_state_code") or dr.get("shipping_country_code") or ""
+                )
+        for oname, fee in data.fees_by_order.items():
+            ck = ck_for_order.get(str(oname), "")
+            fees_by_ck[ck] += fee
 
     row = 1
 
@@ -341,32 +364,32 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
         "Gross",
         "VAT / Tax",
         "Net",
-        "Status",
     ]
+    if has_fees:
+        col_headers.append("Shopify fee")
+    col_headers.append("Status")
     for col, hdr in enumerate(col_headers, 1):
         _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
     row += 1
 
     # ── Data rows: aggregate resumen, group by country ─────────────────────────
-    # Build aggregated rows: group by (country_key, tax_rate_teorical, tax_rate_shopify,
-    # tax_rate_calculated) and sum numeric fields.
     agg: dict[tuple, dict] = {}
     for r in data.resumen_rows:
-        ck    = _country_key(r, data.region)
+        ck         = _country_key(r, data.region)
         teorical   = float(r.get("tax_rate_teorical")   or 0)
         shopify_r  = float(r.get("tax_rate_shopify")    or 0)
         calculated = float(r.get("tax_rate_calculated") or 0)
         key = (ck, teorical, shopify_r, calculated)
         if key not in agg:
             agg[key] = {
-                "country_key":          ck,
-                "tax_rate_teorical":    teorical,
-                "tax_rate_shopify":     shopify_r,
-                "tax_rate_calculated":  calculated,
-                "num_orders":           0,
-                "imp_sales_gross":      Decimal("0"),
-                "imp_sales_tax":        Decimal("0"),
-                "imp_sales_net":        Decimal("0"),
+                "country_key":         ck,
+                "tax_rate_teorical":   teorical,
+                "tax_rate_shopify":    shopify_r,
+                "tax_rate_calculated": calculated,
+                "num_orders":          0,
+                "imp_sales_gross":     Decimal("0"),
+                "imp_sales_tax":       Decimal("0"),
+                "imp_sales_net":       Decimal("0"),
             }
         agg[key]["num_orders"]      += int(r.get("num_orders") or 0)
         agg[key]["imp_sales_gross"] += _dec(r.get("imp_sales_gross"))
@@ -375,14 +398,14 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
 
     agg_rows = sorted(agg.values(), key=lambda x: (x["country_key"], x["tax_rate_teorical"]))
 
-    # Group by country_key
     grand_orders = 0
     grand_gross  = Decimal("0")
     grand_tax    = Decimal("0")
     grand_net    = Decimal("0")
+    grand_fee    = Decimal("0")
 
     for country_key, grp_iter in groupby(agg_rows, key=lambda x: x["country_key"]):
-        grp = list(grp_iter)
+        grp      = list(grp_iter)
         n_groups = len(grp)
 
         # Country header row
@@ -391,9 +414,7 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
         _cell(
             row, 1,
             f"{country_key} — {n_groups} rate group{'s' if n_groups != 1 else ''}",
-            font=WHITE_BOLD,
-            fill=SECTION_FILL,
-            align=LEFT,
+            font=WHITE_BOLD, fill=SECTION_FILL, align=LEFT,
         )
         row += 1
 
@@ -401,6 +422,7 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
         c_gross  = Decimal("0")
         c_tax    = Decimal("0")
         c_net    = Decimal("0")
+        c_fee    = fees_by_ck.get(country_key, Decimal("0")).quantize(Decimal("0.01"))
 
         for ar in grp:
             status = _vat_status(ar["tax_rate_shopify"], ar["tax_rate_teorical"])
@@ -411,15 +433,18 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
             net   = ar["imp_sales_net"].quantize(Decimal("0.01"))
 
             _sh(row)
-            _cell(row, 1, ar["country_key"],           font=NORMAL, fill=fill, align=LEFT)
-            _cell(row, 2, ar["tax_rate_teorical"],      font=NORMAL, fill=fill, align=CENTER, fmt="0%")
-            _cell(row, 3, ar["tax_rate_shopify"],       font=NORMAL, fill=fill, align=CENTER, fmt="0%")
-            _cell(row, 4, ar["tax_rate_calculated"],    font=NORMAL, fill=fill, align=CENTER, fmt="0%")
-            _cell(row, 5, ar["num_orders"],             font=NORMAL, fill=fill, align=CENTER)
-            _cell(row, 6, float(gross),                 font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
-            _cell(row, 7, float(tax),                   font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
-            _cell(row, 8, float(net),                   font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
-            _cell(row, 9, status,                       font=NORMAL, fill=fill, align=CENTER)
+            _cell(row, 1, ar["country_key"],        font=NORMAL, fill=fill, align=LEFT)
+            _cell(row, 2, ar["tax_rate_teorical"],   font=NORMAL, fill=fill, align=CENTER, fmt="0%")
+            _cell(row, 3, ar["tax_rate_shopify"],    font=NORMAL, fill=fill, align=CENTER, fmt="0%")
+            _cell(row, 4, ar["tax_rate_calculated"], font=NORMAL, fill=fill, align=CENTER, fmt="0%")
+            _cell(row, 5, ar["num_orders"],          font=NORMAL, fill=fill, align=CENTER)
+            _cell(row, 6, float(gross),              font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
+            _cell(row, 7, float(tax),                font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
+            _cell(row, 8, float(net),                font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
+            if has_fees:
+                # Fee shown only on the first rate-group row for this state (others blank)
+                _cell(row, COL_FEE, None, font=NORMAL, fill=fill, align=RIGHT, fmt=MONEY_FMT)
+            _cell(row, COL_STATUS, status, font=NORMAL, fill=fill, align=CENTER)
             row += 1
 
             c_orders += ar["num_orders"]
@@ -431,26 +456,35 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
         _sh(row, ROW_H + 1)
         ws.merge_cells(f"A{row}:D{row}")
         _cell(row, 1, f"  {country_key} subtotal", font=BOLD, fill=TOTAL_FILL, align=LEFT)
-        _cell(row, 5, c_orders,         font=BOLD, fill=TOTAL_FILL, align=CENTER)
+        _cell(row, 5, c_orders,
+              font=BOLD, fill=TOTAL_FILL, align=CENTER)
         _cell(row, 6, float(c_gross.quantize(Decimal("0.01"))),
               font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
         _cell(row, 7, float(c_tax.quantize(Decimal("0.01"))),
               font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
         _cell(row, 8, float(c_net.quantize(Decimal("0.01"))),
               font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-        # col I (status) — blank with fill
-        _cell(row, 9, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
+        if has_fees:
+            _cell(row, COL_FEE, float(c_fee),
+                  font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, COL_STATUS, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
         row += 1
 
         grand_orders += c_orders
         grand_gross  += c_gross
         grand_tax    += c_tax
         grand_net    += c_net
+        grand_fee    += c_fee
 
     # Blank row before grand total
     _blank_row(row); row += 1
 
-    # Grand total row
+    # Grand total row — fee uses monthly_total_fee (= PYG source) if available,
+    # else falls back to sum of per-state fees
+    grand_fee_total = (
+        data.monthly_total_fee if data.monthly_total_fee > Decimal("0") else grand_fee
+    ).quantize(Decimal("0.01"))
+
     _sh(row, ROW_H + 2)
     ws.merge_cells(f"A{row}:D{row}")
     _cell(row, 1, "GRAND TOTAL", font=WHITE_BOLD, fill=HEADER_FILL, align=LEFT)
@@ -462,35 +496,10 @@ def _add_summary_sheet(wb: Workbook, data: GestoriaReportData, month_label: str)
           font=WHITE_BOLD, fill=HEADER_FILL, align=RIGHT, fmt=MONEY_FMT)
     _cell(row, 8, float(grand_net.quantize(Decimal("0.01"))),
           font=WHITE_BOLD, fill=HEADER_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 9, None, font=WHITE_BOLD, fill=HEADER_FILL, align=CENTER)
-    row += 1
-
-    # ── Shopify fees block (INC / US only) ────────────────────────────────────
-    if data.region == "US" and data.monthly_total_fee > Decimal("0"):
-        _blank_row(row); row += 1
-
-        _sh(row, ROW_H + 1)
-        ws.merge_cells(f"A{row}:E{row}")
-        _cell(
-            row, 1,
-            "Shopify payment fees  (= PYG payment_fee_monthly_summary)",
-            font=BOLD, fill=TOTAL_FILL, align=LEFT,
-        )
-        _cell(row, 6, float(data.monthly_total_fee.quantize(Decimal("0.01"))),
-              font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-        for col in [7, 8, 9]:
-            _cell(row, col, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
-        row += 1
-
-        # Net after fees
-        net_after_fees = (grand_net - data.monthly_total_fee).quantize(Decimal("0.01"))
-        _sh(row, ROW_H + 1)
-        ws.merge_cells(f"A{row}:E{row}")
-        _cell(row, 1, "Net sales after Shopify fees", font=BOLD, fill=TOTAL_FILL, align=LEFT)
-        _cell(row, 6, float(net_after_fees),
-              font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-        for col in [7, 8, 9]:
-            _cell(row, col, None, font=BOLD, fill=TOTAL_FILL, align=CENTER)
+    if has_fees:
+        _cell(row, COL_FEE, float(grand_fee_total),
+              font=WHITE_BOLD, fill=HEADER_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, COL_STATUS, None, font=WHITE_BOLD, fill=HEADER_FILL, align=CENTER)
 
 
 # ---------------------------------------------------------------------------
