@@ -51,8 +51,12 @@ COMPANY_CURRENCY: dict[str, str] = {
 }
 
 # Chargeback status labels
-CB_OPEN = "En disputa"   # withdrawal/hold present, no reversal yet
-CB_WON  = "Ganado"       # reversal received — dispute resolved in our favour
+CB_OPEN = "En disputa"          # withdrawal/hold present, no reversal yet
+CB_WON  = "Ganado"              # reversal received — dispute resolved in our favour
+CB_LOST = "Probablemente perdido"  # no reversal after CB_LOST_DAYS — assumed lost
+
+# Disputes older than this many days without reversal are flagged as CB_LOST
+CB_LOST_DAYS = 75
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +86,20 @@ class ChannelReconciliation:
 
 
 @dataclass
+class B2BOrderRow:
+    """One manual-payment (gateway='manual') order for the period."""
+    order_name: str
+    order_date: str | None
+    shipping_country_code: str | None
+    category: str | None               # tags field
+    vat_pct: Decimal
+    base: Decimal
+    vat: Decimal
+    total: Decimal
+    shopify_url: str | None
+
+
+@dataclass
 class ChargebackInventoryRow:
     """One row per order that has had a chargeback in the last 12 months."""
     channel: str                        # "Shopify" or "PayPal"
@@ -94,8 +112,9 @@ class ChargebackInventoryRow:
     withdrawal_amount: Decimal | None   # amount retained (always negative — outflow)
     reversal_date: str | None           # date dispute was resolved (None if still open)
     reversal_amount: Decimal | None     # amount returned (positive, None if still open)
-    net_impact: Decimal | None          # withdrawal + reversal (0 if won, negative if open)
-    status: str                         # CB_OPEN or CB_WON
+    net_impact: Decimal | None          # withdrawal + reversal (0 if won, negative if open/lost)
+    days_open: int | None               # days since withdrawal (or until reversal if won)
+    status: str                         # CB_OPEN, CB_WON, or CB_LOST
     shopify_url: str | None
 
 
@@ -106,6 +125,7 @@ class ReconciliationReport:
     shopify: ChannelReconciliation = field(default_factory=ChannelReconciliation)
     paypal: ChannelReconciliation = field(default_factory=ChannelReconciliation)
     chargeback_inventory: list[ChargebackInventoryRow] = field(default_factory=list)
+    b2b_orders: list[B2BOrderRow] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +300,32 @@ def build_reconciliation(
             (currency,),
         ).fetchall()
 
+        # -- B2B / manual payment orders for the period (gateway='manual',
+        #    excluding Hannun and Rever, non-zero gross) --
+        b2b_rows = conn.execute(
+            """
+            SELECT
+                order_name,
+                order_date,
+                shipping_country_code,
+                tags,
+                tax_rate,
+                SUM(shown_tax_presentment)  AS iva,
+                SUM(shown_net_presentment)  AS base,
+                SUM(shown_gross_presentment) AS total
+            FROM finance.informe_vat_gestorias_detalle
+            WHERE order_month_yyyymm = %s
+              AND payment_currency   = %s
+              AND shown_gross_presentment <> 0
+              AND is_hannun_tag = 0
+              AND is_rever_tag  = 0
+              AND payment_gateway_names @> '[\"manual\"]'::jsonb
+            GROUP BY order_name, order_date, shipping_country_code, tags, tax_rate
+            ORDER BY order_name
+            """,
+            (period_yyyymm, currency),
+        ).fetchall()
+
         # -- Gift card orders (product is a gift card, not paid with gift card) --
         gift_card_rows = conn.execute(
             """
@@ -311,9 +357,16 @@ def build_reconciliation(
                 SUM(CASE WHEN type = 'dispute_reversal' THEN amount ELSE 0 END)
                                AS reversal_amount,
                 CASE
-                    WHEN bool_or(type = 'dispute_reversal')  THEN 'Ganado'
-                    ELSE 'En disputa'
-                END            AS status
+                    WHEN bool_or(type = 'dispute_reversal') THEN
+                        EXTRACT(DAY FROM (
+                            MIN(CASE WHEN type = 'dispute_reversal' THEN transaction_date END)
+                            - MIN(CASE WHEN type = 'dispute_withdrawal' THEN transaction_date END)
+                        ))::int
+                    ELSE
+                        (current_date
+                         - MIN(CASE WHEN type = 'dispute_withdrawal'
+                                    THEN transaction_date END)::date)
+                END            AS days_open
             FROM invoices.shopify_payout_transactions
             WHERE company_code = %s
               AND type IN ('dispute_withdrawal', 'dispute_reversal')
@@ -321,8 +374,7 @@ def build_reconciliation(
               AND order_name IS NOT NULL AND order_name <> ''
             GROUP BY order_name
             ORDER BY
-                CASE WHEN bool_or(type = 'dispute_reversal') THEN 1 ELSE 0 END ASC,  -- open first
-                MIN(transaction_date) DESC
+                MIN(CASE WHEN type = 'dispute_withdrawal' THEN transaction_date END) DESC
             """,
             (company_code,),
         ).fetchall()
@@ -347,9 +399,16 @@ def build_reconciliation(
                 SUM(CASE WHEN t.tipo = 'T1112' THEN t.bruto ELSE 0 END)
                                AS reversal_amount,
                 CASE
-                    WHEN bool_or(t.tipo = 'T1112') THEN 'Ganado'
-                    ELSE 'En disputa'
-                END            AS status
+                    WHEN bool_or(t.tipo = 'T1112') THEN
+                        EXTRACT(DAY FROM (
+                            MIN(CASE WHEN t.tipo = 'T1112' THEN t.transaction_date END)
+                            - MIN(CASE WHEN t.tipo = 'T1111' THEN t.transaction_date END)
+                        ))::int
+                    ELSE
+                        (current_date
+                         - MIN(CASE WHEN t.tipo = 'T1111'
+                                    THEN t.transaction_date END)::date)
+                END            AS days_open
             FROM invoices.paypal_transactions_raw t
             LEFT JOIN invoices.paypal_transactions_raw parent
                 ON parent.transaction_id    = t.reference_transaction_id
@@ -363,9 +422,7 @@ def build_reconciliation(
                 OR (parent.shopify_order_name IS NOT NULL AND parent.shopify_order_name <> '')
               )
             GROUP BY COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
-            ORDER BY
-                CASE WHEN bool_or(t.tipo = 'T1112') THEN 1 ELSE 0 END ASC,
-                MIN(t.transaction_date) DESC
+            ORDER BY MIN(t.transaction_date) DESC
             """,
             (company_code,),
         ).fetchall()
@@ -478,14 +535,21 @@ def build_reconciliation(
     # -- Chargeback inventory --
     chargeback_inventory: list[ChargebackInventoryRow] = []
 
+    def _cb_status(has_reversal: bool, days: int | None) -> str:
+        if has_reversal:
+            return CB_WON
+        if days is not None and days >= CB_LOST_DAYS:
+            return CB_LOST
+        return CB_OPEN
+
     for r in shopify_cb_rows:
-        name  = r["order_name"]
-        acct  = cb_acct_map.get(name)
-        w_amt = _qdec(r["withdrawal_amount"])   # negative (Shopify stores as negative)
-        v_amt = _qdec(r["reversal_amount"])      # positive (money returned)
-        net   = None
-        if w_amt is not None:
-            net = (w_amt + (v_amt or Decimal("0"))).quantize(Decimal("0.01"))
+        name     = r["order_name"]
+        acct     = cb_acct_map.get(name)
+        days     = int(r["days_open"]) if r["days_open"] is not None else None
+        has_rev  = bool(r.get("reversal_date"))
+        w_amt    = _qdec(r["withdrawal_amount"])   # negative (Shopify stores as negative)
+        v_amt    = _qdec(r["reversal_amount"])      # positive (money returned)
+        net      = (w_amt + (v_amt or Decimal("0"))).quantize(Decimal("0.01")) if w_amt else None
         chargeback_inventory.append(ChargebackInventoryRow(
             channel="Shopify",
             order_name=name,
@@ -498,20 +562,21 @@ def build_reconciliation(
             reversal_date=r["reversal_date"] or None,
             reversal_amount=v_amt if v_amt and v_amt != Decimal("0") else None,
             net_impact=net,
-            status=r["status"],
+            days_open=days,
+            status=_cb_status(has_rev, days),
             shopify_url=_shopify_url(pedido_id_map.get(name), r.get("order_id")),
         ))
 
     for r in paypal_cb_rows:
-        name  = r["order_name"]
-        acct  = cb_acct_map.get(name)
+        name    = r["order_name"]
+        acct    = cb_acct_map.get(name)
+        days    = int(r["days_open"]) if r["days_open"] is not None else None
+        has_rev = bool(r.get("reversal_date"))
         # PayPal stores T1111 bruto as positive; financial impact is negative
         w_raw = _qdec(r["withdrawal_amount"])
         w_amt = (-w_raw).quantize(Decimal("0.01")) if w_raw else None
         v_amt = _qdec(r["reversal_amount"])
-        net   = None
-        if w_amt is not None:
-            net = (w_amt + (v_amt or Decimal("0"))).quantize(Decimal("0.01"))
+        net   = (w_amt + (v_amt or Decimal("0"))).quantize(Decimal("0.01")) if w_amt else None
         chargeback_inventory.append(ChargebackInventoryRow(
             channel="PayPal",
             order_name=name,
@@ -524,14 +589,31 @@ def build_reconciliation(
             reversal_date=r["reversal_date"] or None,
             reversal_amount=v_amt if v_amt and v_amt != Decimal("0") else None,
             net_impact=net,
-            status=r["status"],
+            days_open=days,
+            status=_cb_status(has_rev, days),
             shopify_url=_shopify_url(pedido_id_map.get(name), None),
         ))
 
-    # Sort: open first, then won; within each group most recent first
+    # Sort: lost first, then open, then won; within each group newest first
+    _status_order = {CB_LOST: 0, CB_OPEN: 1, CB_WON: 2}
     chargeback_inventory.sort(
-        key=lambda x: (0 if x.status == CB_OPEN else 1, x.withdrawal_date or "")
+        key=lambda x: (_status_order.get(x.status, 9), x.withdrawal_date or "")
     )
+
+    b2b_orders: list[B2BOrderRow] = [
+        B2BOrderRow(
+            order_name=r["order_name"],
+            order_date=str(r["order_date"]) if r["order_date"] else None,
+            shipping_country_code=str(r["shipping_country_code"]) if r["shipping_country_code"] else None,
+            category=str(r["tags"]) if r["tags"] else None,
+            vat_pct=_qdec(r["tax_rate"]) or Decimal("0"),
+            base=_qdec(r["base"]) or Decimal("0"),
+            vat=_qdec(r["iva"]) or Decimal("0"),
+            total=_qdec(r["total"]) or Decimal("0"),
+            shopify_url=_shopify_url(pedido_id_map.get(r["order_name"]), None),
+        )
+        for r in b2b_rows
+    ]
 
     return ReconciliationReport(
         period_yyyymm=period_yyyymm,
@@ -539,4 +621,5 @@ def build_reconciliation(
         shopify=_reconcile(shopify_acct, shopify_pay),
         paypal=_reconcile(paypal_acct, paypal_pay),
         chargeback_inventory=chargeback_inventory,
+        b2b_orders=b2b_orders,
     )
