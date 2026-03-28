@@ -406,3 +406,17 @@ class PaymentReconciliationSyncOut(BaseModel):
     paypal_amount_diff: int
     drive_file_name: str
     drive_file_url: str
+
+
+class GestoriaSyncIn(BaseModel):
+    company_code: str       # "SL", "LTD" or "INC"
+    period_yyyymm: str      # e.g. "202602"
+
+
+class GestoriaSyncOut(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    n_resumen_rows: int
+    n_detalle_rows: int
+    drive_file_name: str
+    drive_file_url: str

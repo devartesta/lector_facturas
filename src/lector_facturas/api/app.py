@@ -41,6 +41,8 @@ from lector_facturas.api.schemas import (
     ReviewItemOut,
     ReviewDigestRunIn,
     ReviewDigestRunOut,
+    GestoriaSyncIn,
+    GestoriaSyncOut,
     PaymentReconciliationSyncIn,
     PaymentReconciliationSyncOut,
     StockDetailSyncOut,
@@ -67,7 +69,7 @@ from lector_facturas.invoice_ingestion import (
     process_validation_drive_file,
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
-from lector_facturas.pyg_sync import sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
+from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
     build_nightly_review_digest_email,
@@ -1156,6 +1158,33 @@ def create_app() -> FastAPI:
             paypal_only_accounting=result.paypal_only_accounting,
             paypal_only_payment=result.paypal_only_payment,
             paypal_amount_diff=result.paypal_amount_diff,
+            drive_file_name=result.drive_file_name,
+            drive_file_url=result.drive_file_url,
+        )
+
+    @app.post("/supply/gestoria/sync", response_model=GestoriaSyncOut)
+    def sync_gestoria(
+        payload: GestoriaSyncIn,
+        settings: AppSettings = Depends(get_settings),
+    ) -> GestoriaSyncOut:
+        """Build the VAT gestoria xlsx (shopify_sales) and upload it to Drive.
+
+        Generates a sales + VAT breakdown by country and order for
+        the given company_code and period_yyyymm.
+        """
+        try:
+            result = sync_gestoria_to_drive(
+                settings=settings,
+                company_code=payload.company_code,
+                period_yyyymm=payload.period_yyyymm,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return GestoriaSyncOut(
+            company_code=result.company_code,
+            period_yyyymm=result.period_yyyymm,
+            n_resumen_rows=result.n_resumen_rows,
+            n_detalle_rows=result.n_detalle_rows,
             drive_file_name=result.drive_file_name,
             drive_file_url=result.drive_file_url,
         )
