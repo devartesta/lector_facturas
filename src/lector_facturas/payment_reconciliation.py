@@ -31,7 +31,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from lector_facturas.payment_fees import ShopifyPaymentsConfig
 
 try:
     import psycopg
@@ -51,9 +59,9 @@ COMPANY_CURRENCY: dict[str, str] = {
 }
 
 # Chargeback status labels
-CB_OPEN = "En disputa"          # withdrawal/hold present, no reversal yet
-CB_WON  = "Ganado"              # reversal received — dispute resolved in our favour
-CB_LOST = "Probablemente perdido"  # no reversal after CB_LOST_DAYS — assumed lost
+CB_OPEN = "In dispute"      # withdrawal/hold present, no reversal yet
+CB_WON  = "Won"             # reversal received — dispute resolved in our favour
+CB_LOST = "Likely lost"     # no reversal after CB_LOST_DAYS — assumed lost
 
 # Disputes older than this many days without reversal are flagged as CB_LOST
 CB_LOST_DAYS = 75
@@ -119,6 +127,22 @@ class ChargebackInventoryRow:
 
 
 @dataclass
+class GiftCardRow:
+    """One gift card issued by the store (sold as a product)."""
+    gift_card_id: int
+    code_last4: str             # last 4 characters of the gift card code
+    currency: str
+    initial_value: Decimal
+    balance: Decimal
+    amount_used: Decimal        # initial_value - balance
+    pct_used: Decimal           # fraction 0–1
+    created_at: str             # "DD/MM/YYYY"
+    expires_on: str | None      # "DD/MM/YYYY" or None
+    order_name: str | None      # e.g. "AS-12345" (order that sold the gift card)
+    shopify_url: str | None     # link to the originating order
+
+
+@dataclass
 class ReconciliationReport:
     period_yyyymm: str
     company_code: str
@@ -126,6 +150,12 @@ class ReconciliationReport:
     paypal: ChannelReconciliation = field(default_factory=ChannelReconciliation)
     chargeback_inventory: list[ChargebackInventoryRow] = field(default_factory=list)
     b2b_orders: list[B2BOrderRow] = field(default_factory=list)
+    gift_card_inventory: list[GiftCardRow] = field(default_factory=list)
+    # Grand totals for the summary sheet (all orders, including matching ones)
+    shopify_accounting_total: Decimal = field(default_factory=lambda: Decimal("0"))
+    shopify_payment_total:    Decimal = field(default_factory=lambda: Decimal("0"))
+    paypal_accounting_total:  Decimal = field(default_factory=lambda: Decimal("0"))
+    paypal_payment_total:     Decimal = field(default_factory=lambda: Decimal("0"))
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +198,171 @@ def _qdec(val: object) -> Decimal | None:
 
 
 # ---------------------------------------------------------------------------
+# Gift card helpers (Shopify REST API)
+# ---------------------------------------------------------------------------
+
+def _shopify_access_token(config: "ShopifyPaymentsConfig") -> str:
+    """Obtain a short-lived OAuth access token for the Shopify Admin API."""
+    body = urlencode({
+        "grant_type": "client_credentials",
+        "client_id": config.client_id,
+        "client_secret": config.client_secret,
+    }).encode("utf-8")
+    req = Request(
+        f"https://{config.normalized_shop_name}.myshopify.com/admin/oauth/access_token",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Shopify token request failed: {exc.code} {detail}") from exc
+    return str(payload["access_token"])
+
+
+def _next_page_url(link_header: str) -> str | None:
+    """Parse a Shopify 'Link' response header and return the rel="next" URL."""
+    for part in link_header.split(","):
+        part = part.strip()
+        if 'rel="next"' in part:
+            url_part = part.split(";")[0].strip()
+            if url_part.startswith("<") and url_part.endswith(">"):
+                return url_part[1:-1]
+    return None
+
+
+def _shopify_rest_get(url: str, token: str) -> tuple[Any, str]:
+    """Make a GET request to the Shopify Admin REST API.
+
+    Returns (response_body_as_dict, link_header_str).
+    """
+    req = Request(
+        url,
+        headers={
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(req, timeout=60) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            link_header = resp.headers.get("Link", "")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Shopify REST request failed [{exc.code}]: {detail}") from exc
+    return body, link_header
+
+
+def fetch_gift_cards(
+    config: "ShopifyPaymentsConfig",
+    *,
+    conn: Any,
+    lookback_months: int = 12,
+) -> list[GiftCardRow]:
+    """Fetch all gift cards created in the last *lookback_months* months.
+
+    Calls the Shopify Admin REST API (/admin/api/{version}/gift_cards.json)
+    for both enabled and disabled cards, handles cursor-based pagination,
+    then enriches each card with the originating order_name via a DB lookup.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30 * lookback_months)
+    created_at_min = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    token = _shopify_access_token(config)
+    base_url = (
+        f"https://{config.normalized_shop_name}.myshopify.com"
+        f"/admin/api/{config.api_version}/gift_cards.json"
+    )
+
+    all_cards: list[dict] = []
+    seen_ids: set[int] = set()
+
+    for status in ("enabled", "disabled"):
+        url: str | None = (
+            f"{base_url}?status={status}&created_at_min={created_at_min}&limit=250"
+        )
+        while url:
+            payload, link_header = _shopify_rest_get(url, token)
+            for card in payload.get("gift_cards", []):
+                cid = int(card.get("id", 0))
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    all_cards.append(card)
+            url = _next_page_url(link_header)
+
+    # Build order_name lookup: numeric Shopify order_id → pedido_id (order_name)
+    raw_order_ids = [str(int(c["order_id"])) for c in all_cards if c.get("order_id")]
+    order_name_map: dict[str, str] = {}
+    if raw_order_ids:
+        try:
+            rows = conn.execute(
+                """
+                SELECT order_id::text AS numeric_id, pedido_id
+                FROM shopify.orders
+                WHERE order_id::text = ANY(%s)
+                """,
+                (raw_order_ids,),
+            ).fetchall()
+            for r in rows:
+                order_name_map[str(r["numeric_id"])] = str(r["pedido_id"])
+        except Exception:  # noqa: BLE001
+            pass  # order names are optional; URLs still work without them
+
+    # Sort newest first
+    all_cards.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+
+    result: list[GiftCardRow] = []
+    for card in all_cards:
+        iv  = Decimal(str(card.get("initial_value") or "0")).quantize(Decimal("0.01"))
+        bal = Decimal(str(card.get("balance")       or "0")).quantize(Decimal("0.01"))
+        used = (iv - bal).quantize(Decimal("0.01"))
+        pct  = (used / iv).quantize(Decimal("0.0001")) if iv != Decimal("0") else Decimal("0")
+
+        created_raw = card.get("created_at", "")
+        created_str = ""
+        if created_raw:
+            try:
+                dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                created_str = dt.strftime("%d/%m/%Y")
+            except ValueError:
+                created_str = created_raw[:10]
+
+        expires_raw = card.get("expires_on")  # "YYYY-MM-DD" or None
+        expires_str: str | None = None
+        if expires_raw:
+            try:
+                expires_str = datetime.strptime(expires_raw, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except ValueError:
+                expires_str = expires_raw
+
+        order_id_raw = card.get("order_id")
+        order_id_str = str(int(order_id_raw)) if order_id_raw else None
+        order_name   = order_name_map.get(order_id_str) if order_id_str else None
+        shopify_url  = (
+            f"{SHOPIFY_ADMIN_BASE}/{order_id_str}" if order_id_str else None
+        )
+
+        result.append(GiftCardRow(
+            gift_card_id=int(card["id"]),
+            code_last4=str(card.get("last_characters", "")),
+            currency=str(card.get("currency", "")),
+            initial_value=iv,
+            balance=bal,
+            amount_used=used,
+            pct_used=pct,
+            created_at=created_str,
+            expires_on=expires_str,
+            order_name=order_name,
+            shopify_url=shopify_url,
+        ))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -176,8 +371,15 @@ def build_reconciliation(
     database_url: str,
     company_code: str,
     period_yyyymm: str,
+    shopify_config: "ShopifyPaymentsConfig | None" = None,
+    gift_card_lookback_months: int = 12,
 ) -> ReconciliationReport:
-    """Query DB and return a ReconciliationReport for company_code / period_yyyymm."""
+    """Query DB and return a ReconciliationReport for company_code / period_yyyymm.
+
+    If *shopify_config* is provided, the gift card inventory (last
+    *gift_card_lookback_months* months) is fetched from the Shopify Admin API
+    and included in the report. Without it, gift_card_inventory is empty.
+    """
     if psycopg is None:
         raise RuntimeError("psycopg is not installed.")
 
@@ -234,8 +436,8 @@ def build_reconciliation(
                     'dispute_withdrawal', 'dispute_reversal'
                 ))                                     AS tiene_chargeback,
                 CASE
-                    WHEN bool_or(type = 'dispute_reversal')   THEN 'Ganado'
-                    WHEN bool_or(type = 'dispute_withdrawal')  THEN 'En disputa'
+                    WHEN bool_or(type = 'dispute_reversal')   THEN 'Won'
+                    WHEN bool_or(type = 'dispute_withdrawal')  THEN 'In dispute'
                     ELSE NULL
                 END                                    AS chargeback_status
             FROM invoices.shopify_payout_transactions
@@ -266,8 +468,8 @@ def build_reconciliation(
                 )                       AS importe_pago,
                 bool_or(t.tipo = 'T1111') AS tiene_chargeback,
                 CASE
-                    WHEN bool_or(t.tipo = 'T1112') THEN 'Ganado'
-                    WHEN bool_or(t.tipo = 'T1111') THEN 'En disputa'
+                    WHEN bool_or(t.tipo = 'T1112') THEN 'Won'
+                    WHEN bool_or(t.tipo = 'T1111') THEN 'In dispute'
                     ELSE NULL
                 END                     AS chargeback_status
             FROM invoices.paypal_transactions_raw t
@@ -300,7 +502,7 @@ def build_reconciliation(
             (currency,),
         ).fetchall()
 
-        # -- B2B / manual payment orders for the period (gateway='manual',
+        # -- B2B / manual payment orders for the period (gateway='manual', [] or [""],
         #    excluding Hannun and Rever, non-zero gross) --
         b2b_rows = conn.execute(
             """
@@ -319,12 +521,32 @@ def build_reconciliation(
               AND shown_gross_presentment <> 0
               AND is_hannun_tag = 0
               AND is_rever_tag  = 0
-              AND payment_gateway_names @> '[\"manual\"]'::jsonb
+              AND (
+                  payment_gateway_names @> '[\"manual\"]'::jsonb
+               OR payment_gateway_names = '[]'::jsonb
+               OR payment_gateway_names @> '[\"\"]'::jsonb
+              )
             GROUP BY order_name, order_date, shipping_country_code, tags, tax_rate
             ORDER BY order_name
             """,
             (period_yyyymm, currency),
         ).fetchall()
+
+        # -- Shopify numeric order_id for B2B orders (for building hyperlinks) --
+        # finance.order_sales does not always have entries for manual orders,
+        # so we query shopify.orders directly.
+        b2b_order_names = [r["order_name"] for r in b2b_rows if r["order_name"]]
+        if b2b_order_names:
+            b2b_shopify_id_rows = conn.execute(
+                """
+                SELECT pedido_id, order_id::text AS shopify_numeric_id
+                FROM shopify.orders
+                WHERE pedido_id = ANY(%s)
+                """,
+                (b2b_order_names,),
+            ).fetchall()
+        else:
+            b2b_shopify_id_rows = []
 
         # -- Gift card orders (product is a gift card, not paid with gift card) --
         gift_card_rows = conn.execute(
@@ -451,8 +673,32 @@ def build_reconciliation(
         else:
             cb_acct_rows = []
 
+        # Gift cards: Shopify Admin REST API + DB order_name enrichment.
+        # This is done inside the open connection so fetch_gift_cards can
+        # join against shopify.orders without re-opening a second connection.
+        _gc_from_api: list[GiftCardRow] = []
+        if shopify_config is not None:
+            try:
+                all_gcs = fetch_gift_cards(
+                    shopify_config,
+                    conn=conn,
+                    lookback_months=gift_card_lookback_months,
+                )
+                # Only keep gift cards denominated in this company's currency
+                # (SL=EUR, LTD=GBP, INC=USD) — the Shopify API returns all currencies.
+                _gc_from_api = [gc for gc in all_gcs if gc.currency == currency]
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[recon] WARNING: could not fetch gift cards from Shopify API: {exc}",
+                    flush=True,
+                )
+
     # Build lookup maps
     pedido_id_map: dict[str, str] = {r["order_name"]: r["pedido_id"] for r in pedido_rows}
+    # Numeric Shopify order_id for B2B orders (pedido_id = order_name like "AS-XXXXX")
+    b2b_shopify_id_map: dict[str, str] = {
+        r["pedido_id"]: r["shopify_numeric_id"] for r in b2b_shopify_id_rows
+    }
     gift_card_orders: set[str] = {r["order_name"] for r in gift_card_rows}
     cb_acct_map: dict[str, dict] = {r["order_name"]: dict(r) for r in cb_acct_rows}
 
@@ -610,16 +856,43 @@ def build_reconciliation(
             base=_qdec(r["base"]) or Decimal("0"),
             vat=_qdec(r["iva"]) or Decimal("0"),
             total=_qdec(r["total"]) or Decimal("0"),
-            shopify_url=_shopify_url(pedido_id_map.get(r["order_name"]), None),
+            shopify_url=_shopify_url(
+                b2b_shopify_id_map.get(r["order_name"])
+                or pedido_id_map.get(r["order_name"]),
+                None,
+            ),
         )
         for r in b2b_rows
     ]
 
+    # Grand totals (all orders, including matching ones) for the summary sheet
+    _D0 = Decimal("0")
+    shopify_recon = _reconcile(shopify_acct, shopify_pay)
+    paypal_recon  = _reconcile(paypal_acct,  paypal_pay)
+
+    shopify_accounting_total = sum(
+        (_qdec(v["importe_contab"]) or _D0 for v in shopify_acct.values()), _D0
+    ).quantize(Decimal("0.01"))
+    shopify_payment_total = sum(
+        (_qdec(_dec(v["importe_pago"])) or _D0 for v in shopify_pay.values()), _D0
+    ).quantize(Decimal("0.01"))
+    paypal_accounting_total = sum(
+        (_qdec(v["importe_contab"]) or _D0 for v in paypal_acct.values()), _D0
+    ).quantize(Decimal("0.01"))
+    paypal_payment_total = sum(
+        (_qdec(_dec(v["importe_pago"])) or _D0 for v in paypal_pay.values()), _D0
+    ).quantize(Decimal("0.01"))
+
     return ReconciliationReport(
         period_yyyymm=period_yyyymm,
         company_code=company_code,
-        shopify=_reconcile(shopify_acct, shopify_pay),
-        paypal=_reconcile(paypal_acct, paypal_pay),
+        shopify=shopify_recon,
+        paypal=paypal_recon,
         chargeback_inventory=chargeback_inventory,
         b2b_orders=b2b_orders,
+        gift_card_inventory=_gc_from_api,
+        shopify_accounting_total=shopify_accounting_total,
+        shopify_payment_total=shopify_payment_total,
+        paypal_accounting_total=paypal_accounting_total,
+        paypal_payment_total=paypal_payment_total,
     )

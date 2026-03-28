@@ -1,18 +1,63 @@
-"""Build the VAT gestoría Excel workbook.
+"""Build the shopify_sales gestoría Excel workbook.
 
-Two sheets:
-  1. Summary  — aggregated view by country × VAT rate with subtotals
-  2. Detail   — one row per order with discrepancy highlighting
+Generates a two-sheet .xlsx for a single company + month that is
+uploaded to Google Drive by ``pyg_sync.sync_gestoria_to_drive()``.
+
+Output file name: ``shopify_sales_{company_code}_{yyyymm}.xlsx``
+Drive path:       ``{root}/{entity}/{year}/{yyyymm}/income/sales/shopify/``
+
+Sheets
+------
+1. **Summary** — aggregated view by country × VAT rate.
+   Rows are grouped by country (or US state for INC) with section headers,
+   per-rate data rows, country subtotals and a grand total.
+   Cells in WARN_FILL (yellow) indicate a discrepancy between the Shopify
+   VAT rate and the theoretical rate (only flagged when both > 0 and
+   |diff| > 0.001 — zero-rated orders are not flagged).
+   For INC a ``Shopify fee`` column is added with fees per state sourced
+   from ``invoices.shopify_payout_transactions``.  The grand-total fee
+   uses ``invoices.payment_fee_monthly_summary.total_cost_amount`` so it
+   matches the "SHOPIFY" line in the INC P&G workbook exactly.
+
+2. **Detail** — one row per order.
+   Columns: Date · Order# · Country · State · VAT rate ×3 · Gross ·
+   VAT/Tax · Net · [Shopify fee — INC only] · Discrepancy ·
+   Payment gateways · Hannun · Rever.
+   Rows with |discrepancy| > 0.01 are highlighted in yellow.
 
 Data sources
 ------------
-  finance.informe_vat_gestorias_resumen_{yyyymm}  — partitioned, one per month
-  finance.informe_vat_gestorias_detalle           — single table, filtered by order_month_yyyymm
+``finance.informe_vat_gestorias_resumen_{yyyymm}``
+    Partitioned table (one per month).  Aggregated by country × VAT rate ×
+    payment method.  Filtered by ``payment_currency`` and
+    ``is_hannun_tag = 0``.
 
-Company → currency + region
+``finance.informe_vat_gestorias_detalle``
+    Single table with one row per order.  Filtered by
+    ``order_month_yyyymm`` and ``payment_currency``.
+
+``invoices.shopify_payout_transactions`` (INC only)
+    Per-order Shopify fee (``SUM(fee)`` for ``type = 'charge'``).
+
+``invoices.payment_fee_monthly_summary`` (INC only)
+    Monthly fee total for the grand-total row; matches the P&G source.
+
+Company → currency → region
+---------------------------
   SL  → EUR, EU  (all countries except GB and US)
   LTD → GBP, UK  (country = GB)
-  INC → USD, US  (country = US, has shipping_state_code)
+  INC → USD, US  (country = US; grouped by shipping_state_code in Summary)
+
+Public API
+----------
+``collect_gestoria_data(*, database_url, company_code, period_yyyymm)``
+    Connects to the DB and returns a ``GestoriaReportData`` instance with
+    all data needed to build the workbook.  Performs the fee queries for
+    INC automatically.
+
+``build_gestoria_workbook(data: GestoriaReportData) -> bytes``
+    Pure function — takes the data bundle and returns the .xlsx as bytes.
+    No DB or Drive access.
 """
 from __future__ import annotations
 

@@ -1,30 +1,52 @@
 """Worker 11 — Daily sales & payment reports via API.
 
+Deployed as Railway service ``lf-10-sales-report``.
+
 Calls the lector_facturas API to regenerate two reports for each company
 every day at a configurable time:
 
-  POST /supply/gestoria/sync            → shopify_sales_{company}_{yyyymm}.xlsx
+  POST /supply/gestoria/sync               → shopify_sales_{company}_{yyyymm}.xlsx
   POST /supply/payment-reconciliation/sync → payment_reconciliation_{company}_{yyyymm}.xlsx
 
-Both reports are built for the current month. During the first CLOSE_DAY days
-of a new month (default 3), the previous month is also regenerated so that
-late-arriving data is captured.
+Both reports are built for the current month.  During the first CLOSE_DAY
+days of a new month (default 2) the previous month is also regenerated so
+that late-arriving data and payment settlements are captured.  After
+CLOSE_DAY the previous month is considered closed and only the current
+month is updated.
+
+Example timeline (CLOSE_DAY=2)
+--------------------------------
+  Apr 01 → regenerates Mar + Apr
+  Apr 02 → regenerates Mar + Apr   (last regeneration of March)
+  Apr 03 → regenerates Apr only
+  ...
+  May 01 → regenerates Apr + May
+  May 02 → regenerates Apr + May   (last regeneration of April)
+  May 03 → regenerates May only
 
 Schedule
 --------
-Runs once daily at REPORTS_HOUR:REPORTS_MINUTE local time (default 06:00
-Europe/Madrid, before the rest of workers so reports are fresh all day).
+Runs once daily at REPORTS_HOUR:REPORTS_MINUTE local time.
+Deployed with default 08:00 Europe/Madrid so files are fresh before the
+business day starts.
+
+Uses only stdlib (``urllib.request``) — no third-party HTTP dependency.
 
 Environment variables
 ---------------------
 API_BASE_URL       Base URL of the lector_facturas API  (required)
-                   e.g. https://lector-facturas.up.railway.app
+                   e.g. https://lector-facturas-api-dev.up.railway.app
 API_KEY            Bearer token if the API requires auth (optional)
-REPORTS_HOUR       Run hour, local time                 (default: 6)
+REPORTS_HOUR       Run hour, local time                 (default: 8)
 REPORTS_MINUTE     Run minute, local time               (default: 0)
-REPORTS_CLOSE_DAY  Regenerate prev month until this day (default: 3)
+REPORTS_CLOSE_DAY  Regenerate prev month until this day (default: 2)
 REPORTS_TIMEZONE   Timezone name                        (default: Europe/Madrid)
 REPORTS_COMPANIES  Comma-separated company codes        (default: SL,LTD,INC)
+
+Alerts
+------
+If 3 or more consecutive daily runs fail entirely, calls
+``send_worker_failure_alert`` (requires lector_facturas package on path).
 """
 from __future__ import annotations
 

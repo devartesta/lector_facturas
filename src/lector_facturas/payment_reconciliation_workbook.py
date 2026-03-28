@@ -34,6 +34,7 @@ from lector_facturas.payment_reconciliation import (
     CB_WON,
     ChannelReconciliation,
     ChargebackInventoryRow,
+    GiftCardRow,
     ReconciliationReport,
     ReconciliationRow,
 )
@@ -68,66 +69,65 @@ RIGHT       = Alignment(horizontal="right",  vertical="center", wrap_text=False)
 MONEY_FMT   = '#,##0.00;[Red](#,##0.00);-'
 ROW_H       = 14
 
-MONTH_NAMES_ES = [
-    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+MONTH_NAMES_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
 ]
 
 # Detail columns for Shopify / PayPal sheets
 COLUMNS = [
-    ("Nº Pedido",      16, LEFT,   None),
-    ("Fecha",          12, CENTER, None),
-    ("País",            6, CENTER, None),
-    ("Moneda",          7, CENTER, None),
-    ("Importe ventas", 14, RIGHT,  MONEY_FMT),
-    ("Importe pago",   14, RIGHT,  MONEY_FMT),
-    ("Diferencia",     12, RIGHT,  MONEY_FMT),
-    ("Link Shopify",   14, LEFT,   None),
-    ("T. regalo",        9, CENTER, None),
+    ("Order #",         16, LEFT,   None),
+    ("Date",            12, CENTER, None),
+    ("Country",          6, CENTER, None),
+    ("Currency",         7, CENTER, None),
+    ("Accounting amt.", 14, RIGHT,  MONEY_FMT),
+    ("Payment amt.",    14, RIGHT,  MONEY_FMT),
+    ("Difference",      12, RIGHT,  MONEY_FMT),
+    ("Shopify link",    14, LEFT,   None),
+    ("Gift card",        9, CENTER, None),
     ("Chargeback",      18, CENTER, None),
-    ("Comentarios",     35, LEFT,   None),
+    ("Comments",        35, LEFT,   None),
 ]
 
 # Section definitions: (attribute, title, explanation)
 SECTION_DEFS = [
     (
         "only_accounting",
-        "SOLO EN VENTAS",
-        "Pedidos registrados en contabilidad sin ningún movimiento en el canal de pago este mes."
-        " Puede indicar un cobro pendiente, un pago por otra vía (transferencia, etc.)"
-        " o un error de asignación de gateway.",
+        "ACCOUNTING ONLY",
+        "Orders recorded in accounting with no matching charge in the payment channel this month."
+        " May indicate a pending payment, payment via another method (bank transfer, etc.)"
+        " or a gateway assignment error.",
     ),
     (
         "only_payment",
-        "SOLO EN PAGO",
-        "Cobros en el canal de pago sin registro contable para este período."
-        " Verificar si falta emitir factura o si el pedido pertenece a otro mes en contabilidad.",
+        "PAYMENT ONLY",
+        "Charges in the payment channel with no accounting entry for this period."
+        " Check whether an invoice is missing or the order belongs to a different accounting month.",
     ),
     (
         "amount_diff",
-        "DIFERENCIAS DE IMPORTE",
-        "El importe liquidado por el canal de pago no coincide con el importe contabilizado."
-        " Causas habituales: reembolsos parciales, disputas (chargeback), comisiones no recogidas"
-        " o diferencias de cambio.",
+        "AMOUNT DIFFERENCES",
+        "The amount settled by the payment channel does not match the accounting entry."
+        " Common causes: partial refunds, chargebacks, unrecorded fees or exchange-rate differences.",
     ),
 ]
 
 # Chargeback inventory columns
 CB_COLUMNS = [
-    ("Canal",            10, CENTER, None),
-    ("Nº Pedido",        16, LEFT,   None),
-    ("Fecha pedido",     12, CENTER, None),
-    ("País",              6, CENTER, None),
-    ("Moneda",            7, CENTER, None),
-    ("Importe venta",    14, RIGHT,  MONEY_FMT),
-    ("Fecha retención",  13, CENTER, None),
-    ("Importe retenido", 15, RIGHT,  MONEY_FMT),
-    ("Fecha resolución", 13, CENTER, None),
-    ("Importe recuperado", 16, RIGHT, MONEY_FMT),
-    ("Impacto neto",     13, RIGHT,  MONEY_FMT),
-    ("Estado",           13, CENTER, None),
-    ("Link Shopify",     14, LEFT,   None),
-    ("Comentarios",      35, LEFT,   None),
+    ("Channel",          10, CENTER, None),
+    ("Order #",          16, LEFT,   None),
+    ("Order date",       12, CENTER, None),
+    ("Country",           6, CENTER, None),
+    ("Currency",          7, CENTER, None),
+    ("Sale amount",      14, RIGHT,  MONEY_FMT),
+    ("Hold date",        13, CENTER, None),
+    ("Amount held",      15, RIGHT,  MONEY_FMT),
+    ("Resolution date",  13, CENTER, None),
+    ("Amount recovered", 16, RIGHT,  MONEY_FMT),
+    ("Net impact",       13, RIGHT,  MONEY_FMT),
+    ("Status",           13, CENTER, None),
+    ("Shopify link",     14, LEFT,   None),
+    ("Comments",         35, LEFT,   None),
 ]
 
 
@@ -135,20 +135,29 @@ CB_COLUMNS = [
 # Public API
 # ---------------------------------------------------------------------------
 
-def build_reconciliation_workbook(report: ReconciliationReport) -> bytes:
-    """Return the xlsx as bytes."""
+def build_reconciliation_workbook(
+    report: ReconciliationReport,
+    existing_payments: dict[str, tuple[str, str | None]] | None = None,
+) -> bytes:
+    """Return the xlsx as bytes.
+
+    existing_payments maps order_name → (pagado, fecha_cobro) from a previously
+    generated workbook, so manual user edits in the Bank Transfer sheet survive
+    monthly regenerations.
+    """
     wb = Workbook()
     wb.remove(wb.active)  # remove default sheet
 
     year        = int(report.period_yyyymm[:4])
     month       = int(report.period_yyyymm[4:])
-    month_label = f"{MONTH_NAMES_ES[month - 1]} {year}"
+    month_label = f"{MONTH_NAMES_EN[month - 1]} {year}"
 
-    _add_summary_sheet(wb, report, month_label)
+    _add_summary_sheet(wb, report, month_label, existing_payments=existing_payments)
+    _add_channel_sheet(wb, "Shopify Payments", report.shopify, report, month_label)
+    _add_channel_sheet(wb, "PayPal",           report.paypal,  report, month_label)
+    _add_bank_transfer_sheet(wb, report, month_label, existing_payments=existing_payments)
     _add_chargeback_sheet(wb, report, month_label)
-    _add_channel_sheet(wb, "Shopify", report.shopify, report, month_label)
-    _add_channel_sheet(wb, "PayPal",  report.paypal,  report, month_label)
-    _add_bank_transfer_sheet(wb, report, month_label)
+    _add_gift_card_sheet(wb, report, month_label)
 
     buf = BytesIO()
     wb.save(buf)
@@ -163,181 +172,322 @@ def _add_summary_sheet(
     wb: Workbook,
     report: ReconciliationReport,
     month_label: str,
+    existing_payments: dict[str, tuple[str, str | None]] | None = None,
 ) -> None:
-    ws = wb.create_sheet("Resumen")
+    ws = wb.create_sheet("Summary")
 
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 30
-    ws.column_dimensions["C"].width = 12
+    # Columns: A=label, B=count, C=Shopify, D=PayPal, E=Bank Transfer, F=Total, G=notas
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 10
+    ws.column_dimensions["C"].width = 18
     ws.column_dimensions["D"].width = 16
     ws.column_dimensions["E"].width = 16
     ws.column_dimensions["F"].width = 16
     ws.column_dimensions["G"].width = 40
+    LAST_COL = "G"
+    NCOLS    = 7
+
+    def _sh(r: int, h: int = ROW_H) -> None:
+        ws.row_dimensions[r].height = h
+
+    def _cell(r: int, col: int, value: Any, *,
+              font: Font | None = None,
+              fill: PatternFill | None = None,
+              align: Alignment = LEFT,
+              fmt: str | None = None,
+              border: Border | None = THIN) -> None:
+        c = ws.cell(row=r, column=col, value=value)
+        c.font      = font  or NORMAL
+        c.alignment = align
+        if fill:   c.fill   = fill
+        if border: c.border = border
+        if fmt:    c.number_format = fmt
+
+    def _section_hdr(r: int, title: str) -> None:
+        _sh(r, ROW_H + 2)
+        ws.merge_cells(f"A{r}:{LAST_COL}{r}")
+        _cell(r, 1, title, font=WHITE_BOLD, fill=SECTION_FILL, align=LEFT)
+
+    def _blank_row(r: int) -> None:
+        _sh(r, 6)
+        ws.merge_cells(f"A{r}:{LAST_COL}{r}")
+        ws.cell(row=r, column=1)
 
     row = 1
 
-    # Title
-    ws.row_dimensions[row].height = 22
-    ws.merge_cells("A1:G1")
-    c = ws.cell(row=1, column=1,
-        value=(f"Cotejo de pagos — {report.company_code} — {month_label}"
-               f"   |   Generado: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
-    c.font      = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
-    c.fill      = HEADER_FILL
-    c.alignment = CENTER
+    # ── Title ──────────────────────────────────────────────────────────────────
+    _sh(row, 22)
+    ws.merge_cells(f"A{row}:{LAST_COL}{row}")
+    _cell(row, 1,
+          f"Payment reconciliation — {report.company_code} — {month_label}"
+          f"   |   Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+          font=Font(name="Calibri", size=12, bold=True, color="FFFFFF"),
+          fill=HEADER_FILL, align=CENTER)
     row += 1
 
-    # Intro
-    ws.row_dimensions[row].height = 18
-    ws.merge_cells(f"A{row}:G{row}")
-    c = ws.cell(row=row, column=1,
-        value=("Este informe compara las ventas registradas en contabilidad con los movimientos en "
-               "Shopify Payments y PayPal, pedido a pedido, para detectar cobros sin facturar, "
-               "facturas sin cobro o diferencias de importe."))
-    c.font      = ITALIC_GREY
-    c.alignment = LEFT_WRAP
-    row += 2
+    # ── Subtitle ───────────────────────────────────────────────────────────────
+    _sh(row, 22)
+    ws.merge_cells(f"A{row}:{LAST_COL}{row}")
+    _cell(row, 1,
+          "Accounting vs payment channel comparison (Shopify Payments, PayPal and Bank Transfer). "
+          "Bank Transfer: accounting = manual orders for the period; collected = orders marked 'Yes' in the Bank Transfer tab. "
+          "Differences (Shopify / PayPal) are classified by gift card, chargeback and other.",
+          font=ITALIC_GREY, align=LEFT_WRAP, border=None)
+    row += 1
+    _blank_row(row); row += 1
 
-    # Summary table header
-    headers = ["Canal", "Categoría", "Nº pedidos", "Importe ventas", "Importe pago",
-               "Diferencia neta", "Acción recomendada"]
-    ws.row_dimensions[row].height = ROW_H
-    for col, h in enumerate(headers, 1):
-        c = ws.cell(row=row, column=col, value=h)
-        c.font = BOLD; c.fill = COL_HDR_FILL; c.alignment = CENTER; c.border = THIN
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — TOTALES DEL PERÍODO
+    # ══════════════════════════════════════════════════════════════════════════
+    _section_hdr(row, "PERIOD TOTALS"); row += 1
+
+    # Column sub-headers: A=label, B=count, C=Shopify, D=PayPal, E=Bank Transfer, F=Total, G=notes
+    _sh(row)
+    for col, hdr in enumerate(
+        ["", "# orders", "Shopify Payments", "PayPal", "Bank Transfer", "Total", ""], 1
+    ):
+        _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
     row += 1
 
-    actions = {
-        "only_accounting": "Verificar si el cobro llegó por otra vía o si hay que reclamar al canal de pago.",
-        "only_payment":    "Verificar si falta registrar la venta en contabilidad.",
-        "amount_diff":     "Revisar reembolsos parciales, chargebacks o comisiones no registradas.",
-    }
+    _D0 = Decimal("0")
+    sa  = report.shopify_accounting_total
+    sp  = report.shopify_payment_total
+    pa  = report.paypal_accounting_total
+    pp  = report.paypal_payment_total
 
-    for channel_label, recon in [("Shopify Payments", report.shopify), ("PayPal", report.paypal)]:
-        for attr, sec_title, _ in SECTION_DEFS:
-            rows_data: list[ReconciliationRow] = getattr(recon, attr)
-            n        = len(rows_data)
-            _D0      = Decimal("0")
-            sum_acct = sum(((r.accounting_amount or _D0) for r in rows_data), _D0).quantize(Decimal("0.01"))
-            sum_pay  = sum(((r.payment_amount    or _D0) for r in rows_data), _D0).quantize(Decimal("0.01"))
-            sum_diff = sum(((r.diff              or _D0) for r in rows_data), _D0).quantize(Decimal("0.01"))
-            fill     = OK_FILL if n == 0 else None
+    # Bank Transfer totals from b2b_orders + existing_payments
+    ep  = existing_payments or {}
+    b2b_acct = sum((o.total for o in report.b2b_orders), _D0).quantize(Decimal("0.01"))
+    b2b_paid = sum(
+        (o.total for o in report.b2b_orders if ep.get(o.order_name, ("Pendiente",))[0] == "Sí"),
+        _D0,
+    ).quantize(Decimal("0.01"))
+    b2b_diff = (b2b_paid - b2b_acct).quantize(Decimal("0.01"))
 
-            ws.row_dimensions[row].height = ROW_H
-            vals = [
-                (channel_label, LEFT,   None,      BOLD),
-                (sec_title,     LEFT,   None,      NORMAL),
-                (n,             CENTER, None,      BOLD if n > 0 else NORMAL),
-                (sum_acct if sum_acct else None, RIGHT, MONEY_FMT, NORMAL),
-                (sum_pay  if sum_pay  else None, RIGHT, MONEY_FMT, NORMAL),
-                (sum_diff if sum_diff else None, RIGHT, MONEY_FMT, NORMAL),
-                ("✓ Sin diferencias" if n == 0 else actions[attr], LEFT, None,
-                 ITALIC_GREY if n == 0 else Font(name="Calibri", size=9)),
-            ]
-            for col, (val, align, fmt, font) in enumerate(vals, 1):
-                c = ws.cell(row=row, column=col, value=val)
-                c.font = font; c.alignment = align; c.border = THIN
-                if fmt: c.number_format = fmt
-                if fill: c.fill = fill
-            row += 1
-        row += 1  # separator between channels
+    # Each tuple: (label, n_orders, shopify_val, paypal_val, b2b_val, total_val, note)
+    totals_rows = [
+        ("Accounting amount",
+         None, sa, pa, b2b_acct,
+         (sa + pa + b2b_acct).quantize(Decimal("0.01")),
+         "Net accounting sales (including refunds). Bank Transfer = manual orders for the period."),
+        ("Amount collected",
+         None, sp, pp, b2b_paid,
+         (sp + pp + b2b_paid).quantize(Decimal("0.01")),
+         "Shopify/PayPal: settled by the channel. Bank Transfer: orders marked 'Yes' in the tab."),
+        ("Difference",
+         None,
+         (sp - sa).quantize(Decimal("0.01")),
+         (pp - pa).quantize(Decimal("0.01")),
+         b2b_diff,
+         ((sp + pp + b2b_paid) - (sa + pa + b2b_acct)).quantize(Decimal("0.01")),
+         "Positive = collected more than accounted; negative = pending or unreconciled."),
+    ]
+    for label, cnt, sh_val, pp_val, b2b_val, tot_val, note in totals_rows:
+        _sh(row)
+        is_diff_row = (label == "Difference")
+        row_fill    = (WARN_FILL if is_diff_row and abs(tot_val) > Decimal("0.01") else
+                       OK_FILL   if is_diff_row else None)
+        font_row    = BOLD if is_diff_row else NORMAL
+        _cell(row, 1, label,  font=BOLD,      fill=row_fill)
+        _cell(row, 2, cnt,    font=font_row,  fill=row_fill, align=CENTER)
+        _cell(row, 3, float(sh_val)  if sh_val  is not None else None,
+              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 4, float(pp_val)  if pp_val  is not None else None,
+              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 5, float(b2b_val) if b2b_val is not None else None,
+              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 6, float(tot_val) if tot_val is not None else None,
+              font=BOLD,     fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 7, note,   font=ITALIC_GREY, fill=row_fill, align=LEFT_WRAP)
+        row += 1
 
-    # Chargeback summary
-    n_open = sum(1 for r in report.chargeback_inventory if r.status == CB_OPEN)
-    n_won  = sum(1 for r in report.chargeback_inventory if r.status == CB_WON)
-    open_impact = sum(
-        (r.net_impact or Decimal("0")) for r in report.chargeback_inventory if r.status == CB_OPEN
+    _blank_row(row); row += 1
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — DESGLOSE DE DIFERENCIAS
+    # ══════════════════════════════════════════════════════════════════════════
+    _section_hdr(row, "DIFFERENCE BREAKDOWN"); row += 1
+
+    # Explanation
+    _sh(row, 26)
+    ws.merge_cells(f"A{row}:{LAST_COL}{row}")
+    _cell(row, 1,
+          "Orders with a difference between accounting and payment channel, classified by cause. "
+          "Gift card: gateway includes gift_card. "
+          "Chargeback: open, won or likely-lost dispute. "
+          "Bank Transfer: orders not yet marked as collected ('Yes'). "
+          "Other: differences with no known cause.",
+          font=Font(name="Calibri", size=9, italic=True, color="404040"),
+          fill=LEGEND_FILL, align=LEFT_WRAP)
+    row += 1
+
+    # Column headers: A=Category, B=#orders, C=Shopify diff, D=PayPal diff, E=BT diff, F=Total, G=Action
+    _sh(row)
+    for col, hdr in enumerate(["Category", "# orders", "Shopify diff", "PayPal diff",
+                                "Bank Transfer diff", "Total diff", "Recommended action"], 1):
+        _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
+    row += 1
+
+    # Compute effective diff per row across all buckets+channels
+    def _eff_diff(r: ReconciliationRow, bucket: str) -> Decimal:
+        if bucket == "only_accounting":
+            return -(r.accounting_amount or _D0)
+        if bucket == "only_payment":
+            return  (r.payment_amount    or _D0)
+        return (r.diff or _D0)  # amount_diff
+
+    # Gather all rows with differences, tagged by channel and bucket
+    all_diff: list[tuple[str, str, ReconciliationRow]] = []
+    for ch_label, recon in (("Shopify", report.shopify), ("PayPal", report.paypal)):
+        for bucket in ("only_accounting", "only_payment", "amount_diff"):
+            for r in getattr(recon, bucket):
+                all_diff.append((ch_label, bucket, r))
+
+    def _classify(r: ReconciliationRow) -> str:
+        if r.is_gift_card:   return "gift"
+        if r.is_chargeback:  return "cb"
+        return "other"
+
+    # Bank Transfer pending: orders not marked 'Yes'
+    n_bt_pending = sum(
+        1 for o in report.b2b_orders if ep.get(o.order_name, ("Pending",))[0] != "Yes"
+    )
+    bt_pending_diff = sum(
+        (-(o.total) for o in report.b2b_orders if ep.get(o.order_name, ("Pending",))[0] != "Yes"),
+        _D0,
     ).quantize(Decimal("0.01"))
 
+    diff_cats: dict[str, dict[str, Any]] = {
+        "gift":  {"label": "Gift card",      "sh": _D0, "pp": _D0, "bt": _D0, "n": 0,
+                  "fill": LEGEND_FILL,
+                  "note": "Orders partially paid with gift card (channel settles less than accounting)."},
+        "cb":    {"label": "Chargeback",     "sh": _D0, "pp": _D0, "bt": _D0, "n": 0,
+                  "fill": CB_OPEN_FILL,
+                  "note": "Open, won or likely-lost disputes. See Chargebacks tab."},
+        "other": {"label": "Other",          "sh": _D0, "pp": _D0, "bt": bt_pending_diff, "n": n_bt_pending,
+                  "fill": WARN_FILL,
+                  "note": "Review in the Shopify / PayPal / Bank Transfer tabs."},
+    }
+    for ch_label, bucket, r in all_diff:
+        cat  = _classify(r)
+        d    = _eff_diff(r, bucket)
+        diff_cats[cat]["n"] += 1
+        if ch_label == "Shopify":
+            diff_cats[cat]["sh"] = (diff_cats[cat]["sh"] + d).quantize(Decimal("0.01"))
+        else:
+            diff_cats[cat]["pp"] = (diff_cats[cat]["pp"] + d).quantize(Decimal("0.01"))
+
+    tot_n  = 0
+    tot_sh = _D0
+    tot_pp = _D0
+    tot_bt = _D0
+    for cat_key in ("gift", "cb", "other"):
+        d      = diff_cats[cat_key]
+        n      = d["n"]
+        sh_d   = d["sh"].quantize(Decimal("0.01"))
+        pp_d   = d["pp"].quantize(Decimal("0.01"))
+        bt_d   = d["bt"].quantize(Decimal("0.01"))
+        tot_d  = (sh_d + pp_d + bt_d).quantize(Decimal("0.01"))
+        tot_n += n
+        tot_sh = (tot_sh + sh_d).quantize(Decimal("0.01"))
+        tot_pp = (tot_pp + pp_d).quantize(Decimal("0.01"))
+        tot_bt = (tot_bt + bt_d).quantize(Decimal("0.01"))
+        r_fill = d["fill"] if n > 0 else OK_FILL
+        _sh(row)
+        _cell(row, 1, d["label"], font=BOLD, fill=r_fill)
+        _cell(row, 2, n,          font=BOLD if n > 0 else NORMAL, fill=r_fill, align=CENTER)
+        _cell(row, 3, float(sh_d) if sh_d else None,
+              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 4, float(pp_d) if pp_d else None,
+              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 5, float(bt_d) if bt_d else None,
+              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 6, float(tot_d) if tot_d else None,
+              font=BOLD, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 7, "✓ No differences in this category" if n == 0 else d["note"],
+              font=ITALIC_GREY, fill=r_fill, align=LEFT_WRAP)
+        row += 1
+
+    # Total row
+    tot_tot = (tot_sh + tot_pp + tot_bt).quantize(Decimal("0.01"))
+    _sh(row)
+    _cell(row, 1, f"TOTAL  ({tot_n} orders)", font=BOLD, fill=TOTAL_FILL)
+    _cell(row, 2, tot_n,           font=BOLD, fill=TOTAL_FILL, align=CENTER)
+    _cell(row, 3, float(tot_sh) if tot_sh else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 4, float(tot_pp) if tot_pp else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 5, float(tot_bt) if tot_bt else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, float(tot_tot),  font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, None,            font=NORMAL, fill=TOTAL_FILL)
     row += 1
-    ws.row_dimensions[row].height = ROW_H + 2
-    ws.merge_cells(f"A{row}:G{row}")
-    c = ws.cell(row=row, column=1, value="RESUMEN DE CHARGEBACKS (últimos 12 meses)")
-    c.font = WHITE_BOLD; c.fill = SECTION_FILL; c.alignment = LEFT
-    row += 1
+
+    _blank_row(row); row += 1
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — CHARGEBACKS (últimos 12 meses)
+    # ══════════════════════════════════════════════════════════════════════════
+    _section_hdr(row, "CHARGEBACKS (last 12 months)"); row += 1
 
     shopify_cbs = [r for r in report.chargeback_inventory if r.channel == "Shopify"]
     paypal_cbs  = [r for r in report.chargeback_inventory if r.channel == "PayPal"]
-    shopify_open_impact = sum(
-        ((r.net_impact or Decimal("0")) for r in shopify_cbs if r.status == CB_OPEN),
-        Decimal("0"),
-    ).quantize(Decimal("0.01"))
 
-    n_shopify_lost = sum(1 for r in shopify_cbs if r.status == CB_LOST)
-    n_paypal_lost  = sum(1 for r in paypal_cbs  if r.status == CB_LOST)
-    n_paypal_open  = sum(1 for r in paypal_cbs  if r.status == CB_OPEN)
-    shopify_lost_impact = sum(
-        ((r.net_impact or Decimal("0")) for r in shopify_cbs if r.status == CB_LOST),
-        Decimal("0"),
-    ).quantize(Decimal("0.01"))
-    paypal_lost_impact = sum(
-        ((r.net_impact or Decimal("0")) for r in paypal_cbs if r.status == CB_LOST),
-        Decimal("0"),
-    ).quantize(Decimal("0.01"))
+    def _cb_impact(items: list, status: str) -> Decimal:
+        return sum(
+            ((r.net_impact or _D0) for r in items if r.status == status), _D0,
+        ).quantize(Decimal("0.01"))
 
     cb_summary = [
-        ("Shopify Payments", CB_LOST_FILL,
+        ("Shopify Payments", CB_OPEN_FILL,
          sum(1 for r in shopify_cbs if r.status == CB_OPEN),
-         f"En disputa (< {CB_LOST_DAYS}d): retenido {shopify_open_impact:,.2f}"),
+         f"In dispute (< {CB_LOST_DAYS}d): amount held {_cb_impact(shopify_cbs, CB_OPEN):,.2f}"),
         ("Shopify Payments", CB_LOST_FILL,
-         n_shopify_lost,
-         f"Probablemente perdidos (> {CB_LOST_DAYS}d sin reversal): impacto {shopify_lost_impact:,.2f}"),
+         sum(1 for r in shopify_cbs if r.status == CB_LOST),
+         f"Likely lost (> {CB_LOST_DAYS}d no reversal): impact {_cb_impact(shopify_cbs, CB_LOST):,.2f}"),
         ("Shopify Payments", CB_WON_FILL,
          sum(1 for r in shopify_cbs if r.status == CB_WON),
-         "Ganados — dinero recuperado."),
+         "Won — funds recovered."),
         ("PayPal", CB_OPEN_FILL,
-         n_paypal_open,
-         f"En disputa (< {CB_LOST_DAYS}d) — confirmar en portal PayPal."),
+         sum(1 for r in paypal_cbs if r.status == CB_OPEN),
+         f"In dispute (< {CB_LOST_DAYS}d) — confirm status in PayPal portal."),
         ("PayPal", CB_LOST_FILL,
-         n_paypal_lost,
-         f"Prob. perdidos (> {CB_LOST_DAYS}d sin T1112): impacto {paypal_lost_impact:,.2f} — confirmar en PayPal."),
+         sum(1 for r in paypal_cbs if r.status == CB_LOST),
+         f"Likely lost (> {CB_LOST_DAYS}d no T1112): impact {_cb_impact(paypal_cbs, CB_LOST):,.2f} — confirm in PayPal."),
     ]
-    for channel_lbl, row_fill, count, note in cb_summary:
-        ws.row_dimensions[row].height = ROW_H
-        vals2 = [
-            (channel_lbl, LEFT,   None, BOLD),
-            (note,        LEFT,   None, Font(name="Calibri", size=9)),
-            (count,       CENTER, None, BOLD if count > 0 else NORMAL),
-            (None, RIGHT, None, NORMAL),
-            (None, RIGHT, None, NORMAL),
-            (None, RIGHT, None, NORMAL),
-            (None, LEFT,  None, NORMAL),
-        ]
-        for col, (val, align, fmt, font) in enumerate(vals2, 1):
-            c = ws.cell(row=row, column=col, value=val)
-            c.font = font; c.alignment = align; c.border = THIN; c.fill = row_fill
+    for ch_lbl, r_fill, count, note in cb_summary:
+        _sh(row)
+        _cell(row, 1, ch_lbl, font=BOLD,                               fill=r_fill)
+        _cell(row, 2, count,  font=BOLD if count > 0 else NORMAL,       fill=r_fill, align=CENTER)
+        ws.merge_cells(f"C{row}:{LAST_COL}{row}")
+        _cell(row, 3, note,   font=Font(name="Calibri", size=9),        fill=r_fill, align=LEFT_WRAP)
+        for col in (4, 5, 6, 7):
+            _cell(row, col, None, fill=r_fill)
         row += 1
 
-    # Legend
-    row += 2
-    ws.row_dimensions[row].height = ROW_H + 2
-    ws.merge_cells(f"A{row}:G{row}")
-    c = ws.cell(row=row, column=1, value="LEYENDA DE COLORES Y ESTADOS")
-    c.font = WHITE_BOLD; c.fill = SECTION_FILL; c.alignment = LEFT
-    row += 1
+    _blank_row(row); row += 1
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # LEGEND
+    # ══════════════════════════════════════════════════════════════════════════
+    _section_hdr(row, "COLOR LEGEND"); row += 1
 
     legend_items = [
-        (CB_OPEN_FILL, "Naranja — Disputa abierta (\"En disputa\")",
-         "El cliente ha iniciado un chargeback y el canal de pago ha retenido el importe."
-         " Hay que responder antes del plazo indicado por Shopify/PayPal."),
-        (CB_WON_FILL,  "Verde — Disputa ganada (\"Ganado\")",
-         "La disputa se resolvió a nuestro favor y se recuperó el importe."
-         " La devolución puede caer en un mes diferente a la retención original,"
-         " lo que puede generar una diferencia de importe en el cotejo mensual."),
-        (WARN_FILL,    "Amarillo — Diferencia > 10 en importe",
-         "El importe contabilizado y el liquidado difieren en más de 10 unidades de moneda."
-         " Revisar si hay reembolsos parciales o comisiones no registradas."),
+        (CB_OPEN_FILL, "Orange — Open dispute",
+         "Active chargeback: payment channel has held the funds. Respond before the deadline."),
+        (CB_LOST_FILL, "Red — Likely lost",
+         f"Dispute with no reversal after {CB_LOST_DAYS} days. Confirm loss in Shopify/PayPal."),
+        (CB_WON_FILL,  "Green — Won dispute / No differences",
+         "Dispute resolved in our favour, or category with no issues."),
+        (WARN_FILL,    "Yellow — Differences to review",
+         "Amount differences or orders only on one side. See Shopify / PayPal tabs."),
     ]
     for fill, label, explanation in legend_items:
-        ws.row_dimensions[row].height = 32
-        c = ws.cell(row=row, column=1, value="")
-        c.fill = fill; c.border = THIN
-        c = ws.cell(row=row, column=2, value=label)
-        c.font = BOLD_SMALL; c.alignment = LEFT; c.border = THIN
-        ws.merge_cells(f"C{row}:G{row}")
-        c = ws.cell(row=row, column=3, value=explanation)
-        c.font = Font(name="Calibri", size=9); c.alignment = LEFT_WRAP
-        c.fill = LEGEND_FILL; c.border = THIN
+        _sh(row, 30)
+        _cell(row, 1, "", fill=fill)
+        _cell(row, 2, label, font=BOLD_SMALL, fill=fill, align=LEFT)
+        ws.merge_cells(f"C{row}:{LAST_COL}{row}")
+        _cell(row, 3, explanation,
+              font=Font(name="Calibri", size=9), fill=LEGEND_FILL, align=LEFT_WRAP)
+        for col in (4, 5, 6, 7):
+            _cell(row, col, None, fill=LEGEND_FILL)
         row += 1
 
     ws.freeze_panes = "A3"
@@ -365,8 +515,8 @@ def _add_chargeback_sheet(
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
-        value=(f"Inventario de chargebacks — {report.company_code}"
-               f"   |   Últimos 12 meses   |   Generado: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
+        value=(f"Chargeback inventory — {report.company_code}"
+               f"   |   Last 12 months   |   Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
     c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     c.fill = HEADER_FILL; c.alignment = CENTER
     row += 1
@@ -377,25 +527,21 @@ def _add_chargeback_sheet(
     paypal_cbs  = [r for r in inventory if r.channel == "PayPal"]
     n_shopify_open = sum(1 for r in shopify_cbs if r.status == CB_OPEN)
     n_shopify_won  = sum(1 for r in shopify_cbs if r.status == CB_WON)
-    shopify_open_impact = sum(
-        ((r.net_impact or Decimal("0")) for r in shopify_cbs if r.status == CB_OPEN),
-        Decimal("0"),
-    ).quantize(Decimal("0.01"))
 
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
     n_shopify_lost2 = sum(1 for r in shopify_cbs if r.status == CB_LOST)
     n_paypal_lost2  = sum(1 for r in paypal_cbs  if r.status == CB_LOST)
     c = ws.cell(row=row, column=1,
-        value=(f"Shopify: {n_shopify_open} en disputa · {n_shopify_lost2} prob. perdidos · {n_shopify_won} ganados"
-               f"   |   PayPal: {len(paypal_cbs)} total ({n_paypal_lost2} prob. perdidos > {CB_LOST_DAYS}d) — confirmar en PayPal"
-               f"   |   Rojo = perdido · Naranja = en disputa · Verde = ganado"))
+        value=(f"Shopify: {n_shopify_open} in dispute · {n_shopify_lost2} likely lost · {n_shopify_won} won"
+               f"   |   PayPal: {len(paypal_cbs)} total ({n_paypal_lost2} likely lost > {CB_LOST_DAYS}d) — confirm in PayPal"
+               f"   |   Red = lost · Orange = in dispute · Green = won"))
     c.font = ITALIC_GREY; c.alignment = LEFT_WRAP
     row += 2
 
     if not inventory:
         ws.merge_cells(f"A{row}:{last_col}{row}")
-        c = ws.cell(row=row, column=1, value="✓ Sin chargebacks en los últimos 12 meses")
+        c = ws.cell(row=row, column=1, value="✓ No chargebacks in the last 12 months")
         c.font = Font(name="Calibri", size=10, italic=True, color="548235")
         c.alignment = LEFT
         return
@@ -404,8 +550,8 @@ def _add_chargeback_sheet(
     row = _write_cb_section(
         ws, row, last_col,
         title="SHOPIFY PAYMENTS",
-        note=("Estado detectable automáticamente: 'En disputa' = retención activa sin reversal todavía; "
-              "'Ganado' = el canal devolvió el importe (dispute_reversal recibido)."),
+        note=("Status detected automatically: 'In dispute' = active hold, no reversal yet; "
+              "'Won' = channel returned the funds (dispute_reversal received)."),
         items=shopify_cbs,
         paypal_warning=False,
     )
@@ -414,9 +560,9 @@ def _add_chargeback_sheet(
     row = _write_cb_section(
         ws, row, last_col,
         title="PAYPAL",
-        note=("⚠ PayPal no genera una transacción de 'disputa resuelta' en nuestros datos (no hay T1112). "
-              "Todas las disputas aparecen como 'En disputa' aunque puedan estar ya cerradas. "
-              "Confirmar el estado real en el portal de PayPal (Resolution Center)."),
+        note=("⚠ PayPal does not generate a 'dispute resolved' transaction in our data (no T1112). "
+              "All disputes appear as 'In dispute' even if already closed. "
+              "Confirm actual status in the PayPal Resolution Center."),
         items=paypal_cbs,
         paypal_warning=True,
     )
@@ -459,7 +605,7 @@ def _write_cb_section(
     if not items:
         ws.row_dimensions[row].height = ROW_H
         ws.merge_cells(f"A{row}:{last_col}{row}")
-        c = ws.cell(row=row, column=1, value="✓ Sin chargebacks en los últimos 12 meses")
+        c = ws.cell(row=row, column=1, value="✓ No chargebacks in the last 12 months")
         c.font = Font(name="Calibri", size=10, italic=True, color="548235")
         c.alignment = LEFT
         return row + 2
@@ -479,17 +625,17 @@ def _write_cb_section(
         rev_date_val  = r.reversal_date if r.reversal_date else "—"
         rev_date_font = ITALIC_GREY if not r.reversal_date else None
 
-        # Status label: for PayPal CB_LOST add note; for won/lost use status; open stays
+        # Status label including days open
         if paypal_warning and r.status == CB_LOST:
-            status_label = f"Prob. perdido ({r.days_open}d)"
+            status_label = f"Likely lost ({r.days_open}d)"
         elif paypal_warning and r.status == CB_OPEN:
-            status_label = f"En disputa ({r.days_open}d)"
+            status_label = f"In dispute ({r.days_open}d)"
         elif r.status == CB_LOST:
-            status_label = f"Perdido ({r.days_open}d)"
+            status_label = f"Likely lost ({r.days_open}d)"
         elif r.status == CB_OPEN:
-            status_label = f"En disputa ({r.days_open}d)"
+            status_label = f"In dispute ({r.days_open}d)"
         else:
-            status_label = r.status  # Ganado
+            status_label = r.status  # Won
 
         vals: list[tuple[Any, Alignment, str | None, Font | None]] = [
             (r.order_name,            LEFT,   None,      BOLD),
@@ -527,7 +673,7 @@ def _write_cb_section(
     t_v     = sum(((r.reversal_amount   or _D0) for r in items), _D0).quantize(Decimal("0.01"))
     t_net   = sum(((r.net_impact        or _D0) for r in items), _D0).quantize(Decimal("0.01"))
     total_vals: list[tuple[Any, Alignment, str | None]] = [
-        (f"TOTAL {title} ({len(items)})", LEFT, None),
+        (f"TOTAL {title} ({len(items)} orders)", LEFT, None),
         (None, CENTER, None), (None, CENTER, None), (None, CENTER, None),
         (t_acct, RIGHT, MONEY_FMT),
         (None, CENTER, None),
@@ -552,11 +698,11 @@ def _write_cb_section(
 def _cb_label(status: str | None, is_chargeback: bool) -> str:
     """Human-readable chargeback label for the detail sheet column."""
     if status == CB_WON:
-        return "Chargeback — Ganado"
+        return "Chargeback — Won"
     if status == CB_LOST:
-        return "Chargeback — Perdido"
+        return "Chargeback — Likely lost"
     if status == CB_OPEN:
-        return "Chargeback — En disputa"
+        return "Chargeback — In dispute"
     if is_chargeback:
         return "Chargeback"
     return ""
@@ -595,8 +741,8 @@ def _add_channel_sheet(
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{get_column_letter(len(COLUMNS))}{row}")
     c = ws.cell(row=row, column=1)
-    c.value = (f"Cotejo ventas vs {channel} — {report.company_code} — {month_label}  "
-               f"| Generado: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+    c.value = (f"Accounting vs {channel} — {report.company_code} — {month_label}  "
+               f"| Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     c.fill = HEADER_FILL; c.alignment = CENTER
     row += 1
@@ -608,9 +754,9 @@ def _add_channel_sheet(
     ws.row_dimensions[row].height = ROW_H
     ws.merge_cells(f"A{row}:{get_column_letter(len(COLUMNS))}{row}")
     c = ws.cell(row=row, column=1)
-    c.value = (f"Solo en ventas: {only_a}   |   Solo en pago: {only_p}   |   "
-               f"Diferencias importe: {diff_n}   "
-               f"{'✓ Todo cuadra' if only_a + only_p + diff_n == 0 else '⚠ Revisar diferencias — ver pestaña Resumen'}")
+    c.value = (f"Accounting only: {only_a}   |   Payment only: {only_p}   |   "
+               f"Amount differences: {diff_n}   "
+               f"{'✓ All matched' if only_a + only_p + diff_n == 0 else '⚠ Review differences — see Summary tab'}")
     c.font = ITALIC_GREY; c.alignment = CENTER
     row += 2
 
@@ -649,7 +795,7 @@ def _write_section(
     if not rows:
         ws.row_dimensions[row].height = ROW_H
         ws.merge_cells(f"A{row}:{last_col}{row}")
-        c = ws.cell(row=row, column=1, value="✓ Sin diferencias")
+        c = ws.cell(row=row, column=1, value="✓ No differences")
         c.font = Font(name="Calibri", size=10, italic=True, color="548235")
         c.alignment = LEFT
         row += 2
@@ -701,7 +847,7 @@ def _write_section(
     sum_pay  = sum((r.payment_amount    or Decimal("0")) for r in rows).quantize(Decimal("0.01"))
     sum_diff = sum((r.diff              or Decimal("0")) for r in rows).quantize(Decimal("0.01"))
     total_vals: list[tuple[Any, Alignment, str | None]] = [
-        (f"TOTAL ({len(rows)} pedidos)", LEFT, None),
+        (f"TOTAL ({len(rows)} orders)", LEFT, None),
         (None, CENTER, None), (None, CENTER, None), (None, CENTER, None),
         (sum_acct, RIGHT, MONEY_FMT),
         (sum_pay,  RIGHT, MONEY_FMT),
@@ -722,18 +868,18 @@ def _write_section(
 # ---------------------------------------------------------------------------
 
 B2B_COLS = [
-    ("Nº Pedido",        14, LEFT,   None),
-    ("Fecha pedido",     12, CENTER, None),
-    ("País",              6, CENTER, None),
-    ("Categoría",        12, CENTER, None),
-    ("IVA %",             7, CENTER, "0%"),
-    ("Base imponible",   15, RIGHT,  MONEY_FMT),
-    ("IVA",              12, RIGHT,  MONEY_FMT),
-    ("Total (con IVA)",  16, RIGHT,  MONEY_FMT),
-    ("Link Shopify",     14, LEFT,   None),
-    ("Pagado",           12, CENTER, None),
-    ("Fecha cobro",      14, CENTER, None),
-    ("Comentarios",      35, LEFT,   None),
+    ("Order #",          14, LEFT,   None),
+    ("Order date",       12, CENTER, None),
+    ("Country",           6, CENTER, None),
+    ("Category",         12, CENTER, None),
+    ("VAT %",             7, CENTER, "0%"),
+    ("Net amount",       15, RIGHT,  MONEY_FMT),
+    ("VAT",              12, RIGHT,  MONEY_FMT),
+    ("Total (incl. VAT)",16, RIGHT,  MONEY_FMT),
+    ("Shopify link",     14, LEFT,   None),
+    ("Paid",             12, CENTER, None),
+    ("Payment date",     14, CENTER, None),
+    ("Comments",         35, LEFT,   None),
 ]
 
 YES_FILL  = PatternFill("solid", fgColor="E2EFDA")   # green  – paid
@@ -744,11 +890,17 @@ def _add_bank_transfer_sheet(
     wb: Workbook,
     report: ReconciliationReport,
     month_label: str,
+    existing_payments: dict[str, tuple[str, str | None]] | None = None,
 ) -> None:
-    """Sheet listing manual-gateway (B2B transfer) orders with payment tracking columns."""
+    """Sheet listing manual-gateway (Bank Transfer) orders with payment tracking columns.
+
+    existing_payments maps order_name → (paid, payment_date) from a previously
+    generated version so that manually entered data survives regeneration.
+    Rows with paid == "Yes" get green fill; all others get yellow.
+    """
     from openpyxl.worksheet.datavalidation import DataValidation
 
-    ws = wb.create_sheet("Bank Transfer")
+    ws = wb.create_sheet("Bank Transfers")
     orders = report.b2b_orders
 
     ncols    = len(B2B_COLS)
@@ -764,7 +916,7 @@ def _add_bank_transfer_sheet(
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
         value=(f"Bank Transfer — {report.company_code} — {month_label}"
-               f"   |   Generado: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
+               f"   |   Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
     c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     c.fill = HEADER_FILL; c.alignment = CENTER
     row += 1
@@ -773,17 +925,17 @@ def _add_bank_transfer_sheet(
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
-        value=('Pedidos con gateway "manual" (transferencia bancaria), '
-               'excluyendo Hannun y Rever. Fuente: finance.informe_vat_gestorias_detalle. '
-               'Actualizar "Pagado" y "Fecha cobro" a medida que lleguen los pagos. '
-               'Verde = cobrado · Amarillo = pendiente.'))
+        value=('Orders with gateway "manual", [] or [""] (bank transfer), '
+               'excluding Hannun and Rever. Source: finance.informe_vat_gestorias_detalle. '
+               'Update "Paid" and "Payment date" as payments arrive. '
+               'Green = collected · Yellow = pending.'))
     c.font = ITALIC_GREY; c.alignment = LEFT_WRAP
     row += 1
 
     if not orders:
         ws.merge_cells(f"A{row}:{last_col}{row}")
         c = ws.cell(row=row, column=1,
-            value="✓ Sin pedidos con gateway 'manual' en este período.")
+            value="✓ No bank transfer orders for this period.")
         c.font = Font(name="Calibri", size=10, italic=True, color="548235")
         c.alignment = LEFT
         return
@@ -797,10 +949,15 @@ def _add_bank_transfer_sheet(
     first_data = row
 
     # Data rows
+    ep = existing_payments or {}
     for o in orders:
         ws.row_dimensions[row].height = 14
-        # Default: Pendiente (user fills in Pagado / Fecha cobro manually)
-        row_fill = PEND_FILL
+        # Restore manually entered payment data from prior version (if any)
+        pagado, fecha_cobro = ep.get(o.order_name, ("Pending", None))
+        # Backwards-compat: map old Spanish values to English
+        if pagado in ("Sí", "Si"):   pagado = "Yes"
+        if pagado == "Pendiente":    pagado = "Pending"
+        row_fill = YES_FILL if pagado == "Yes" else PEND_FILL
 
         vals: list[tuple[Any, Alignment, str | None, Font | None]] = [
             (o.order_name,              LEFT,   None,      NORMAL),
@@ -812,8 +969,8 @@ def _add_bank_transfer_sheet(
             (float(o.vat),              RIGHT,  MONEY_FMT, NORMAL),
             (float(o.total),            RIGHT,  MONEY_FMT, BOLD),
             (None,                      LEFT,   None,      LINK_FONT),  # link placeholder
-            ("Pendiente",               CENTER, None,      BOLD),        # Pagado
-            (None,                      CENTER, None,      NORMAL),      # Fecha cobro
+            (pagado,                    CENTER, None,      BOLD),        # Pagado
+            (fecha_cobro,               CENTER, None,      NORMAL),      # Fecha cobro
             ("",                        LEFT,   None,      NORMAL),      # Comentarios
         ]
         for col, (value, align, fmt, font) in enumerate(vals, 1):
@@ -836,8 +993,14 @@ def _add_bank_transfer_sheet(
     tot_base  = sum((o.base  for o in orders), _D0).quantize(Decimal("0.01"))
     tot_vat   = sum((o.vat   for o in orders), _D0).quantize(Decimal("0.01"))
     tot_total = sum((o.total for o in orders), _D0).quantize(Decimal("0.01"))
+    # Recompute paid/pending from existing_payments for accurate summary
+    tot_paid  = sum(
+        (o.total for o in orders if ep.get(o.order_name, ("Pending", None))[0] == "Yes"),
+        _D0,
+    ).quantize(Decimal("0.01"))
+    tot_pend  = (tot_total - tot_paid).quantize(Decimal("0.01"))
     tot_row: list[tuple[Any, Alignment, str | None]] = [
-        (f"TOTAL  ({len(orders)} pedidos)", LEFT, None),
+        (f"TOTAL  ({len(orders)} orders)", LEFT, None),
         (None, CENTER, None), (None, CENTER, None), (None, CENTER, None), (None, CENTER, None),
         (float(tot_base),  RIGHT, MONEY_FMT),
         (float(tot_vat),   RIGHT, MONEY_FMT),
@@ -850,10 +1013,10 @@ def _add_bank_transfer_sheet(
         if fmt: c.number_format = fmt
     row += 2
 
-    # Pending summary (all start as pending; user updates)
+    # Collected / Pending summary
     for label, amount, fill in [
-        ("Cobrado",            Decimal("0"),  YES_FILL),
-        ("Pendiente de cobro", tot_total,     PEND_FILL),
+        ("Collected",          tot_paid,  YES_FILL),
+        ("Pending collection", tot_pend,  PEND_FILL),
     ]:
         ws.row_dimensions[row].height = 14
         ws.merge_cells(f"A{row}:E{row}")
@@ -871,14 +1034,166 @@ def _add_bank_transfer_sheet(
             cx.fill = fill; cx.border = THIN
         row += 1
 
-    # Data validation for Pagado (col 10)
+    # Data validation for Paid (col 10)
     dv = DataValidation(
         type="list",
-        formula1='"Sí,No,Pendiente"',
+        formula1='"Yes,No,Pending"',
         allow_blank=False,
         showDropDown=False,
     )
     dv.sqref = f"J{first_data}:J{last_data}"
     ws.add_data_validation(dv)
+
+    ws.freeze_panes = "A4"
+
+
+# ---------------------------------------------------------------------------
+# Gift card inventory sheet
+# ---------------------------------------------------------------------------
+
+GC_COLS = [
+    ("Date issued",      12, CENTER, None),
+    ("Code (last 4)",    12, CENTER, None),
+    ("Currency",          8, CENTER, None),
+    ("Order #",          14, LEFT,   None),
+    ("Initial value",    14, RIGHT,  MONEY_FMT),
+    ("Amount used",      14, RIGHT,  MONEY_FMT),
+    ("Balance remaining",16, RIGHT,  MONEY_FMT),
+    ("% used",           10, CENTER, "0.0%"),
+    ("Expiry date",      12, CENTER, None),
+    ("Shopify link",     14, LEFT,   None),
+]
+
+
+def _add_gift_card_sheet(
+    wb: Workbook,
+    report: ReconciliationReport,
+    month_label: str,
+) -> None:
+    """Sheet showing gift cards issued in the last 12 months with usage stats.
+
+    Data comes from the Shopify Admin API (gift_cards endpoint).
+    If the Shopify API was not configured or returned no data, shows a notice.
+    """
+    ws = wb.create_sheet("Gift Cards")
+
+    ncols    = len(GC_COLS)
+    last_col = get_column_letter(ncols)
+
+    for i, (_, w, _, _) in enumerate(GC_COLS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    row = 1
+
+    # Title
+    ws.row_dimensions[row].height = 22
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1,
+        value=(f"Gift card inventory — {report.company_code}"
+               f"   |   Last 12 months   |   Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
+    c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    c.fill = HEADER_FILL; c.alignment = CENTER
+    row += 1
+
+    inventory = report.gift_card_inventory
+
+    # Subtitle
+    ws.row_dimensions[row].height = 22
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1,
+        value=("Gift cards issued in the last 12 months. "
+               "Source: Shopify Admin API (/admin/api/gift_cards). "
+               "Initial value, current balance and amount used are fetched live. "
+               "% used = amount used / initial value."))
+    c.font = ITALIC_GREY; c.alignment = LEFT_WRAP
+    row += 1
+
+    if not inventory:
+        ws.merge_cells(f"A{row}:{last_col}{row}")
+        c = ws.cell(row=row, column=1,
+            value=("✓ No gift cards found in the last 12 months, "
+                   "or Shopify API is not configured "
+                   "(set SHOPIFY_SHOP / SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET)."))
+        c.font = Font(name="Calibri", size=10, italic=True, color="595959")
+        c.alignment = LEFT
+        return
+
+    # Column headers
+    ws.row_dimensions[row].height = 15
+    for col, (header, _, _, _) in enumerate(GC_COLS, 1):
+        c = ws.cell(row=row, column=col, value=header)
+        c.font = BOLD; c.fill = COL_HDR_FILL; c.alignment = CENTER; c.border = THIN
+    row += 1
+
+    _D0 = Decimal("0")
+
+    for gc in inventory:
+        ws.row_dimensions[row].height = ROW_H
+
+        # Row fill: fully-used = green, partially used = yellow, unused = grey
+        if gc.balance == _D0:
+            row_fill = CB_WON_FILL   # green — fully spent
+        elif gc.amount_used > _D0:
+            row_fill = WARN_FILL     # yellow — partially spent
+        else:
+            row_fill = LEGEND_FILL   # grey — not yet spent
+
+        vals: list[tuple[Any, Alignment, str | None, Font | None]] = [
+            (gc.created_at,              CENTER, None,      None),
+            (gc.code_last4,              CENTER, None,      BOLD),
+            (gc.currency,                CENTER, None,      None),
+            (gc.order_name or "—",       LEFT,   None,      None),
+            (float(gc.initial_value),    RIGHT,  MONEY_FMT, None),
+            (float(gc.amount_used),      RIGHT,  MONEY_FMT, BOLD if gc.amount_used > _D0 else None),
+            (float(gc.balance),          RIGHT,  MONEY_FMT, None),
+            (float(gc.pct_used),         CENTER, "0.0%",    BOLD),
+            (gc.expires_on or "—",       CENTER, None,      ITALIC_GREY if not gc.expires_on else None),
+            (None,                       LEFT,   None,      LINK_FONT),   # Shopify link placeholder
+        ]
+        for col, (value, align, fmt, font) in enumerate(vals, 1):
+            c = ws.cell(row=row, column=col, value=value)
+            c.alignment = align; c.border = THIN; c.fill = row_fill
+            c.font = font if font else NORMAL
+            if fmt: c.number_format = fmt
+
+        if gc.shopify_url:
+            lc = ws.cell(row=row, column=10)
+            lc.value = "View order"; lc.hyperlink = gc.shopify_url; lc.font = LINK_FONT
+
+        row += 1
+
+    # Totals row
+    ws.row_dimensions[row].height = ROW_H
+    tot_initial = sum((gc.initial_value for gc in inventory), _D0).quantize(Decimal("0.01"))
+    tot_used    = sum((gc.amount_used   for gc in inventory), _D0).quantize(Decimal("0.01"))
+    tot_balance = sum((gc.balance       for gc in inventory), _D0).quantize(Decimal("0.01"))
+    tot_pct     = float(tot_used / tot_initial) if tot_initial != _D0 else 0.0
+
+    tot_vals: list[tuple[Any, Alignment, str | None]] = [
+        (f"TOTAL  ({len(inventory)} gift cards)", LEFT, None),
+        (None, CENTER, None),
+        (None, CENTER, None),
+        (None, LEFT,   None),
+        (float(tot_initial), RIGHT, MONEY_FMT),
+        (float(tot_used),    RIGHT, MONEY_FMT),
+        (float(tot_balance), RIGHT, MONEY_FMT),
+        (tot_pct,            CENTER, "0.0%"),
+        (None, CENTER, None),
+        (None, LEFT,   None),
+    ]
+    for col, (val, align, fmt) in enumerate(tot_vals, 1):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = BOLD; c.fill = TOTAL_FILL; c.alignment = align; c.border = THIN
+        if fmt: c.number_format = fmt
+    row += 2
+
+    # Legend
+    ws.row_dimensions[row].height = 14
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1,
+        value=("Green = fully spent (balance = 0)   "
+               "Yellow = partially used   "
+               "Grey = not yet used"))
+    c.font = ITALIC_GREY; c.fill = LEGEND_FILL; c.alignment = LEFT
 
     ws.freeze_panes = "A4"

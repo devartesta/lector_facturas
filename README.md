@@ -128,8 +128,44 @@ Datos iniciales SL:
 ### `invoices.payment_order_transactions`
 Transacciones individuales de Shopify / PayPal.
 
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `order_name` | TEXT | Nº de pedido (ej. `AS-12345`) |
+| `platform` | TEXT | `shopify` / `paypal` |
+| `company_code` | TEXT | Sociedad |
+| `transaction_type` | TEXT | `charge`, `refund`, `dispute_withdrawal`, `dispute_reversal`, … |
+| `gross_amount` | NUMERIC | Importe bruto en moneda original |
+| `fee_amount` | NUMERIC | Comisión del TPV |
+| `net_amount` | NUMERIC | Neto recibido |
+| `affects_balance` | BOOL | Si la transacción mueve el saldo del payout |
+| `is_cancelled` | BOOL | Transacción anulada |
+| `is_chargeback` | BOOL | True en dispute_withdrawal / T1111 |
+
+### `invoices.shopify_payout_transactions`
+Transacciones de payout de Shopify con fee por pedido.
+
+| Columna clave | Descripción |
+|---------------|-------------|
+| `order_name` | Nº de pedido |
+| `company_code` | Sociedad |
+| `type` | `charge`, `refund`, `payout`, … |
+| `amount` | Importe bruto |
+| `fee` | Comisión Shopify Payments para este pedido |
+| `net` | Neto (amount - fee) |
+
+Fuente primaria para la columna **"Shopify fee"** en `shopify_sales_inc_*.xlsx`. Para el total mensual de fees que va al P&G se usa `payment_fee_monthly_summary.total_cost_amount`.
+
 ### `invoices.payment_fee_monthly_summary`
 Resumen mensual de comisiones de pago, agregado por `company_code`, `platform`, `period_yyyymm`.
+
+| Columna | Descripción |
+|---------|-------------|
+| `gross_amount` | Ventas brutas procesadas por el TPV |
+| `fee_amount` | Comisiones del TPV |
+| `chargeback_amount` | Importe de chargebacks |
+| `chargeback_fee_amount` | Comisión de tramitación del chargeback |
+| `total_cost_amount` | `fee_amount + chargeback_fee_amount` — **este es el valor que va al P&G** |
+| `net_amount` | Neto liquidado |
 
 ### `invoices.worker_coordination`
 Coordinación entre workers para evitar que el P&G se genere mientras se están procesando facturas.
@@ -139,6 +175,42 @@ Coordinación entre workers para evitar que el P&G se genere mientras se están 
 | `job_name` | `invoice_processing` |
 | `is_running` | `TRUE` mientras corre el worker-03 |
 | `heartbeat_at` | Último ping (stale si > 4h) |
+
+### `finance.informe_vat_gestorias_resumen_{yyyymm}`
+Tablas particionadas (una por mes). Resumen de ventas por sociedad × país × tasa IVA × método de pago, sin pedidos Hannun.
+
+| Columna | Descripción |
+|---------|-------------|
+| `payment_currency` | Moneda (`EUR`, `GBP`, `USD`) |
+| `country` | País de envío |
+| `shipping_state_code` | Estado (solo US) |
+| `tax_rate_teorical` | Tipo IVA teórico según país |
+| `tax_rate_shopify` | Tipo IVA registrado por Shopify |
+| `tax_rate_calculated` | Tipo calculado (tax/net) |
+| `num_orders` | Número de pedidos |
+| `imp_sales_gross` | Ventas brutas |
+| `imp_sales_tax` | IVA / Sales tax |
+| `imp_sales_net` | Ventas netas |
+| `is_hannun_tag` | 1 = pedido Hannun (excluido en el resumen) |
+
+### `finance.informe_vat_gestorias_detalle`
+Tabla única con detalle a nivel de pedido. Filtrar siempre por `order_month_yyyymm` y `payment_currency`.
+
+| Columna | Descripción |
+|---------|-------------|
+| `order_name` | Nº de pedido |
+| `order_date` | Fecha del pedido |
+| `shipping_country_code` | País de envío |
+| `shipping_state_code` | Estado (US) |
+| `payment_gateway_names` | JSON array de métodos de pago (`shopify_payments`, `paypal`, …) |
+| `shown_gross_presentment` | Bruto en moneda de presentación |
+| `shown_tax_presentment` | Impuesto en moneda de presentación |
+| `shown_net_presentment` | Neto en moneda de presentación |
+| `descuadre` | Diferencia entre neto declarado y calculado |
+| `is_hannun_tag` | 1 = pedido Hannun |
+| `is_rever_tag` | 1 = pedido Rever (devolución) |
+| `standard_rate` | Tipo IVA teórico del país |
+| `tax_rate` | Tipo IVA aplicado por Shopify |
 
 ---
 
@@ -301,6 +373,25 @@ Autenticación: `Authorization: Bearer <API_SECRET_KEY>` (opcional; si `API_SECR
 
 Body (JSON): `{ "year": 2026, "file_name": "pyg_sl_2026.xlsx", "drive_folder_id": "..." }`
 
+### Informes de ventas (supply)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/supply/gestoria/sync` | Genera `shopify_sales_{company}_{yyyymm}.xlsx` y lo sube a Drive |
+| POST | `/supply/payment-reconciliation/sync` | Genera `payment_reconciliation_{company}_{yyyymm}.xlsx` y lo sube a Drive |
+
+**Body común (JSON):** `{ "company_code": "SL", "period_yyyymm": "202603" }`
+
+**`/supply/gestoria/sync`** genera el informe de ventas para la gestoría con dos pestañas:
+- **Summary** — ventas agregadas por país × tipo IVA, con subtotales y grand total. Para INC incluye columna *Shopify fee* por estado y total que cuadra con `payment_fee_monthly_summary` (misma fuente que el P&G).
+- **Detail** — un pedido por fila con importes, tasas IVA, discrepancias y flags. Para INC incluye columna *Shopify fee* por pedido.
+
+Ruta Drive: `{entidad}/{año}/{yyyymm}/income/sales/shopify/shopify_sales_{company}_{yyyymm}.xlsx`
+
+**`/supply/payment-reconciliation/sync`** coteja pedido a pedido contabilidad vs canal de pago (Shopify Payments + PayPal) con pestañas: *Resumen*, *Chargebacks*, *Shopify*, *PayPal*, *Bank Transfer*, *Gift Cards*.
+
+Ruta Drive: `{entidad}/{año}/{yyyymm}/income/sales/shopify/payment_reconciliation_{company}_{yyyymm}.xlsx`
+
 ### Integraciones
 
 | Método | Ruta | Descripción |
@@ -334,9 +425,40 @@ Cada worker es un proceso independiente en Railway que llama a la API en loop.
 | `lf-06-pyg-ltd` | `worker_06_pyg_ltd.py` | Diario 20:10 | `PYG_LTD_RUN_URL`, `PYG_LTD_YEAR` |
 | `lf-07-pyg-inc` | `worker_07_pyg_inc.py` | Diario 20:20 | `PYG_INC_RUN_URL`, `PYG_INC_YEAR` |
 | `lf-08-pyg-consolidated` | `worker_08_pyg_consolidated.py` | Diario 20:30 | `PYG_CONSOLIDATED_RUN_URL`, `PYG_CONSOLIDATED_YEAR` |
-| `lf-09-daily-summary` | `worker_09_daily_summary.py` | Diario 08:00 | `DAILY_SUMMARY_RUN_URL` |
+| `lf-09-daily-summary` | `worker_09_daily_summary.py` | Diario 20:00 | `DAILY_SUMMARY_RUN_URL` |
+| `lf-10-sales-report` | `worker_11_daily_reports.py` | Diario 08:00 | `API_BASE_URL`, `REPORTS_HOUR`, `REPORTS_MINUTE`, `REPORTS_CLOSE_DAY`, `REPORTS_COMPANIES`, `REPORTS_TIMEZONE` |
 
 Los workers 05-08 esperan a que el worker-03 termine antes de generar el P&G (coordinación via `invoices.worker_coordination`). Si el job de facturas lleva más de 4h sin heartbeat se considera stale y no se bloquea.
+
+### `lf-10-sales-report` — Informes de ventas diarios
+
+Genera y actualiza diariamente los ficheros de ventas en Google Drive para todas las sociedades.
+
+**Script:** `scripts/worker_11_daily_reports.py`
+**Horario:** 08:00 Madrid
+
+Llama vía HTTP a dos endpoints de la API para cada sociedad (`SL`, `LTD`, `INC`) y el mes en curso:
+
+| Endpoint | Fichero generado | Ruta en Drive |
+|----------|-----------------|---------------|
+| `POST /supply/gestoria/sync` | `shopify_sales_{company}_{yyyymm}.xlsx` | `{entidad}/{año}/{yyyymm}/income/sales/shopify/` |
+| `POST /supply/payment-reconciliation/sync` | `payment_reconciliation_{company}_{yyyymm}.xlsx` | `{entidad}/{año}/{yyyymm}/income/sales/shopify/` |
+
+**Lógica de cierre de mes:** los primeros `REPORTS_CLOSE_DAY` días del mes nuevo (por defecto 2) también regenera el mes anterior, capturando pedidos tardíos. A partir del día 3 ya solo actualiza el mes en curso.
+
+**Variables de entorno:**
+
+| Variable | Por defecto | Descripción |
+|----------|------------|-------------|
+| `API_BASE_URL` | — (obligatorio) | URL de la API |
+| `API_KEY` | — | Bearer token (si la API requiere auth) |
+| `REPORTS_HOUR` | `8` | Hora de ejecución (local) |
+| `REPORTS_MINUTE` | `0` | Minuto de ejecución |
+| `REPORTS_CLOSE_DAY` | `2` | Días del mes nuevo que regenera también el mes anterior |
+| `REPORTS_TIMEZONE` | `Europe/Madrid` | Zona horaria |
+| `REPORTS_COMPANIES` | `SL,LTD,INC` | Sociedades a procesar |
+
+**Alertas:** tras 3 fallos consecutivos llama a `send_worker_failure_alert`.
 
 ---
 
@@ -448,6 +570,107 @@ python scripts/notify_unmatched_supplier.py \
   --subject "Invoice attached" \
   --file "C:\ruta\factura.pdf"
 ```
+
+---
+
+## Informes de ventas mensuales
+
+Generados diariamente por el worker `lf-10-sales-report` para las tres sociedades y subidos a Google Drive. Hay dos tipos de informe por sociedad y mes:
+
+```
+shopify_sales_{company}_{yyyymm}.xlsx          — Informe para la gestoría (VAT / Sales tax)
+payment_reconciliation_{company}_{yyyymm}.xlsx — Cotejo ventas contabilidad vs pago
+```
+
+### Estructura en Drive
+
+```
+ARTESTA - 6. Finances
+├── Artesta Store, S.L
+│   └── 2026
+│       └── 202603
+│           └── income / sales / shopify
+│               ├── shopify_sales_sl_202603.xlsx
+│               └── payment_reconciliation_sl_202603.xlsx
+├── Artesta Stores (UK) Ltd
+│   └── (misma estructura)
+└── Artesta Inc
+    └── (misma estructura)
+```
+
+### `shopify_sales_{company}_{yyyymm}.xlsx`
+
+Generado por `gestoria_workbook.py` + `pyg_sync.sync_gestoria_to_drive()`.
+
+**Pestaña Summary**
+
+| Columna | Descripción |
+|---------|-------------|
+| Country / State | País o estado (US agrupa por estado) |
+| VAT rate theoretical | Tipo IVA teórico del país |
+| VAT rate Shopify | Tipo registrado por Shopify |
+| VAT rate calculated | Calculado como tax / net |
+| # Orders | Número de pedidos |
+| Gross | Ventas brutas en moneda de presentación |
+| VAT / Tax | Impuesto |
+| Net | Neto |
+| Shopify fee | *(solo INC)* Fees de Shopify Payments por estado. Grand total = `payment_fee_monthly_summary.total_cost_amount` (= línea "SHOPIFY" del P&G INC) |
+| Status | ✓ si las tasas coinciden, ⚠ diff si difieren > 0.001 |
+
+Filas amarillas = discrepancia de tasa IVA entre Shopify y teórico.
+
+**Pestaña Detail**
+
+Un pedido por fila. Para INC incluye la columna *Shopify fee* entre *Net* y *Discrepancy*, con el fee por pedido de `invoices.shopify_payout_transactions`.
+
+**Fuentes de datos:**
+- Resumen: `finance.informe_vat_gestorias_resumen_{yyyymm}` (particionada por mes)
+- Detalle: `finance.informe_vat_gestorias_detalle` filtrada por `order_month_yyyymm` y `payment_currency`
+- Fees INC: `invoices.shopify_payout_transactions` (por pedido) + `invoices.payment_fee_monthly_summary` (total mensual)
+
+**Mapeo sociedad → moneda → región:**
+
+| Sociedad | Moneda | Región | Filtro |
+|----------|--------|--------|--------|
+| SL | EUR | EU | `payment_currency = 'EUR'` |
+| LTD | GBP | UK | `payment_currency = 'GBP'` |
+| INC | USD | US | `payment_currency = 'USD'` |
+
+### `payment_reconciliation_{company}_{yyyymm}.xlsx`
+
+Generado por `payment_reconciliation.py` + `payment_reconciliation_workbook.py` + `pyg_sync.sync_payment_reconciliation_to_drive()`.
+
+**Pestañas:**
+
+| Pestaña | Contenido |
+|---------|-----------|
+| Resumen | Tabla de totales por canal + leyenda de estados |
+| Chargebacks | Inventario de chargebacks últimos 12 meses (abiertos, ganados, perdidos) |
+| Shopify | Cotejo Shopify Payments: solo contab. / solo pago / diferencias |
+| PayPal | Cotejo PayPal: solo contab. / solo pago / diferencias |
+| Bank Transfer | Pedidos pagados por transferencia (no cotejan con TPV) |
+| Gift Cards | Pedidos pagados con tarjeta regalo (no cotejan con TPV) |
+
+**Fuentes de datos:**
+- Contabilidad: `finance.informe_vat_gestorias_detalle`
+- Shopify: `invoices.shopify_payout_transactions` (charges)
+- PayPal: `invoices.paypal_transactions_raw`
+- Chargebacks: `invoices.shopify_payout_transactions` (dispute_withdrawal, dispute_reversal)
+
+**Tolerancia:** diferencia considerada si `|accounting - payment| > 0.01` en moneda de presentación.
+
+**Nota sobre cobertura histórica:** `shopify_payout_transactions` cubre desde julio 2025 para INC y agosto 2025 para SL/LTD. Períodos anteriores mostrarán muchos "solo contabilidad" que son falsos positivos.
+
+### Módulos Python
+
+| Módulo | Descripción |
+|--------|-------------|
+| `gestoria_workbook.py` | `collect_gestoria_data()` + `build_gestoria_workbook()` — lógica pura sin Drive |
+| `payment_reconciliation.py` | `build_reconciliation()` — lógica pura sin Excel ni Drive |
+| `payment_reconciliation_workbook.py` | `build_payment_reconciliation_workbook()` — genera el `.xlsx` |
+| `pyg_sync.sync_gestoria_to_drive()` | Orquesta: llama a workbook + sube a Drive |
+| `pyg_sync.sync_payment_reconciliation_to_drive()` | Orquesta: llama a reconciliation + workbook + Drive |
+| `scripts/worker_11_daily_reports.py` | Worker de larga duración; llama a la API vía HTTP |
 
 ---
 
