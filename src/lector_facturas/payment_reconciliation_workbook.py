@@ -148,7 +148,7 @@ def build_reconciliation_workbook(report: ReconciliationReport) -> bytes:
     _add_chargeback_sheet(wb, report, month_label)
     _add_channel_sheet(wb, "Shopify", report.shopify, report, month_label)
     _add_channel_sheet(wb, "PayPal",  report.paypal,  report, month_label)
-    _add_b2b_sheet(wb, report, month_label)
+    _add_bank_transfer_sheet(wb, report, month_label)
 
     buf = BytesIO()
     wb.save(buf)
@@ -740,7 +740,7 @@ YES_FILL  = PatternFill("solid", fgColor="E2EFDA")   # green  – paid
 PEND_FILL = PatternFill("solid", fgColor="FFF2CC")   # yellow – pending
 
 
-def _add_b2b_sheet(
+def _add_bank_transfer_sheet(
     wb: Workbook,
     report: ReconciliationReport,
     month_label: str,
@@ -748,7 +748,7 @@ def _add_b2b_sheet(
     """Sheet listing manual-gateway (B2B transfer) orders with payment tracking columns."""
     from openpyxl.worksheet.datavalidation import DataValidation
 
-    ws = wb.create_sheet("Cobros B2B")
+    ws = wb.create_sheet("Bank Transfer")
     orders = report.b2b_orders
 
     ncols    = len(B2B_COLS)
@@ -763,7 +763,7 @@ def _add_b2b_sheet(
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
-        value=(f"Seguimiento cobros B2B — {report.company_code} — {month_label}"
+        value=(f"Bank Transfer — {report.company_code} — {month_label}"
                f"   |   Generado: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}"))
     c.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     c.fill = HEADER_FILL; c.alignment = CENTER
@@ -773,9 +773,9 @@ def _add_b2b_sheet(
     ws.row_dimensions[row].height = 22
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
-        value=('Pedidos cobrados por transferencia bancaria (gateway "manual"), '
-               'excluyendo Hannun y Rever. '
-               'Actualizar las columnas "Pagado" y "Fecha cobro" a medida que lleguen los pagos. '
+        value=('Pedidos con gateway "manual" (transferencia bancaria), '
+               'excluyendo Hannun y Rever. Fuente: finance.informe_vat_gestorias_detalle. '
+               'Actualizar "Pagado" y "Fecha cobro" a medida que lleguen los pagos. '
                'Verde = cobrado · Amarillo = pendiente.'))
     c.font = ITALIC_GREY; c.alignment = LEFT_WRAP
     row += 1
@@ -783,7 +783,7 @@ def _add_b2b_sheet(
     if not orders:
         ws.merge_cells(f"A{row}:{last_col}{row}")
         c = ws.cell(row=row, column=1,
-            value="✓ Sin pedidos con pago manual en este período.")
+            value="✓ Sin pedidos con gateway 'manual' en este período.")
         c.font = Font(name="Calibri", size=10, italic=True, color="548235")
         c.alignment = LEFT
         return
