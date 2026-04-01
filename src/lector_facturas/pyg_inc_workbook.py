@@ -238,10 +238,6 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
     supplier_map = {str(row["supplier_code"]): row for row in suppliers}
     expense_rows: list[ExpenseRow] = []
     for row in docs:
-        billed_company_name = str(row["billed_company_name"] or "").strip().upper()
-        if billed_company_name != COMPANY_NAME:
-            continue
-
         supplier_code = str(row["supplier_code"] or "").upper()
         subcategory = _map_expense_subcategory(
             supplier_code=supplier_code,
