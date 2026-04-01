@@ -640,7 +640,7 @@ def _fill_inc_formulas(
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}"
-        ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["turnover"]},0)'
+        ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['shared_services']}"] = f"=SUM({col}{shared_service_rows[0]}:{col}{shared_service_rows[-1]})"
         ws[f"{col}{pos['administration']}"] = f"=SUM({col}{administration_rows[0]}:{col}{administration_rows[-1]})"
         ws[f"{col}{pos['technology']}"] = f"=SUM({col}{technology_rows[0]}:{col}{technology_rows[-1]})"
@@ -652,6 +652,13 @@ def _fill_inc_formulas(
 
     for row_idx in range(4, pos["profit_pct"] + 1):
         ws[f"P{row_idx}"] = f"=SUM(D{row_idx}:O{row_idx})"
+    # Percentage rows: use ratio on totals, not sum of monthly percentages
+    ws[f"P{pos['manufacturing_pct']}"]       = f'=IFERROR(P{pos["manufacturing"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['logistics_pct']}"]           = f'=IFERROR(P{pos["logistics"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['payment_fees_pct']}"]        = f'=IFERROR(P{pos["payment_fees"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['gross_margin_pct']}"]        = f'=IFERROR(P{pos["gross_margin"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['contributive_margin_pct']}"] = f'=IFERROR(P{pos["contributive_margin"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["turnover"]},0)'
     # Stock rows (informational)
     for key in ("stock_inicial", "stock_final"):
         if key in pos:

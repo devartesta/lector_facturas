@@ -870,7 +870,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing_header']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}"
-        ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["turnover"]},0)'
+        ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['marketing_meta']}"] = f"=SUM({col}{marketing_meta_detail_rows[0]}:{col}{marketing_meta_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_google']}"] = f"=SUM({col}{marketing_google_detail_rows[0]}:{col}{marketing_google_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_header']}"] = f"={col}{pos['marketing_meta']}+{col}{pos['marketing_google']}"
@@ -885,6 +885,15 @@ def _fill_month_formulas(
         ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
     for row in range(4, pos["profit_pct"] + 1):
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
+    # Percentage rows: use ratio on totals, not sum of monthly percentages
+    ws[f"P{pos['manufacturing_pct']}"]       = f'=IFERROR(P{pos["manufacturing_header"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['logistics_pct']}"]           = f'=IFERROR(P{pos["logistics_header"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['royalties_pct']}"]           = f'=IFERROR(P{pos["royalties_header"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['payment_fees_pct']}"]        = f'=IFERROR(P{pos["payment_fees_header"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['gross_margin_pct']}"]        = f'=IFERROR(P{pos["gross_margin"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['contributive_margin_pct']}"] = f'=IFERROR(P{pos["contributive_margin"]}/P{pos["product_sales"]},0)'
+    ws[f"P{pos['marketing_pct']}"]           = f'=IFERROR(SUM(P{shopify_rows[0]}:P{shopify_rows[-2]})/(P{marketing_meta_detail_rows[0]}+P{marketing_google_detail_rows[0]}),0)'
+    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["turnover"]},0)'
 
 
 def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
