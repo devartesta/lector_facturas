@@ -702,7 +702,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
     pos["otros_gastos"] = row; ws[f"C{row}"] = "Otros gastos"; ws[f"C{row}"].font = BOLD; row += 1
     pos["diferencias_divisas"] = row; ws[f"B{row}"] = "Diferencias divisas"; ws[f"B{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD
+    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / product sales"; ws[f"A{row}"].font = BOLD
 
     for section_row in (pos["turnover"], pos["expenses"]):
         for col in range(1, 18):
@@ -882,7 +882,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['marketing_header']}+{col}{pos['staff_header']}+{col}{pos['administration_header']}+{col}{pos['technology_header']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
         ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}-{col}{pos['diferencias_divisas']}"
-        ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
+        ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["product_sales"]},0)'
     for row in range(4, pos["profit_pct"] + 1):
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
     # Percentage rows: use ratio on totals, not sum of monthly percentages
@@ -893,7 +893,7 @@ def _fill_month_formulas(
     ws[f"P{pos['gross_margin_pct']}"]        = f'=IFERROR(P{pos["gross_margin"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['contributive_margin_pct']}"] = f'=IFERROR(P{pos["contributive_margin"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['marketing_pct']}"]           = f'=IFERROR(SUM(P{shopify_rows[0]}:P{shopify_rows[-2]})/(P{marketing_meta_detail_rows[0]}+P{marketing_google_detail_rows[0]}),0)'
-    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["turnover"]},0)'
+    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["product_sales"]},0)'
 
 
 def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:

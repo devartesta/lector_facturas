@@ -72,7 +72,7 @@ MAIN_LINES = [
     ("otros_gastos", "    Otros gastos"),
     ("diferencias_divisas", "  Diferencias divisas"),
     ("profit", "PROFIT"),
-    ("profit_pct", "% Profit / turnover"),
+    ("profit_pct", "% Profit / product sales"),
 ]
 
 
@@ -187,14 +187,14 @@ def build_pyg_consolidated_workbook(bundle: ConsolidatedPygBundle, output_path: 
             ws[f"{col}{row_map[key]}"] = float(value)
         ws[f"{col}{row_map['gross_margin_pct']}"] = f'=IFERROR({col}{row_map["gross_margin"]}/{col}{row_map["product_sales"]},0)'
         ws[f"{col}{row_map['contributive_margin_pct']}"] = f'=IFERROR({col}{row_map["contributive_margin"]}/{col}{row_map["product_sales"]},0)'
-        ws[f"{col}{row_map['profit_pct']}"] = f'=IFERROR({col}{row_map["profit"]}/{col}{row_map["turnover"]},0)'
+        ws[f"{col}{row_map['profit_pct']}"] = f'=IFERROR({col}{row_map["profit"]}/{col}{row_map["product_sales"]},0)'
 
     for row_idx in row_map.values():
         ws[f"P{row_idx}"] = f"=SUM(D{row_idx}:O{row_idx})"
     # Percentage rows: use ratio on totals, not sum of monthly percentages
     ws[f"P{row_map['gross_margin_pct']}"]        = f'=IFERROR(P{row_map["gross_margin"]}/P{row_map["product_sales"]},0)'
     ws[f"P{row_map['contributive_margin_pct']}"] = f'=IFERROR(P{row_map["contributive_margin"]}/P{row_map["product_sales"]},0)'
-    ws[f"P{row_map['profit_pct']}"]              = f'=IFERROR(P{row_map["profit"]}/P{row_map["turnover"]},0)'
+    ws[f"P{row_map['profit_pct']}"]              = f'=IFERROR(P{row_map["profit"]}/P{row_map["product_sales"]},0)'
 
     major_rows = {row_map["turnover"], row_map["expenses"], row_map["gross_margin"], row_map["contributive_margin"], row_map["profit"]}
     subtotal_rows = {row_map["cogs"], row_map["opex"]}

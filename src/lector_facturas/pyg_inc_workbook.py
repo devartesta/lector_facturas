@@ -527,7 +527,7 @@ def _main_sheet(wb: Workbook, bundle: PygIncDataBundle) -> None:
     pos["otros_gastos"] = row; ws[f"A{row}"] = "    Otros gastos"; ws[f"A{row}"].font = BOLD; row += 1
     pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Diferencias divisas"; ws[f"A{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / turnover"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / product sales"; ws[f"A{row}"].font = BOLD; row += 2
     pos["stock_inicial"] = row; ws[f"A{row}"] = "Stock inicial marcos"; ws[f"A{row}"].font = BOLD; row += 1
     pos["stock_final"] = row; ws[f"A{row}"] = "Stock final marcos"; ws[f"A{row}"].font = BOLD
 
@@ -648,7 +648,7 @@ def _fill_inc_formulas(
         ws[f"{col}{pos['opex']}"] = f"={col}{pos['shared_services']}+{col}{pos['administration']}+{col}{pos['technology']}+{col}{pos['otros_gastos']}"
         ws[f"{col}{pos['expenses']}"] = f"={col}{pos['cogs']}+{col}{pos['opex']}"
         ws[f"{col}{pos['profit']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}-{col}{pos['opex']}-{col}{pos['diferencias_divisas']}"
-        ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["turnover"]},0)'
+        ws[f"{col}{pos['profit_pct']}"] = f'=IFERROR({col}{pos["profit"]}/{col}{pos["product_sales"]},0)'
 
     for row_idx in range(4, pos["profit_pct"] + 1):
         ws[f"P{row_idx}"] = f"=SUM(D{row_idx}:O{row_idx})"
@@ -658,7 +658,7 @@ def _fill_inc_formulas(
     ws[f"P{pos['payment_fees_pct']}"]        = f'=IFERROR(P{pos["payment_fees"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['gross_margin_pct']}"]        = f'=IFERROR(P{pos["gross_margin"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['contributive_margin_pct']}"] = f'=IFERROR(P{pos["contributive_margin"]}/P{pos["product_sales"]},0)'
-    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["turnover"]},0)'
+    ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["product_sales"]},0)'
     # Stock rows (informational)
     for key in ("stock_inicial", "stock_final"):
         if key in pos:
