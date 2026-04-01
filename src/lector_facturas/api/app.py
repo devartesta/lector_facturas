@@ -43,8 +43,11 @@ from lector_facturas.api.schemas import (
     ReviewDigestRunOut,
     GestoriaSyncIn,
     GestoriaSyncOut,
+    HourlyStepResult,
     PaymentReconciliationSyncIn,
     PaymentReconciliationSyncOut,
+    PygRunOut,
+    SalesReportsRunOut,
     StockDetailSyncOut,
     SupplierOut,
     ValidationProcessRunOut,
@@ -877,6 +880,53 @@ def create_app() -> FastAPI:
         settings: AppSettings = Depends(get_settings),
     ) -> ReviewDigestRunOut:
         return _run_review_digest_v2(payload=payload, store=store, settings=settings)
+
+    @app.post("/jobs/sales-reports/run", response_model=SalesReportsRunOut)
+    def run_sales_reports(
+        period_yyyymm: str | None = None,
+        settings: AppSettings = Depends(get_settings),
+    ) -> SalesReportsRunOut:
+        """Regenerate gestoria + payment_reconciliation for all companies.
+
+        If period_yyyymm is omitted, defaults to the current month.
+        """
+        from datetime import datetime as _dt
+        period = period_yyyymm or _dt.now().strftime("%Y%m")
+        companies = ["SL", "LTD", "INC"]
+        results: list[HourlyStepResult] = []
+        for company in companies:
+            for task, fn in [
+                (f"gestoria/{company}", lambda c=company, p=period: sync_gestoria_to_drive(settings=settings, company_code=c, period_yyyymm=p)),
+                (f"payment_reconciliation/{company}", lambda c=company, p=period: sync_payment_reconciliation_to_drive(settings=settings, company_code=c, period_yyyymm=p)),
+            ]:
+                try:
+                    result = fn()
+                    results.append(HourlyStepResult(step=task, status="ok", detail=result.drive_file_name))
+                except Exception as exc:
+                    results.append(HourlyStepResult(step=task, status="error", detail=str(exc)))
+        return SalesReportsRunOut(period_yyyymm=period, results=results)
+
+    @app.post("/jobs/pyg/run", response_model=PygRunOut)
+    def run_pyg(
+        settings: AppSettings = Depends(get_settings),
+    ) -> PygRunOut:
+        """Regenerate all PYGs (SL, LTD, INC, Consolidated) for the current year."""
+        from datetime import datetime as _dt
+        year = _dt.now().year
+        tasks = [
+            ("PYG SL",          lambda: sync_pyg_sl_to_drive(settings=settings, year=year)),
+            ("PYG LTD",         lambda: sync_pyg_ltd_to_drive(settings=settings, year=year)),
+            ("PYG INC",         lambda: sync_pyg_inc_to_drive(settings=settings, year=year)),
+            ("PYG Consolidated",lambda: sync_pyg_consolidated_to_drive(settings=settings, year=year)),
+        ]
+        results: list[HourlyStepResult] = []
+        for name, fn in tasks:
+            try:
+                result = fn()
+                results.append(HourlyStepResult(step=name, status="ok", detail=str(getattr(result, "drive_file_name", result))))
+            except Exception as exc:
+                results.append(HourlyStepResult(step=name, status="error", detail=str(exc)))
+        return PygRunOut(year=year, results=results)
 
     @app.get("/validation/queue", response_model=list[IngestionQueueItemOut])
     def list_validation_queue(

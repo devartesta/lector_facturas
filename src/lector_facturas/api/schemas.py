@@ -420,3 +420,19 @@ class GestoriaSyncOut(BaseModel):
     n_detalle_rows: int
     drive_file_name: str
     drive_file_url: str
+
+
+class HourlyStepResult(BaseModel):
+    step: str
+    status: str          # "ok" | "error"
+    detail: str = ""     # URL or error message
+
+
+class SalesReportsRunOut(BaseModel):
+    period_yyyymm: str
+    results: list[HourlyStepResult]
+
+
+class PygRunOut(BaseModel):
+    year: int
+    results: list[HourlyStepResult]
