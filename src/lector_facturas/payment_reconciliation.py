@@ -768,7 +768,7 @@ def build_reconciliation(
             if a and not p:
                 result.only_accounting.append(row)
             elif p and not a:
-                if row.payment_amount and row.payment_amount > Decimal("0"):
+                if row.payment_amount:
                     result.only_payment.append(row)
             elif a and p:
                 if row.diff is not None and abs(row.diff) > Decimal("0.01"):

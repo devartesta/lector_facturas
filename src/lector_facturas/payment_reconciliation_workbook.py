@@ -245,19 +245,7 @@ def _add_summary_sheet(
     # ══════════════════════════════════════════════════════════════════════════
     _section_hdr(row, "PERIOD TOTALS"); row += 1
 
-    # Column sub-headers: A=label, B=count, C=Shopify, D=PayPal, E=Bank Transfer, F=Total, G=notes
-    _sh(row)
-    for col, hdr in enumerate(
-        ["", "# orders", "Shopify Payments", "PayPal", "Bank Transfer", "Total", ""], 1
-    ):
-        _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
-    row += 1
-
     _D0 = Decimal("0")
-    sa  = report.shopify_accounting_total
-    sp  = report.shopify_payment_total
-    pa  = report.paypal_accounting_total
-    pp  = report.paypal_payment_total
 
     # Bank Transfer totals from b2b_orders + existing_payments
     ep  = existing_payments or {}
@@ -268,42 +256,51 @@ def _add_summary_sheet(
     ).quantize(Decimal("0.01"))
     b2b_diff = (b2b_paid - b2b_acct).quantize(Decimal("0.01"))
 
-    # Each tuple: (label, n_orders, shopify_val, paypal_val, b2b_val, total_val, note)
-    totals_rows = [
-        ("Accounting amount",
-         None, sa, pa, b2b_acct,
-         (sa + pa + b2b_acct).quantize(Decimal("0.01")),
-         "Net accounting sales (including refunds). Bank Transfer = manual orders for the period."),
-        ("Amount collected",
-         None, sp, pp, b2b_paid,
-         (sp + pp + b2b_paid).quantize(Decimal("0.01")),
-         "Shopify/PayPal: settled by the channel. Bank Transfer: orders marked 'Yes' in the tab."),
-        ("Difference",
-         None,
-         (sp - sa).quantize(Decimal("0.01")),
-         (pp - pa).quantize(Decimal("0.01")),
-         b2b_diff,
-         ((sp + pp + b2b_paid) - (sa + pa + b2b_acct)).quantize(Decimal("0.01")),
-         "Positive = collected more than accounted; negative = pending or unreconciled."),
-    ]
-    for label, cnt, sh_val, pp_val, b2b_val, tot_val, note in totals_rows:
-        _sh(row)
-        is_diff_row = (label == "Difference")
-        row_fill    = (WARN_FILL if is_diff_row and abs(tot_val) > Decimal("0.01") else
-                       OK_FILL   if is_diff_row else None)
-        font_row    = BOLD if is_diff_row else NORMAL
-        _cell(row, 1, label,  font=BOLD,      fill=row_fill)
-        _cell(row, 2, cnt,    font=font_row,  fill=row_fill, align=CENTER)
-        _cell(row, 3, float(sh_val)  if sh_val  is not None else None,
-              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 4, float(pp_val)  if pp_val  is not None else None,
-              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 5, float(b2b_val) if b2b_val is not None else None,
-              font=font_row, fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 6, float(tot_val) if tot_val is not None else None,
-              font=BOLD,     fill=row_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 7, note,   font=ITALIC_GREY, fill=row_fill, align=LEFT_WRAP)
-        row += 1
+    # Period Totals — Shopify Payments and PayPal columns use formulas referencing
+    # the grand-total row 3 of each channel sheet.  Bank Transfer stays Python-computed.
+    # row_acct, row_coll, row_diff are tracked so the Difference Breakdown Total row
+    # can reference them with intra-sheet formulas.
+    _sh(row)
+    for col, hdr in enumerate(
+        ["", "# orders", "Shopify Payments", "PayPal", "Bank Transfer", "Total", ""], 1
+    ):
+        _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
+    row += 1
+
+    row_acct = row
+    _sh(row)
+    _cell(row, 1, "Accounting amount", font=BOLD)
+    _cell(row, 2, None, align=CENTER)
+    _cell(row, 3, "='Shopify Payments'!E3", align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 4, "=PayPal!E3",             align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 5, float(b2b_acct) if b2b_acct else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, f"=C{row}+D{row}+E{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, "Net accounting sales (including refunds). Bank Transfer = manual orders for the period.",
+          font=ITALIC_GREY, align=LEFT_WRAP)
+    row += 1
+
+    row_coll = row
+    _sh(row)
+    _cell(row, 1, "Amount collected", font=NORMAL)
+    _cell(row, 2, None, align=CENTER)
+    _cell(row, 3, "='Shopify Payments'!F3", align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 4, "=PayPal!F3",             align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 5, float(b2b_paid) if b2b_paid else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, f"=C{row}+D{row}+E{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, "Shopify/PayPal: settled by the channel. Bank Transfer: orders marked 'Yes' in the tab.",
+          font=ITALIC_GREY, align=LEFT_WRAP)
+    row += 1
+
+    _sh(row)
+    _cell(row, 1, "Difference", font=BOLD, fill=WARN_FILL)
+    _cell(row, 2, None, fill=WARN_FILL, align=CENTER)
+    _cell(row, 3, f"=C{row_coll}-C{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 4, f"=D{row_coll}-D{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 5, float(b2b_diff) if b2b_diff else None, font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, f"=F{row_coll}-F{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, "Positive = collected more than accounted; negative = pending or unreconciled.",
+          font=ITALIC_GREY, fill=WARN_FILL, align=LEFT_WRAP)
+    row += 1
 
     _blank_row(row); row += 1
 
@@ -317,6 +314,7 @@ def _add_summary_sheet(
     ws.merge_cells(f"A{row}:{LAST_COL}{row}")
     _cell(row, 1,
           "Orders with a difference between accounting and payment channel, classified by cause. "
+          "Shopify / PayPal values are Excel formulas (SUMIF on the channel tabs, column L = effective diff). "
           "Gift card: gateway includes gift_card. "
           "Chargeback: open, won or likely-lost dispute. "
           "Bank Transfer: orders not yet marked as collected ('Yes'). "
@@ -325,34 +323,14 @@ def _add_summary_sheet(
           fill=LEGEND_FILL, align=LEFT_WRAP)
     row += 1
 
-    # Column headers: A=Category, B=#orders, C=Shopify diff, D=PayPal diff, E=BT diff, F=Total, G=Action
+    # Column headers
     _sh(row)
     for col, hdr in enumerate(["Category", "# orders", "Shopify diff", "PayPal diff",
                                 "Bank Transfer diff", "Total diff", "Recommended action"], 1):
         _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
     row += 1
 
-    # Compute effective diff per row across all buckets+channels
-    def _eff_diff(r: ReconciliationRow, bucket: str) -> Decimal:
-        if bucket == "only_accounting":
-            return -(r.accounting_amount or _D0)
-        if bucket == "only_payment":
-            return  (r.payment_amount    or _D0)
-        return (r.diff or _D0)  # amount_diff
-
-    # Gather all rows with differences, tagged by channel and bucket
-    all_diff: list[tuple[str, str, ReconciliationRow]] = []
-    for ch_label, recon in (("Shopify", report.shopify), ("PayPal", report.paypal)):
-        for bucket in ("only_accounting", "only_payment", "amount_diff"):
-            for r in getattr(recon, bucket):
-                all_diff.append((ch_label, bucket, r))
-
-    def _classify(r: ReconciliationRow) -> str:
-        if r.is_gift_card:   return "gift"
-        if r.is_chargeback:  return "cb"
-        return "other"
-
-    # Bank Transfer pending: orders not marked 'Yes'
+    # Bank Transfer pending (Python-computed, no formula source)
     n_bt_pending = sum(
         1 for o in report.b2b_orders if ep.get(o.order_name, ("Pending",))[0] != "Yes"
     )
@@ -361,67 +339,77 @@ def _add_summary_sheet(
         _D0,
     ).quantize(Decimal("0.01"))
 
-    diff_cats: dict[str, dict[str, Any]] = {
-        "gift":  {"label": "Gift card",      "sh": _D0, "pp": _D0, "bt": _D0, "n": 0,
-                  "fill": LEGEND_FILL,
-                  "note": "Orders partially paid with gift card (channel settles less than accounting)."},
-        "cb":    {"label": "Chargeback",     "sh": _D0, "pp": _D0, "bt": _D0, "n": 0,
-                  "fill": CB_OPEN_FILL,
-                  "note": "Open, won or likely-lost disputes. See Chargebacks tab."},
-        "other": {"label": "Other",          "sh": _D0, "pp": _D0, "bt": bt_pending_diff, "n": n_bt_pending,
-                  "fill": WARN_FILL,
-                  "note": "Review in the Shopify / PayPal / Bank Transfer tabs."},
-    }
-    for ch_label, bucket, r in all_diff:
-        cat  = _classify(r)
-        d    = _eff_diff(r, bucket)
-        diff_cats[cat]["n"] += 1
-        if ch_label == "Shopify":
-            diff_cats[cat]["sh"] = (diff_cats[cat]["sh"] + d).quantize(Decimal("0.01"))
-        else:
-            diff_cats[cat]["pp"] = (diff_cats[cat]["pp"] + d).quantize(Decimal("0.01"))
+    # Count rows per category (for # orders column and fill colour)
+    def _classify(r: ReconciliationRow) -> str:
+        if r.is_gift_card:  return "gift"
+        if r.is_chargeback: return "cb"
+        return "other"
 
-    tot_n  = 0
-    tot_sh = _D0
-    tot_pp = _D0
-    tot_bt = _D0
-    for cat_key in ("gift", "cb", "other"):
-        d      = diff_cats[cat_key]
-        n      = d["n"]
-        sh_d   = d["sh"].quantize(Decimal("0.01"))
-        pp_d   = d["pp"].quantize(Decimal("0.01"))
-        bt_d   = d["bt"].quantize(Decimal("0.01"))
-        tot_d  = (sh_d + pp_d + bt_d).quantize(Decimal("0.01"))
-        tot_n += n
-        tot_sh = (tot_sh + sh_d).quantize(Decimal("0.01"))
-        tot_pp = (tot_pp + pp_d).quantize(Decimal("0.01"))
-        tot_bt = (tot_bt + bt_d).quantize(Decimal("0.01"))
-        r_fill = d["fill"] if n > 0 else OK_FILL
+    all_diff: list[tuple[str, ReconciliationRow]] = []
+    for ch_label, recon in (("Shopify", report.shopify), ("PayPal", report.paypal)):
+        for bucket in ("only_accounting", "only_payment", "amount_diff"):
+            for r in getattr(recon, bucket):
+                all_diff.append((ch_label, r))
+
+    cat_counts: dict[str, int] = {"gift": 0, "cb": 0, "other": n_bt_pending}
+    for _, r in all_diff:
+        cat_counts[_classify(r)] += 1
+
+    # Shopify / PayPal diffs via SUMIF formulas on column L of each channel sheet.
+    # Column L contains the effective diff for every data row (hidden, no value on total/header rows).
+    # Column I = gift-card flag ("Sí" / ""), column J = chargeback label ("" when none).
+    SH = "'Shopify Payments'"
+    PP = "PayPal"
+    cat_rows: dict[str, int] = {}
+
+    breakdown_defs = [
+        ("gift",  "Gift card",
+         f"=SUMIF({SH}!I:I,\"Sí\",{SH}!L:L)",
+         f"=SUMIF({PP}!I:I,\"Sí\",{PP}!L:L)",
+         None,
+         LEGEND_FILL,
+         "Orders partially paid with gift card (channel settles less than accounting)."),
+        ("cb",    "Chargeback",
+         f"=SUMIFS({SH}!L:L,{SH}!I:I,\"<>Sí\",{SH}!J:J,\"<>\")",
+         f"=SUMIFS({PP}!L:L,{PP}!I:I,\"<>Sí\",{PP}!J:J,\"<>\")",
+         None,
+         CB_OPEN_FILL,
+         "Open, won or likely-lost disputes. See Chargebacks tab."),
+        ("other", "Other",
+         f"=SUMIFS({SH}!L:L,{SH}!I:I,\"<>Sí\",{SH}!J:J,\"\")",
+         f"=SUMIFS({PP}!L:L,{PP}!I:I,\"<>Sí\",{PP}!J:J,\"\")",
+         float(bt_pending_diff) if bt_pending_diff else None,
+         WARN_FILL,
+         "Review in the Shopify / PayPal / Bank Transfer tabs."),
+    ]
+
+    first_cat_row = row
+    for cat_key, label, sh_formula, pp_formula, bt_val, cat_fill, note in breakdown_defs:
+        n      = cat_counts[cat_key]
+        r_fill = cat_fill if n > 0 else OK_FILL
+        cat_rows[cat_key] = row
         _sh(row)
-        _cell(row, 1, d["label"], font=BOLD, fill=r_fill)
-        _cell(row, 2, n,          font=BOLD if n > 0 else NORMAL, fill=r_fill, align=CENTER)
-        _cell(row, 3, float(sh_d) if sh_d else None,
-              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 4, float(pp_d) if pp_d else None,
-              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 5, float(bt_d) if bt_d else None,
-              font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 6, float(tot_d) if tot_d else None,
-              font=BOLD, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
-        _cell(row, 7, "✓ No differences in this category" if n == 0 else d["note"],
+        _cell(row, 1, label, font=BOLD, fill=r_fill)
+        _cell(row, 2, n, font=BOLD if n > 0 else NORMAL, fill=r_fill, align=CENTER)
+        _cell(row, 3, sh_formula, font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 4, pp_formula, font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 5, bt_val,     font=NORMAL, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 6, f"=C{row}+D{row}+E{row}", font=BOLD, fill=r_fill, align=RIGHT, fmt=MONEY_FMT)
+        _cell(row, 7, "✓ No differences in this category" if n == 0 else note,
               font=ITALIC_GREY, fill=r_fill, align=LEFT_WRAP)
         row += 1
 
-    # Total row
-    tot_tot = (tot_sh + tot_pp + tot_bt).quantize(Decimal("0.01"))
+    # Total row with intra-sheet SUM formulas
+    last_cat_row = row - 1
+    tot_n = sum(cat_counts.values())
     _sh(row)
     _cell(row, 1, f"TOTAL  ({tot_n} orders)", font=BOLD, fill=TOTAL_FILL)
-    _cell(row, 2, tot_n,           font=BOLD, fill=TOTAL_FILL, align=CENTER)
-    _cell(row, 3, float(tot_sh) if tot_sh else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 4, float(tot_pp) if tot_pp else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 5, float(tot_bt) if tot_bt else None, font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 6, float(tot_tot),  font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 7, None,            font=NORMAL, fill=TOTAL_FILL)
+    _cell(row, 2, tot_n, font=BOLD, fill=TOTAL_FILL, align=CENTER)
+    for col in (3, 4, 5, 6):
+        col_l = get_column_letter(col)
+        _cell(row, col, f"=SUM({col_l}{first_cat_row}:{col_l}{last_cat_row})",
+              font=BOLD, fill=TOTAL_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, None, font=NORMAL, fill=TOTAL_FILL)
     row += 1
 
     _blank_row(row); row += 1
@@ -743,6 +731,8 @@ def _add_channel_sheet(
 
     for i, (_, w, _, _) in enumerate(COLUMNS, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
+    # Column L (12): hidden effective-diff used by Summary SUMIF formulas
+    ws.column_dimensions["L"].width = 0
 
     row = 1
 
@@ -767,13 +757,34 @@ def _add_channel_sheet(
                f"Amount differences: {diff_n}   "
                f"{'✓ All matched' if only_a + only_p + diff_n == 0 else '⚠ Review differences — see Summary tab'}")
     c.font = ITALIC_GREY; c.alignment = CENTER
-    row += 2
+    row += 1
+
+    # Row 3: period grand-total row — referenced as fixed anchor by Summary formulas
+    if channel == "Shopify Payments":
+        acct_total = report.shopify_accounting_total
+        pay_total  = report.shopify_payment_total
+    else:
+        acct_total = report.paypal_accounting_total
+        pay_total  = report.paypal_payment_total
+    diff_total = (pay_total - acct_total).quantize(Decimal("0.01"))
+    ws.row_dimensions[row].height = ROW_H
+    _D0 = Decimal("0")
+    for col in range(1, len(COLUMNS) + 1):
+        c = ws.cell(row=row, column=col)
+        c.font = BOLD; c.fill = TOTAL_FILL; c.border = THIN; c.alignment = LEFT
+    ws.merge_cells(f"A{row}:D{row}")
+    ws.cell(row=row, column=1).value = "PERIOD TOTAL (all orders incl. matched)"
+    for col, val in ((5, float(acct_total)), (6, float(pay_total)), (7, float(diff_total))):
+        c = ws.cell(row=row, column=col, value=val)
+        c.font = BOLD; c.fill = TOTAL_FILL; c.border = THIN; c.alignment = RIGHT
+        c.number_format = MONEY_FMT
+    row += 2  # blank row 4, sections start at row 5
 
     for attr, sec_title, sec_explanation in SECTION_DEFS:
         rows_data: list[ReconciliationRow] = getattr(recon, attr)
         row = _write_section(ws, row, sec_title, sec_explanation, rows_data, existing_comments=existing_comments)
 
-    ws.freeze_panes = "A4"
+    ws.freeze_panes = "A5"
 
 
 def _write_section(
@@ -848,6 +859,18 @@ def _write_section(
         if data_row.shopify_url:
             lc = ws.cell(row=row, column=8)
             lc.value = "Ver pedido"; lc.hyperlink = data_row.shopify_url; lc.font = LINK_FONT
+
+        # Column L (12): effective diff used by Summary SUMIF formulas (hidden column)
+        _da = data_row.accounting_amount
+        _dp = data_row.payment_amount
+        eff_diff: Decimal | None = (
+            -(_da)         if _da is not None and _dp is None else
+             (_dp)         if _dp is not None and _da is None else
+            data_row.diff
+        )
+        if eff_diff is not None:
+            lc = ws.cell(row=row, column=12, value=float(eff_diff))
+            lc.number_format = MONEY_FMT
 
         row += 1
 
