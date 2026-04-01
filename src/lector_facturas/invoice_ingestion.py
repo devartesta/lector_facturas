@@ -29,6 +29,7 @@ from lector_facturas.parsers.googleworkspace import parse_googleworkspace_pdf
 from lector_facturas.parsers.gorgias import parse_gorgias_pdf
 from lector_facturas.parsers.hannun import parse_hannun_pdf
 from lector_facturas.parsers.hetzner import parse_hetzner_pdf
+from lector_facturas.parsers.hushed import parse_hushed_invoice_pdf, RECEIPT_FILENAME_RE as HUSHED_RECEIPT_RE
 from lector_facturas.parsers.ipostal import parse_ipostal_pdf, parse_ipostal_text
 from lector_facturas.parsers.jondo import parse_jondo_pdf
 from lector_facturas.parsers.konvoai import parse_konvoai_pdf
@@ -135,6 +136,13 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("QHANDS", "qhands", parse_qhands_pdf, filename_contains=("factura_2026-0012",), text_contains=("qhands design", "renting cnc")),
     ParserRule("HANNUN", "hannun_invoice", parse_hannun_pdf, filename_contains=("vta26-", "factura_h", "factura 2025-"), sender_contains=("hannun",), text_contains=("hannun",)),
     ParserRule("HETZNER", "hetzner", parse_hetzner_pdf, filename_contains=("hetzner",), text_contains=("hetzner online",)),
+    ParserRule(
+        "HUSHED", "hushed", parse_hushed_invoice_pdf,
+        sender_contains=("hushed.com", "affinityclick"),
+        subject_contains=("your receipt from hushed",),
+        filename_contains=("receipt-",),
+        text_contains=("hushed c/o affinityclick",),
+    ),
     ParserRule("IPOSTAL", "ipostal", parse_ipostal_pdf, sender_contains=("ipostal",), filename_contains=("ipostal",), text_contains=("ipostal1", "factura para artesta inc", "identificaciones de correo propias")),
     ParserRule("JONDO", "jondo", parse_jondo_pdf, filename_regexes=(r"^as-\d+\.pdf$",), text_contains=("order invoice", "jondo uk", "po number: as-")),
     ParserRule("KONVOAI", "konvoai", parse_konvoai_pdf, filename_contains=("b5f7df3c",), sender_contains=("konvoai",), text_contains=("konvo ai",)),
@@ -298,6 +306,19 @@ def parse_with_rule(
                 raise ValueError("QuickBooks OCR requires Google Drive client.")
             ocr_text = drive_client.ocr_pdf_to_text(name=original_filename, content=content)
         return parse_quickbooks_text(ocr_text, original_filename=original_filename)
+
+    if rule.supplier_code == "HUSHED":
+        # Extract receipt number from original filename e.g. "Receipt-2260-8475.pdf"
+        rcpt_m = HUSHED_RECEIPT_RE.match(original_filename)
+        receipt_number = rcpt_m.group(1) if rcpt_m else ""
+        suffix = Path(original_filename).suffix or ".pdf"
+        with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+            handle.write(content)
+            temp_path = Path(handle.name)
+        try:
+            return parse_hushed_invoice_pdf(temp_path, receipt_number=receipt_number)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
     suffix = Path(original_filename).suffix or ".pdf"
     with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
