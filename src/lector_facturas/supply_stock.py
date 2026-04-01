@@ -285,6 +285,10 @@ def refresh_frame_consumption_month(fabricante: str, mes_yyyymm: str, conn) -> N
     fabricante + mes_yyyymm + frame_color + frame_size). This function NEVER modifies
     overrides; they only affect the consumed_* columns in frame_stock_monthly.
     """
+    # Ensure rows are dict-like regardless of how the caller created the connection
+    if dict_row is not None and getattr(conn, "row_factory", None) is not dict_row:
+        conn.row_factory = dict_row
+
     year = int(mes_yyyymm[:4])
     month = int(mes_yyyymm[4:])
     month_start = date(year, month, 1)

@@ -121,7 +121,18 @@ class EcbFxService:
         month = int(yyyymm[4:])
         matching_dates = [day for day in self._daily_rates().keys() if day.year == year and day.month == month and normalized in self._daily_rates()[day]]
         if not matching_dates:
-            raise RuntimeError(f"No ECB FX rate found for {normalized} in {yyyymm}.")
+            # Fallback for future months: use the latest available ECB rate
+            all_dates = [day for day in self._daily_rates().keys() if normalized in self._daily_rates()[day]]
+            if not all_dates:
+                raise RuntimeError(f"No ECB FX rate found for {normalized} in any month.")
+            rate_date = max(all_dates)
+            return FxMonthRate(
+                yyyymm=yyyymm,
+                currency=normalized,
+                rate_date=rate_date,
+                reference_rate=self._daily_rates()[rate_date][normalized],
+                source=f"{ECB_HIST_XML_URL} (latest available, no ECB data for {yyyymm})",
+            )
         rate_date = max(matching_dates)
         return FxMonthRate(
             yyyymm=yyyymm,
