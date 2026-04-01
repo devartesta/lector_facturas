@@ -953,6 +953,9 @@ def _add_navigation_links(
 def _map_expense_subcategory(*, supplier_code: str, division_invoice: str, supplier_meta: dict[str, Any] | None) -> str:
     supplier = supplier_code.upper()
     division = division_invoice.strip().lower()
+    if supplier == "ARTLINK":
+        # ARTLINK frame purchases are already reflected via Proco frame stock consumption — exclude to avoid double-count
+        return ""
     if supplier == "JONDO":
         return "manufacturing"
     if supplier == "PORTCLEARANCE":
