@@ -55,6 +55,7 @@ from lector_facturas.api.schemas import (
     ValidationProcessRunOut,
     DocumentPaymentOut,
     MarkDocumentPaymentIn,
+    BulkPaymentIn,
     SupplierPaymentSettingsIn,
     PaymentSettlementRunOut,
 )
@@ -986,6 +987,7 @@ def create_app() -> FastAPI:
             invoice_number=str(row.get("invoice_number", "")),
             invoice_date=row.get("invoice_date"),
             period_yyyymm=str(row.get("period_yyyymm", "")),
+            gross_amount=row.get("gross_amount"),
             net_amount=row.get("net_amount"),
             currency_code=str(row.get("currency_code", "")),
             drive_url=str(row.get("drive_url", "")),
@@ -997,6 +999,8 @@ def create_app() -> FastAPI:
             is_overdue=is_overdue,
             is_settled=is_settled,
             days_overdue=days_overdue,
+            is_direct_debit=bool(row.get("is_direct_debit", False)),
+            document_type=str(row.get("document_type", "invoice")),
         )
 
     @app.post("/documents/{document_id}/payment", response_model=DocumentPaymentOut)
@@ -1020,6 +1024,17 @@ def create_app() -> FastAPI:
         if not row:
             raise HTTPException(status_code=404, detail="Document not found after update")
         return _to_payment_out(row)
+
+    @app.post("/documents/bulk-payment")
+    def bulk_mark_payment(
+        body: BulkPaymentIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> dict:
+        count = store.bulk_mark_payment(
+            document_ids=body.document_ids,
+            payment_method=body.payment_method,
+        )
+        return {"updated": count}
 
     @app.get("/documents/payment-status", response_model=list[DocumentPaymentOut])
     def get_payment_status(

@@ -460,6 +460,7 @@ class DocumentPaymentOut(BaseModel):
     invoice_number: str
     invoice_date: date | None
     period_yyyymm: str
+    gross_amount: Decimal | None
     net_amount: Decimal | None
     currency_code: str
     drive_url: str
@@ -471,6 +472,13 @@ class DocumentPaymentOut(BaseModel):
     is_overdue: bool   # due_date < today AND status != 'paid'
     is_settled: bool   # direct_debit AND due_date <= today
     days_overdue: int | None  # positive = days past due, negative = days remaining
+    is_direct_debit: bool = False
+    document_type: str = "invoice"
+
+
+class BulkPaymentIn(BaseModel):
+    document_ids: list[str]
+    payment_method: str = ""
 
 
 class SupplierPaymentSettingsIn(BaseModel):

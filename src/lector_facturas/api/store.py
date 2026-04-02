@@ -2294,6 +2294,50 @@ class ReviewStore:
             conn.commit()
             return (result.rowcount or 0) > 0
 
+    def bulk_mark_payment(
+        self,
+        *,
+        document_ids: list[str],
+        payment_method: str = "",
+    ) -> int:
+        """Mark a batch of documents as fully paid.
+        payment_date = payment_due_date if set, else invoice_date, else today.
+        payment_amount = gross_amount.
+        Returns count of updated rows."""
+        if not self.database_url or not document_ids:
+            return 0
+        from datetime import date as _date
+        today = _date.today()
+        placeholders = ",".join(["%s"] * len(document_ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, gross_amount, invoice_date, payment_due_date
+                FROM {SCHEMA_NAME}.documents
+                WHERE id IN ({placeholders})
+                """,
+                document_ids,
+            ).fetchall()
+            updated = 0
+            for row in rows:
+                doc_id, gross_amount, invoice_date, payment_due_date = row
+                pay_date = payment_due_date or invoice_date or today
+                conn.execute(
+                    f"""
+                    UPDATE {SCHEMA_NAME}.documents
+                    SET payment_status   = 'paid',
+                        payment_date     = %s,
+                        payment_method   = %s,
+                        payment_amount   = %s,
+                        updated_at       = NOW()
+                    WHERE id = %s
+                    """,
+                    (pay_date, payment_method, gross_amount, str(doc_id)),
+                )
+                updated += 1
+            conn.commit()
+            return updated
+
     def list_documents_for_payment_report(
         self,
         *,
@@ -2308,14 +2352,14 @@ class ReviewStore:
         query = f"""
             SELECT
                 d.id, d.company_code, d.supplier_code, d.invoice_number,
-                d.invoice_date, d.period_yyyymm, d.net_amount, d.currency_code,
-                d.drive_url, d.payment_status, d.payment_date, d.payment_method,
-                d.payment_amount, d.payment_due_date,
-                s.is_direct_debit
+                d.invoice_date, d.period_yyyymm, d.gross_amount, d.net_amount,
+                d.currency_code, d.drive_url, d.payment_status, d.payment_date,
+                d.payment_method, d.payment_amount, d.payment_due_date,
+                s.is_direct_debit, d.document_type
             FROM {SCHEMA_NAME}.documents d
             LEFT JOIN {SCHEMA_NAME}.suppliers s
                 ON s.id = d.supplier_id
-            WHERE d.document_type = 'invoice'
+            WHERE d.document_type IN ('invoice', 'credit_note')
         """
         params: list = []
         if company_code:
@@ -2340,15 +2384,17 @@ class ReviewStore:
                 "invoice_number": str(row[3] or ""),
                 "invoice_date": row[4],
                 "period_yyyymm": str(row[5] or ""),
-                "net_amount": row[6],
-                "currency_code": str(row[7] or ""),
-                "drive_url": str(row[8] or ""),
-                "payment_status": str(row[9] or "pending"),
-                "payment_date": row[10],
-                "payment_method": str(row[11] or ""),
-                "payment_amount": row[12],
-                "payment_due_date": row[13],
-                "is_direct_debit": bool(row[14]) if row[14] is not None else False,
+                "gross_amount": row[6],
+                "net_amount": row[7],
+                "currency_code": str(row[8] or ""),
+                "drive_url": str(row[9] or ""),
+                "payment_status": str(row[10] or "pending"),
+                "payment_date": row[11],
+                "payment_method": str(row[12] or ""),
+                "payment_amount": row[13],
+                "payment_due_date": row[14],
+                "is_direct_debit": bool(row[15]) if row[15] is not None else False,
+                "document_type": str(row[16] or "invoice"),
             }
             for row in rows
         ]
