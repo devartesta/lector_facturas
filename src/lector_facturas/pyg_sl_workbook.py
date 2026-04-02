@@ -309,8 +309,8 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             elif supplier_code == "HANNUN":
                 service_rows.append(StageRow(yyyymm, COMPANY_CODE, "HANNUN", division_invoice or "services", amount_net, currency, "documents", invoice_number, drive_url))
             continue
-        if supplier_code == "REVER" and document_type == "supplied_note":
-            supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", document_type, -amount_net, currency, "documents", invoice_number, drive_url))
+        if supplier_code == "REVER" and (document_type == "supplied_note" or division_invoice == "suplidos"):
+            supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", "suplidos", -amount_net, currency, "documents", invoice_number, drive_url))
             continue
         supplier_meta = supplier_map.get(supplier_code)
         if supplier_meta and str(supplier_meta["destination_path"]).startswith("expenses/"):

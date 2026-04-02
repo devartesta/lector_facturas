@@ -63,6 +63,7 @@ class ReverDocument:
     original_filename: str
     sender_email: str
     document_type: str
+    division_invoice: str = ""
     parser_name: str = "rever"
     parser_confidence: Decimal = Decimal("0.9960")
 
@@ -160,6 +161,7 @@ def parse_rever_invoice_text(text: str, *, original_filename: str) -> ReverDocum
         original_filename=original_filename,
         sender_email="invoice@itsrever.com",
         document_type="invoice",
+        division_invoice="suplidos" if is_suplidos else "",
     )
 
 
