@@ -4,10 +4,12 @@ import os
 import uuid
 from functools import lru_cache
 from datetime import UTC, datetime
+from io import BytesIO
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import StreamingResponse
 
 from lector_facturas.api.schemas import (
     CompanyOut,
@@ -51,6 +53,10 @@ from lector_facturas.api.schemas import (
     StockDetailSyncOut,
     SupplierOut,
     ValidationProcessRunOut,
+    DocumentPaymentOut,
+    MarkDocumentPaymentIn,
+    SupplierPaymentSettingsIn,
+    PaymentSettlementRunOut,
 )
 from lector_facturas.gmail_sync import (
     INVOICE_FILE_EXTENSIONS,
@@ -960,6 +966,131 @@ def create_app() -> FastAPI:
             drive_client = GoogleDriveClient(settings.to_drive_config())
             drive_client.trash_file(file_id=deleted["drive_file_id"])
         return {"deleted": True, "document_id": document_id, "drive_file_id": deleted.get("drive_file_id", "")}
+
+    # ------------------------------------------------------------------
+    # Payment tracking endpoints
+    # ------------------------------------------------------------------
+
+    def _to_payment_out(row: dict) -> DocumentPaymentOut:
+        from datetime import date as _date
+        today = _date.today()
+        status = row.get("payment_status", "pending")
+        due = row.get("payment_due_date")
+        is_overdue = bool(due and due < today and status not in ("paid",))
+        is_settled = bool(status == "direct_debit" and due and due <= today)
+        days_overdue = int((today - due).days) if due else None
+        return DocumentPaymentOut(
+            id=str(row["id"]),
+            company_code=str(row.get("company_code", "")),
+            supplier_code=str(row.get("supplier_code", "")),
+            invoice_number=str(row.get("invoice_number", "")),
+            invoice_date=row.get("invoice_date"),
+            period_yyyymm=str(row.get("period_yyyymm", "")),
+            net_amount=row.get("net_amount"),
+            currency_code=str(row.get("currency_code", "")),
+            drive_url=str(row.get("drive_url", "")),
+            payment_status=status,
+            payment_date=row.get("payment_date"),
+            payment_method=str(row.get("payment_method", "")),
+            payment_amount=row.get("payment_amount"),
+            payment_due_date=due,
+            is_overdue=is_overdue,
+            is_settled=is_settled,
+            days_overdue=days_overdue,
+        )
+
+    @app.post("/documents/{document_id}/payment", response_model=DocumentPaymentOut)
+    def mark_document_payment(
+        document_id: str,
+        body: MarkDocumentPaymentIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> DocumentPaymentOut:
+        updated = store.mark_document_payment(
+            document_id=document_id,
+            payment_status=body.payment_status,
+            payment_date=body.payment_date,
+            payment_method=body.payment_method,
+            payment_amount=body.payment_amount,
+            payment_due_date=body.payment_due_date,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Document not found")
+        rows = store.list_documents_for_payment_report()
+        row = next((r for r in rows if r["id"] == document_id), None)
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found after update")
+        return _to_payment_out(row)
+
+    @app.get("/documents/payment-status", response_model=list[DocumentPaymentOut])
+    def get_payment_status(
+        company_code: str | None = Query(default=None),
+        period_yyyymm: str | None = Query(default=None),
+        payment_status: str | None = Query(default=None),
+        overdue_only: bool = Query(default=False),
+        store: ReviewStore = Depends(get_store),
+    ) -> list[DocumentPaymentOut]:
+        rows = store.list_documents_for_payment_report(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            payment_status=payment_status,
+            overdue_only=overdue_only,
+        )
+        return [_to_payment_out(r) for r in rows]
+
+    @app.get("/documents/payment-report/download")
+    def download_payment_report(
+        company_code: str | None = Query(default=None),
+        period_yyyymm: str | None = Query(default=None),
+        payment_status: str | None = Query(default=None),
+        overdue_only: bool = Query(default=False),
+        store: ReviewStore = Depends(get_store),
+    ) -> StreamingResponse:
+        from lector_facturas.payment_report_workbook import build_payment_report
+        rows = store.list_documents_for_payment_report(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            payment_status=payment_status,
+            overdue_only=overdue_only,
+        )
+        buf = build_payment_report(rows)
+        period_label = period_yyyymm or "all"
+        company_label = company_code or "all"
+        filename = f"payment_report_{company_label}_{period_label}.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.patch("/suppliers/{supplier_code}/payment-settings")
+    def update_supplier_payment_settings(
+        supplier_code: str,
+        body: SupplierPaymentSettingsIn,
+        company_code: str = Query(description="SL | LTD | INC"),
+        store: ReviewStore = Depends(get_store),
+    ) -> dict:
+        updated = store.update_supplier_payment_settings(
+            company_code=company_code.upper(),
+            supplier_code=supplier_code.upper(),
+            payment_terms_days=body.payment_terms_days,
+            is_direct_debit=body.is_direct_debit,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Supplier {supplier_code} not found for company {company_code}")
+        return {
+            "supplier_code": supplier_code.upper(),
+            "company_code": company_code.upper(),
+            "payment_terms_days": body.payment_terms_days,
+            "is_direct_debit": body.is_direct_debit,
+        }
+
+    @app.post("/jobs/payment-settlement/run", response_model=PaymentSettlementRunOut)
+    def run_payment_settlement(
+        store: ReviewStore = Depends(get_store),
+    ) -> PaymentSettlementRunOut:
+        """Auto-mark direct_debit invoices as paid when their due_date <= today."""
+        count = store.settle_direct_debit_documents()
+        return PaymentSettlementRunOut(settled_count=count)
 
     @app.put("/otros-gastos/{company_code}/{period_yyyymm}")
     def upsert_otros_gastos(

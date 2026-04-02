@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 import json
 import ntpath
@@ -24,6 +25,17 @@ except ImportError:  # pragma: no cover
     psycopg = None
 
 
+def _compute_due_date(parsed, payment_terms_days: int = 30) -> date | None:
+    """Compute payment due date from invoice/billing dates + payment_terms_days."""
+    base: date | None = getattr(parsed, "billing_period_end", None) or getattr(parsed, "invoice_date", None)
+    if base is None:
+        return None
+    # End of base's month
+    last_day = calendar.monthrange(base.year, base.month)[1]
+    end_of_month = date(base.year, base.month, last_day)
+    return end_of_month + timedelta(days=payment_terms_days)
+
+
 SCHEMA_NAME = "invoices"
 COMPANY_CODES = {
     "ARTESTA STORE, S.L.": "SL",
@@ -33,16 +45,24 @@ COMPANY_CODES = {
 COMPANY_NAMES = {value: key for key, value in COMPANY_CODES.items()}
 
 DOCUMENTS_COLUMN_DEFINITIONS = (
-    ("received_at", "TIMESTAMPTZ NULL"),
-    ("sender_email", "TEXT NOT NULL DEFAULT ''"),
-    ("original_filename", "TEXT NOT NULL DEFAULT ''"),
+    ("received_at",      "TIMESTAMPTZ NULL"),
+    ("sender_email",     "TEXT NOT NULL DEFAULT ''"),
+    ("original_filename","TEXT NOT NULL DEFAULT ''"),
     ("division_invoice", "TEXT NOT NULL DEFAULT ''"),
     ("billing_period_start", "DATE NULL"),
-    ("billing_period_end", "DATE NULL"),
+    ("billing_period_end",   "DATE NULL"),
+    # Payment tracking
+    ("payment_status",   "TEXT NOT NULL DEFAULT 'pending'"),  # pending | paid | partial | direct_debit
+    ("payment_date",     "DATE NULL"),
+    ("payment_method",   "TEXT NOT NULL DEFAULT ''"),         # bank_transfer | card | direct_debit | paypal
+    ("payment_amount",   "NUMERIC(14,2) NULL"),
+    ("payment_due_date", "DATE NULL"),
 )
 
 SUPPLIERS_COLUMN_DEFINITIONS = (
-    ("sender_emails", "TEXT NOT NULL DEFAULT '[]'"),
+    ("sender_emails",      "TEXT NOT NULL DEFAULT '[]'"),
+    ("payment_terms_days", "INT NOT NULL DEFAULT 30"),
+    ("is_direct_debit",    "BOOLEAN NOT NULL DEFAULT FALSE"),
 )
 
 
@@ -462,6 +482,7 @@ class ReviewStore:
         gross_amount_override=None,
         net_amount_override=None,
         vat_amount_override=None,
+        payment_due_date_override=None,
     ) -> str:
         if not self.database_url:
             raise RuntimeError("documents require DATABASE_URL")
@@ -473,6 +494,23 @@ class ReviewStore:
         vat_amount = vat_amount_override if vat_amount_override is not None else parsed.vat_amount
         with self._connect() as conn:
             supplier_id = self._find_supplier_id(conn, company_code, supplier_code)
+            # Load supplier payment settings
+            supplier_meta = self._get_supplier_payment_meta(conn, company_code, supplier_code)
+            is_direct_debit = supplier_meta["is_direct_debit"]
+            payment_terms_days = supplier_meta["payment_terms_days"]
+            # Determine payment_due_date
+            due_date = (
+                payment_due_date_override
+                or getattr(parsed, "payment_due_date", None)
+                or _compute_due_date(parsed, payment_terms_days)
+            )
+            # Determine payment_status and payment_method
+            if is_direct_debit:
+                payment_status = "direct_debit"
+                payment_method = "direct_debit"
+            else:
+                payment_status = "pending"
+                payment_method = ""
             conn.execute(
                 f"""
                 INSERT INTO {SCHEMA_NAME}.documents (
@@ -480,10 +518,12 @@ class ReviewStore:
                     received_at, sender_email, original_filename, division_invoice, billing_period_start, billing_period_end, vat_percent, gross_amount,
                     vat_amount, net_amount, supplier_id, supplier_code, currency_code, drive_file_id, storage_root, document_type, status, source_channel,
                     email_message_id, email_thread_id, attachment_original_name, parser_name, parser_confidence, extracted_raw, review_notes,
-                    created_at, updated_at, source_sender, source_subject, period_yyyymm
+                    created_at, updated_at, source_sender, source_subject, period_yyyymm,
+                    payment_status, payment_method, payment_due_date
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW(), %s, %s, %s
+                    %s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW(), %s, %s, %s,
+                    %s, %s, %s
                 )
                 """,
                 (
@@ -524,6 +564,9 @@ class ReviewStore:
                     sender_email or getattr(parsed, "sender_email", ""),
                     source_subject,
                     parsed.period_yyyymm,
+                    payment_status,
+                    payment_method,
+                    due_date,
                 ),
             )
             conn.commit()
@@ -2202,6 +2245,152 @@ class ReviewStore:
             (company_code, supplier_code),
         ).fetchone()
         return str(row[0]) if row else None
+
+    def _get_supplier_payment_meta(self, conn, company_code: str, supplier_code: str) -> dict:
+        row = conn.execute(
+            f"""
+            SELECT is_direct_debit, payment_terms_days
+            FROM {SCHEMA_NAME}.suppliers
+            WHERE company_code = %s AND supplier_code = %s
+            """,
+            (company_code, supplier_code),
+        ).fetchone()
+        if row:
+            return {"is_direct_debit": bool(row[0]), "payment_terms_days": int(row[1] or 30)}
+        return {"is_direct_debit": False, "payment_terms_days": 30}
+
+    def mark_document_payment(
+        self,
+        *,
+        document_id: str,
+        payment_status: str,
+        payment_date=None,
+        payment_method: str = "",
+        payment_amount=None,
+        payment_due_date=None,
+    ) -> bool:
+        """Update payment fields on a document. Returns True if a row was updated."""
+        if not self.database_url:
+            raise RuntimeError("documents require DATABASE_URL")
+        with self._connect() as conn:
+            result = conn.execute(
+                f"""
+                UPDATE {SCHEMA_NAME}.documents
+                SET payment_status   = %s,
+                    payment_date     = %s,
+                    payment_method   = %s,
+                    payment_amount   = %s,
+                    payment_due_date = COALESCE(%s, payment_due_date),
+                    updated_at       = NOW()
+                WHERE id = %s
+                """,
+                (payment_status, payment_date, payment_method, payment_amount, payment_due_date, document_id),
+            )
+            conn.commit()
+            return (result.rowcount or 0) > 0
+
+    def list_documents_for_payment_report(
+        self,
+        *,
+        company_code: str | None = None,
+        period_yyyymm: str | None = None,
+        payment_status: str | None = None,
+        overdue_only: bool = False,
+    ) -> list[dict]:
+        """Return documents with payment tracking fields, optionally filtered."""
+        if not self.database_url:
+            return []
+        query = f"""
+            SELECT
+                d.id, d.company_code, d.supplier_code, d.invoice_number,
+                d.invoice_date, d.period_yyyymm, d.net_amount, d.currency_code,
+                d.drive_url, d.payment_status, d.payment_date, d.payment_method,
+                d.payment_amount, d.payment_due_date,
+                s.is_direct_debit
+            FROM {SCHEMA_NAME}.documents d
+            LEFT JOIN {SCHEMA_NAME}.suppliers s
+                ON s.id = d.supplier_id
+            WHERE d.document_type = 'invoice'
+        """
+        params: list = []
+        if company_code:
+            query += " AND d.company_code = %s"
+            params.append(company_code)
+        if period_yyyymm:
+            query += " AND d.period_yyyymm = %s"
+            params.append(period_yyyymm)
+        if payment_status:
+            query += " AND d.payment_status = %s"
+            params.append(payment_status)
+        if overdue_only:
+            query += " AND d.payment_due_date < CURRENT_DATE AND d.payment_status NOT IN ('paid')"
+        query += " ORDER BY d.period_yyyymm, d.company_code, d.supplier_code, d.invoice_number"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": str(row[0]),
+                "company_code": str(row[1] or ""),
+                "supplier_code": str(row[2] or ""),
+                "invoice_number": str(row[3] or ""),
+                "invoice_date": row[4],
+                "period_yyyymm": str(row[5] or ""),
+                "net_amount": row[6],
+                "currency_code": str(row[7] or ""),
+                "drive_url": str(row[8] or ""),
+                "payment_status": str(row[9] or "pending"),
+                "payment_date": row[10],
+                "payment_method": str(row[11] or ""),
+                "payment_amount": row[12],
+                "payment_due_date": row[13],
+                "is_direct_debit": bool(row[14]) if row[14] is not None else False,
+            }
+            for row in rows
+        ]
+
+    def update_supplier_payment_settings(
+        self,
+        *,
+        company_code: str,
+        supplier_code: str,
+        payment_terms_days: int,
+        is_direct_debit: bool,
+    ) -> bool:
+        """Update payment settings on a supplier. Returns True if updated."""
+        if not self.database_url:
+            raise RuntimeError("documents require DATABASE_URL")
+        with self._connect() as conn:
+            result = conn.execute(
+                f"""
+                UPDATE {SCHEMA_NAME}.suppliers
+                SET payment_terms_days = %s,
+                    is_direct_debit    = %s,
+                    updated_at         = NOW()
+                WHERE company_code = %s AND supplier_code = %s
+                """,
+                (payment_terms_days, is_direct_debit, company_code, supplier_code),
+            )
+            conn.commit()
+            return (result.rowcount or 0) > 0
+
+    def settle_direct_debit_documents(self) -> int:
+        """Mark direct_debit documents whose due_date <= today as paid. Returns count updated."""
+        if not self.database_url:
+            return 0
+        with self._connect() as conn:
+            result = conn.execute(
+                f"""
+                UPDATE {SCHEMA_NAME}.documents
+                SET payment_status = 'paid',
+                    payment_date   = payment_due_date,
+                    updated_at     = NOW()
+                WHERE payment_status = 'direct_debit'
+                  AND payment_due_date IS NOT NULL
+                  AND payment_due_date <= CURRENT_DATE
+                """
+            )
+            conn.commit()
+            return result.rowcount or 0
 
     def _count_rows(self, conn, relation: str) -> int:
         return int(conn.execute(f"SELECT COUNT(*) FROM {relation}").fetchone()[0])

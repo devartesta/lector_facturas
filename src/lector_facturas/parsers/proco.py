@@ -57,6 +57,7 @@ class ProcoInvoice:
     original_filename: str
     invoice_line_items: dict[str, str]
     detail_summary: dict[str, object]
+    payment_due_date: date | None = None
     parser_name: str = "proco"
     parser_confidence: Decimal = Decimal("0.9950")
 
@@ -81,6 +82,7 @@ class ProcoInvoice:
             "logistics_gross_amount": format(self.logistics_gross_amount, "f"),
             "invoice_line_items": self.invoice_line_items,
             "detail_summary": self.detail_summary,
+            "payment_due_date": self.payment_due_date.isoformat() if self.payment_due_date else None,
         }
 
 
@@ -112,6 +114,7 @@ def parse_proco_text(text: str, *, original_filename: str) -> ProcoInvoice:
     logistics_gross_amount = _quantize(logistics_net_amount + logistics_vat_amount)
     billing_period_start = date(invoice_date.year, invoice_date.month, 1)
     billing_period_end = date(invoice_date.year, invoice_date.month, calendar.monthrange(invoice_date.year, invoice_date.month)[1])
+    payment_due_date = _extract_payment_due_date(normalized, billing_period_end)
 
     return ProcoInvoice(
         supplier_code=SUPPLIER_CODE,
@@ -137,6 +140,7 @@ def parse_proco_text(text: str, *, original_filename: str) -> ProcoInvoice:
         original_filename=original_filename,
         invoice_line_items=invoice_lines,
         detail_summary={"source": "pdf_only"},
+        payment_due_date=payment_due_date,
     )
 
 
@@ -162,6 +166,8 @@ def parse_proco_text_and_summary(
     if _quantize(manufacturing_net_amount + logistics_net_amount) != _quantize(net_amount):
         raise ValueError("PROCO manufacturing/logistics split does not match invoice net amount.")
 
+    payment_due_date = _extract_payment_due_date(normalized, billing_period_end)
+
     return ProcoInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -186,6 +192,7 @@ def parse_proco_text_and_summary(
         original_filename=original_filename,
         invoice_line_items=invoice_lines,
         detail_summary=_stringify_summary(detail_summary),
+        payment_due_date=payment_due_date,
     )
 
 
@@ -353,6 +360,29 @@ def _decimal(value: object) -> Decimal:
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+
+def _extract_payment_due_date(text: str, billing_period_end: date) -> date | None:
+    """Extract or calculate payment due date from PROCO invoice text.
+
+    PROCO standard terms: 'TERMS 30 DAYS FROM END OF MONTH'
+    → due_date = end_of_month(billing_period_end) + 30 days.
+    """
+    from datetime import timedelta
+    normalized_upper = text.upper()
+    # Standard PROCO terms: 30 DAYS FROM END OF MONTH
+    match = re.search(r"TERMS\s+(\d+)\s+DAYS\s+FROM\s+END\s+OF\s+MONTH", normalized_upper)
+    if match:
+        days = int(match.group(1))
+        last_day = calendar.monthrange(billing_period_end.year, billing_period_end.month)[1]
+        end_of_month = date(billing_period_end.year, billing_period_end.month, last_day)
+        return end_of_month + timedelta(days=days)
+    # Fallback: look for explicit DUE DATE dd/mm/yyyy or similar
+    match = re.search(r"DUE\s+DATE[:\s]+(\d{2}/\d{2}/\d{4})", normalized_upper)
+    if match:
+        from datetime import datetime as _dt
+        return _dt.strptime(match.group(1), "%d/%m/%Y").date()
+    return None
 
 
 def _stringify_summary(summary: dict[str, object]) -> dict[str, object]:

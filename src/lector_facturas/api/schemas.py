@@ -436,3 +436,44 @@ class SalesReportsRunOut(BaseModel):
 class PygRunOut(BaseModel):
     year: int
     results: list[HourlyStepResult]
+
+
+# ---------------------------------------------------------------------------
+# Payment tracking
+# ---------------------------------------------------------------------------
+
+class MarkDocumentPaymentIn(BaseModel):
+    payment_status: str  # 'paid' | 'partial' | 'pending' | 'direct_debit'
+    payment_date: date | None = None
+    payment_method: str = ""  # 'bank_transfer' | 'card' | 'direct_debit' | 'paypal'
+    payment_amount: Decimal | None = None
+    payment_due_date: date | None = None  # if None, existing due_date is kept
+
+
+class DocumentPaymentOut(BaseModel):
+    id: str
+    company_code: str
+    supplier_code: str
+    invoice_number: str
+    invoice_date: date | None
+    period_yyyymm: str
+    net_amount: Decimal | None
+    currency_code: str
+    drive_url: str
+    payment_status: str
+    payment_date: date | None
+    payment_method: str
+    payment_amount: Decimal | None
+    payment_due_date: date | None
+    is_overdue: bool   # due_date < today AND status != 'paid'
+    is_settled: bool   # direct_debit AND due_date <= today
+    days_overdue: int | None  # positive = days past due, negative = days remaining
+
+
+class SupplierPaymentSettingsIn(BaseModel):
+    payment_terms_days: int = 30
+    is_direct_debit: bool = False
+
+
+class PaymentSettlementRunOut(BaseModel):
+    settled_count: int
