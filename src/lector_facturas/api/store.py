@@ -60,9 +60,10 @@ DOCUMENTS_COLUMN_DEFINITIONS = (
 )
 
 SUPPLIERS_COLUMN_DEFINITIONS = (
-    ("sender_emails",      "TEXT NOT NULL DEFAULT '[]'"),
-    ("payment_terms_days", "INT NOT NULL DEFAULT 30"),
-    ("is_direct_debit",    "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("sender_emails",             "TEXT NOT NULL DEFAULT '[]'"),
+    ("payment_terms_days",        "INT NOT NULL DEFAULT 30"),
+    ("is_direct_debit",           "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("preferred_payment_method",  "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -2070,7 +2071,8 @@ class ReviewStore:
 
     def _list_suppliers_db(self, company: str | None = None) -> list[dict[str, str]]:
         query = f"""
-            SELECT company_code, current_folder, supplier_name, supplier_code, destination_path, notes, sender_emails
+            SELECT company_code, current_folder, supplier_name, supplier_code, destination_path, notes, sender_emails,
+                   payment_terms_days, is_direct_debit, preferred_payment_method
             FROM {SCHEMA_NAME}.suppliers
             WHERE is_active = TRUE
         """
@@ -2090,6 +2092,9 @@ class ReviewStore:
                 "destination_path": row[4],
                 "notes": row[5],
                 "sender_emails": json.loads(row[6] or "[]"),
+                "payment_terms_days": int(row[7] or 30),
+                "is_direct_debit": bool(row[8]),
+                "preferred_payment_method": str(row[9] or ""),
             }
             for row in rows
         ]
@@ -2355,6 +2360,7 @@ class ReviewStore:
         supplier_code: str,
         payment_terms_days: int,
         is_direct_debit: bool,
+        preferred_payment_method: str = "",
     ) -> bool:
         """Update payment settings on a supplier. Returns True if updated."""
         if not self.database_url:
@@ -2363,12 +2369,13 @@ class ReviewStore:
             result = conn.execute(
                 f"""
                 UPDATE {SCHEMA_NAME}.suppliers
-                SET payment_terms_days = %s,
-                    is_direct_debit    = %s,
-                    updated_at         = NOW()
+                SET payment_terms_days       = %s,
+                    is_direct_debit          = %s,
+                    preferred_payment_method = %s,
+                    updated_at               = NOW()
                 WHERE company_code = %s AND supplier_code = %s
                 """,
-                (payment_terms_days, is_direct_debit, company_code, supplier_code),
+                (payment_terms_days, is_direct_debit, preferred_payment_method, company_code, supplier_code),
             )
             conn.commit()
             return (result.rowcount or 0) > 0

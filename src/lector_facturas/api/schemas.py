@@ -25,6 +25,9 @@ class SupplierOut(BaseModel):
     destination_path: str
     notes: str = ""
     sender_emails: list[str] = Field(default_factory=list)
+    payment_terms_days: int = 30
+    is_direct_debit: bool = False
+    preferred_payment_method: str = ""
 
 
 class ReviewItemOut(BaseModel):
@@ -473,6 +476,7 @@ class DocumentPaymentOut(BaseModel):
 class SupplierPaymentSettingsIn(BaseModel):
     payment_terms_days: int = 30
     is_direct_debit: bool = False
+    preferred_payment_method: str = ""
 
 
 class PaymentSettlementRunOut(BaseModel):

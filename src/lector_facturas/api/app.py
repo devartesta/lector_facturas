@@ -1074,6 +1074,7 @@ def create_app() -> FastAPI:
             supplier_code=supplier_code.upper(),
             payment_terms_days=body.payment_terms_days,
             is_direct_debit=body.is_direct_debit,
+            preferred_payment_method=body.preferred_payment_method,
         )
         if not updated:
             raise HTTPException(status_code=404, detail=f"Supplier {supplier_code} not found for company {company_code}")
@@ -1082,6 +1083,7 @@ def create_app() -> FastAPI:
             "company_code": company_code.upper(),
             "payment_terms_days": body.payment_terms_days,
             "is_direct_debit": body.is_direct_debit,
+            "preferred_payment_method": body.preferred_payment_method,
         }
 
     @app.post("/jobs/payment-settlement/run", response_model=PaymentSettlementRunOut)
