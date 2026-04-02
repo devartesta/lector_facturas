@@ -25,6 +25,17 @@ except ImportError:  # pragma: no cover
     psycopg = None
 
 
+def _parse_json_list(value: str | None) -> list:
+    """Parse a JSON list string, returning [] on any error."""
+    if not value:
+        return []
+    try:
+        result = json.loads(value)
+        return result if isinstance(result, list) else []
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
 def _compute_due_date(parsed, payment_terms_days: int = 30) -> date | None:
     """Compute payment due date from invoice/billing dates + payment_terms_days."""
     base: date | None = getattr(parsed, "billing_period_end", None) or getattr(parsed, "invoice_date", None)
@@ -2091,7 +2102,7 @@ class ReviewStore:
                 "supplier_code": row[3],
                 "destination_path": row[4],
                 "notes": row[5],
-                "sender_emails": json.loads(row[6] or "[]"),
+                "sender_emails": _parse_json_list(row[6]),
                 "payment_terms_days": int(row[7] or 30),
                 "is_direct_debit": bool(row[8]),
                 "preferred_payment_method": str(row[9] or ""),
