@@ -112,11 +112,27 @@ def parse_rever_invoice_text(text: str, *, original_filename: str) -> ReverDocum
         billing_period_start = invoice_date
         billing_period_end = invoice_date
 
-    if "Cliente exento de impuestos" in normalized:
+    is_suplidos = "suplidos" in normalized.lower() or "supplied expenses" in normalized.lower()
+
+    if is_suplidos:
+        net_amount = _parse_decimal(_extract(normalized, r"Total sin impuestos\s+([0-9.,]+)\s*€"))
+        vat_amount = Decimal("0")
+        gross_amount = net_amount
+        vat_percent = Decimal("0")
+        # Suplidos invoices are issued in the following month; period = month before invoice date
+        from datetime import timedelta
+        first_of_invoice_month = invoice_date.replace(day=1)
+        last_of_prev_month = first_of_invoice_month - timedelta(days=1)
+        period_yyyymm = last_of_prev_month.strftime("%Y%m")
+        if billing_period_start == invoice_date:  # no period parsed — use previous month
+            billing_period_start = last_of_prev_month.replace(day=1)
+            billing_period_end = last_of_prev_month
+    elif "Cliente exento de impuestos" in normalized:
         net_amount = _parse_decimal(_extract(normalized, r"Subtotal\s+([0-9.,]+)\s*€"))
         vat_amount = Decimal("0")
         gross_amount = _parse_decimal(_extract(normalized, r"Total\s+([0-9.,]+)\s*€"))
         vat_percent = Decimal("0")
+        period_yyyymm = invoice_date.strftime("%Y%m")
     else:
         net_amount = _parse_decimal(_extract(normalized, r"Total sin impuestos\s+([0-9.,]+)\s*€"))
         vat_line = _extract_line(normalized, "IVA")
@@ -124,6 +140,7 @@ def parse_rever_invoice_text(text: str, *, original_filename: str) -> ReverDocum
         gross_line = _extract_total_line(normalized)
         gross_amount = _parse_decimal(re.findall(r"([0-9.,]+)\s*€", gross_line)[-1])
         vat_percent = Decimal("21")
+        period_yyyymm = invoice_date.strftime("%Y%m")
 
     return ReverDocument(
         supplier_code=SUPPLIER_CODE,
@@ -134,7 +151,7 @@ def parse_rever_invoice_text(text: str, *, original_filename: str) -> ReverDocum
         invoice_date=invoice_date,
         billing_period_start=billing_period_start,
         billing_period_end=billing_period_end,
-        period_yyyymm=invoice_date.strftime("%Y%m"),
+        period_yyyymm=period_yyyymm,
         currency_code="EUR",
         vat_percent=vat_percent,
         gross_amount=gross_amount,
