@@ -470,6 +470,94 @@ def process_email_attachment(
                 pdf_text=pdf_text,
             )
             detected_supplier_code = effective_supplier_code(parsed, parser_rule)
+
+            # Multi-division invoices (Google Ads, Meta Ads)
+            if isinstance(parsed, list) and parsed:
+                first = parsed[0]
+                company_name = effective_company_name(first)
+                company_code = COMPANY_CODES.get(company_name, "")
+                if not company_code:
+                    raise ValueError(f"Unknown company for multi-division invoice: {company_name}")
+                provider = get_provider(company_name, detected_supplier_code)
+                final_name = build_final_name(
+                    supplier_code=detected_supplier_code,
+                    invoice_date=first.invoice_date,
+                    invoice_number=first.invoice_number,
+                    original_filename=attachment.filename,
+                )
+                windows_path = build_windows_path(
+                    company_name=company_name,
+                    period_yyyymm=first.period_yyyymm,
+                    destination_path=provider.destination_path,
+                    filename=final_name,
+                )
+                final_parent_id = ensure_drive_path(drive_client, root_folder_id=root_folder_id, windows_path=windows_path)
+                drive_file = drive_client.upload_file(
+                    name=final_name,
+                    parent_id=final_parent_id,
+                    content=content,
+                    mime_type=attachment.mime_type or "application/pdf",
+                )
+                inserted_ids: list[str] = []
+                for division_parsed in parsed:
+                    if store.document_exists_by_business_key(
+                        company_code=company_code,
+                        supplier_code=detected_supplier_code,
+                        invoice_number=division_parsed.invoice_number,
+                        division_invoice=division_parsed.division_invoice,
+                        document_type=getattr(division_parsed, "document_type", "invoice"),
+                    ):
+                        continue
+                    doc_id = store.insert_document_from_parsed(
+                        company_code=company_code,
+                        supplier_code=detected_supplier_code,
+                        parsed=division_parsed,
+                        windows_path=windows_path,
+                        drive_url=str(drive_file.get("webViewLink", "")),
+                        drive_file_id=str(drive_file.get("id", "")),
+                        original_filename=attachment.filename,
+                        source_channel="email_review",
+                        email_message_id=message.message_id,
+                        email_thread_id=message.thread_id,
+                        sender_email=message.sender_email,
+                        source_subject=message.subject,
+                        received_at=message.received_at,
+                        review_notes="Auto-processed from email review (multi-division).",
+                    )
+                    inserted_ids.append(doc_id)
+                store.upsert_ingestion_queue_item(
+                    queue_item_id=queue_item_id,
+                    source="email_review",
+                    gmail_message_id=message.message_id,
+                    gmail_attachment_id=attachment.attachment_id,
+                    original_filename=attachment.filename,
+                    sender_email=message.sender_email,
+                    subject=message.subject,
+                    received_at=message.received_at,
+                    drive_file_id=str(drive_file.get("id", "")),
+                    drive_url=str(drive_file.get("webViewLink", "")),
+                    validation_bucket="auto_processed",
+                    detected_supplier_code=detected_supplier_code,
+                    detected_company_code=company_code,
+                    parser_name=parser_rule.parser_name,
+                    parse_status="parsed",
+                    document_id=inserted_ids[0] if inserted_ids else "",
+                    mime_type=attachment.mime_type,
+                    heuristic_reason=f"auto-processed with parser {parser_rule.parser_name} (multi-division {len(parsed)} rows)",
+                )
+                divisions = ", ".join(p.division_invoice for p in parsed)
+                return IngestionResult(
+                    queue_item_id=queue_item_id,
+                    action="auto_processed",
+                    summary_line=_summary_line(message, attachment, f"procesada como {detected_supplier_code} [{divisions}]"),
+                    detected_supplier_code=detected_supplier_code,
+                    detected_company_code=company_code,
+                    parser_name=parser_rule.parser_name,
+                    drive_file_id=str(drive_file.get("id", "")),
+                    drive_url=str(drive_file.get("webViewLink", "")),
+                    document_id=inserted_ids[0] if inserted_ids else "",
+                )
+
             validation_error = validate_parsed_invoice(parsed)
             company_name = effective_company_name(parsed)
             company_code = COMPANY_CODES.get(company_name, "")
@@ -730,6 +818,76 @@ def process_validation_drive_file(
             pdf_text=pdf_text,
         )
         detected_supplier_code = effective_supplier_code(parsed, parser_rule)
+
+        # Multi-division invoices (e.g. marketing: Google Ads, Meta Ads)
+        if isinstance(parsed, list) and parsed:
+            first = parsed[0]
+            company_name = effective_company_name(first)
+            company_code = COMPANY_CODES.get(company_name, "")
+            if not company_code:
+                raise ValueError(f"Unknown company for multi-division invoice: {company_name}")
+            document_type = getattr(first, "document_type", "invoice")
+            provider = get_provider(company_name, detected_supplier_code)
+            final_name = build_final_name(
+                supplier_code=detected_supplier_code,
+                invoice_date=first.invoice_date,
+                invoice_number=first.invoice_number,
+                original_filename=original_filename,
+            )
+            windows_path = build_windows_path(
+                company_name=company_name,
+                period_yyyymm=first.period_yyyymm,
+                destination_path=provider.destination_path,
+                filename=final_name,
+            )
+            final_parent_id = ensure_drive_path(drive_client, root_folder_id=root_folder_id, windows_path=windows_path)
+            drive_client.update_file_name(file_id=file_id, name=final_name)
+            moved = drive_client.move_file(file_id=file_id, new_parent_id=final_parent_id)
+            drive_url_final = str(moved.get("webViewLink", ""))
+            drive_file_id_final = str(moved.get("id", ""))
+            inserted_ids: list[str] = []
+            for division_parsed in parsed:
+                if store.document_exists_by_business_key(
+                    company_code=company_code,
+                    supplier_code=detected_supplier_code,
+                    invoice_number=division_parsed.invoice_number,
+                    division_invoice=division_parsed.division_invoice,
+                    document_type=document_type,
+                ):
+                    continue
+                doc_id = store.insert_document_from_parsed(
+                    company_code=company_code,
+                    supplier_code=detected_supplier_code,
+                    parsed=division_parsed,
+                    windows_path=windows_path,
+                    drive_url=drive_url_final,
+                    drive_file_id=drive_file_id_final,
+                    original_filename=original_filename,
+                    source_channel="manual_to_process",
+                    sender_email="",
+                    source_subject="validation/to-process",
+                    review_notes="Processed from validation/to-process (multi-division).",
+                )
+                inserted_ids.append(doc_id)
+            store.upsert_ingestion_queue_item(
+                queue_item_id=queue_item_id,
+                source="manual_to_process",
+                original_filename=original_filename,
+                stored_filename=final_name,
+                drive_file_id=drive_file_id_final,
+                drive_url=drive_url_final,
+                validation_bucket="auto_processed",
+                detected_supplier_code=detected_supplier_code,
+                detected_company_code=company_code,
+                parser_name=parser_rule.parser_name,
+                parse_status="parsed",
+                document_id=inserted_ids[0] if inserted_ids else "",
+                mime_type=str(file_item.get("mimeType", "")),
+                heuristic_reason=f"processed from validation/to-process (multi-division {len(parsed)} rows)",
+            )
+            divisions = ", ".join(p.division_invoice for p in parsed)
+            return IngestionResult(queue_item_id, "processed_from_to_process", f"{original_filename} | {detected_supplier_code} [{divisions}]", document_id=inserted_ids[0] if inserted_ids else "")
+
         validation_error = validate_parsed_invoice(parsed)
         company_name = effective_company_name(parsed)
         company_code = COMPANY_CODES.get(company_name, "")
