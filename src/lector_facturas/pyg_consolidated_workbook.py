@@ -261,6 +261,7 @@ def _write_fx_rates_sheet(wb: Workbook, rows: list[list[Any]]) -> None:
 _ROWS: list[tuple[str, str, int, str]] = [
     ("turnover",                "TURNOVER",                                  0, "major"),
     ("product_sales",           "Product sales",                             1, "subtotal"),
+    ("shopify",                 "Shopify",                                   2, "section"),
     ("marketplaces",            "Marketplaces",                              2, "section"),
     ("services",                "Services",                                  2, "section"),
     ("rappels",                 "Rappels",                                   2, "section"),
@@ -356,9 +357,10 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     rm = row_map
 
     # ── Data rows (SUMIFS on data sheets with inline FX conversion) ─────────
+    ws[f"{col}{rm['shopify']}"]      = f"={sl('shopify')}+{ltd('product_sales')}+{inc('product_sales')}"
     ws[f"{col}{rm['product_sales']}"] = (
-        f"={sl('shopify')}+{sl('marketplaces')}+{sl('rappels')}+{sl('supplies')}"
-        f"+{ltd('product_sales')}+{inc('product_sales')}"
+        f"={col}{rm['shopify']}+{col}{rm['marketplaces']}"
+        f"+{col}{rm['rappels']}+{col}{rm['supplies']}"
     )
     ws[f"{col}{rm['marketplaces']}"]    = f"={sl('marketplaces')}"
     ws[f"{col}{rm['services']}"]        = f"={sl('services_ext')}"
