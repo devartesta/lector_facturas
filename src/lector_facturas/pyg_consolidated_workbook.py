@@ -526,14 +526,12 @@ def _build_quarterly_sheet(wb: Workbook, bundle: ConsolidatedPygBundle) -> None:
 
     # ── Row 2: header ─────────────────────────────────────────────────────────
     ws["A2"] = f"P&G CONSOLIDADO TRIMESTRAL {year} ({REPORTING_CURRENCY})"
-    ws.merge_cells("A2:C2")
     for col, (q_label, _, __) in zip(Q_COLS, QUARTERS):
         ws[f"{col}2"] = q_label
     ws[f"{TOTAL_COL}2"] = "Total"
 
     # ── Row 3: generated_at (pulled from P&G-CONSOLIDADO) ────────────────────
     ws["A3"] = f"={src}!A3"
-    ws.merge_cells("A3:C3")
 
     # ── Data rows: SUM quarterly ranges from main sheet ──────────────────────
     for key, _label, _indent, _rtype in _ROWS:
