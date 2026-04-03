@@ -30,12 +30,15 @@ from lector_facturas.api.schemas import (
     PaymentFeeSyncIn,
     PaymentFeeSyncOut,
     PaymentOrderTransactionOut,
+    PygCompany,
     PygConsolidatedSyncIn,
     PygConsolidatedSyncOut,
     PygIncSyncIn,
     PygIncSyncOut,
     PygLtdSyncIn,
     PygLtdSyncOut,
+    PygSnapshotOut,
+    PygSnapshotRowOut,
     PygSlSyncIn,
     PygSlSyncOut,
     ResolveReviewItemIn,
@@ -80,6 +83,7 @@ from lector_facturas.invoice_ingestion import (
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
 from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
+from lector_facturas.pyg_snapshot import build_pyg_snapshot, month_window
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
     build_nightly_review_digest_email,
@@ -1560,6 +1564,56 @@ def create_app() -> FastAPI:
             drive_file_url=result.drive_file_url,
             local_output_path=result.local_output_path,
             replaced_file_ids=list(result.replaced_file_ids),
+        )
+
+    @app.get("/integrations/pyg/{company}/snapshot", response_model=PygSnapshotOut)
+    def get_pyg_snapshot(
+        company: PygCompany,
+        year: int = Query(default=datetime.now().year),
+        mode: str = Query(default="year"),
+        start_yyyymm: str = Query(default=""),
+        settings: AppSettings = Depends(get_settings),
+    ) -> PygSnapshotOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        months = month_window(year=year, start_yyyymm=start_yyyymm or None, mode=mode)
+        try:
+            snapshot = build_pyg_snapshot(
+                company=company,
+                months=months,
+                database_url=database_url,
+                settings=settings,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return PygSnapshotOut(
+            company=snapshot.company,
+            base_currency=snapshot.base_currency,
+            months=list(snapshot.months),
+            generated_at=snapshot.generated_at,
+            drive_file_name=snapshot.drive_file_name,
+            drive_file_url=snapshot.drive_file_url,
+            fx_mode=snapshot.fx_mode,
+            rows=[
+                PygSnapshotRowOut(
+                    code=row.code,
+                    label=row.label,
+                    level=row.level,
+                    kind=row.kind,
+                    parent_code=row.parent_code,
+                    style_key=row.style_key,
+                    default_expanded=row.default_expanded,
+                    values_base=[float(value) for value in row.values_base],
+                    values_eur=[float(value) for value in row.values_eur],
+                    total_base=float(row.total_base),
+                    total_eur=float(row.total_eur),
+                )
+                for row in snapshot.rows
+            ],
         )
 
     @app.get("/payment-fees/transactions", response_model=list[PaymentOrderTransactionOut])

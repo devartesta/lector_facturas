@@ -325,6 +325,34 @@ class PygConsolidatedSyncOut(BaseModel):
     replaced_file_ids: list[str] = Field(default_factory=list)
 
 
+PygCompany = Literal["consolidado", "sl", "ltd", "inc"]
+
+
+class PygSnapshotRowOut(BaseModel):
+    code: str
+    label: str
+    level: int
+    kind: str
+    parent_code: str | None = None
+    style_key: str
+    default_expanded: bool = False
+    values_base: list[float] = Field(default_factory=list)
+    values_eur: list[float] = Field(default_factory=list)
+    total_base: float
+    total_eur: float
+
+
+class PygSnapshotOut(BaseModel):
+    company: PygCompany
+    base_currency: str
+    months: list[str] = Field(default_factory=list)
+    generated_at: datetime
+    drive_file_name: str = ""
+    drive_file_url: str = ""
+    fx_mode: str = ""
+    rows: list[PygSnapshotRowOut] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Frame purchases / stock
 # ---------------------------------------------------------------------------
