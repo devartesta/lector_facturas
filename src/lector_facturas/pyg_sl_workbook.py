@@ -212,7 +212,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """
             SELECT period_yyyymm, summary_scope, gross_amount
             FROM invoices.artist_royalties_monthly_summary
-            WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s AND summary_scope IN ('uk', 'us')
+            WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s AND summary_scope IN ('uk', 'us', 'eu')
             ORDER BY period_yyyymm, summary_scope
             """,
             {"company": COMPANY_CODE, "period": f"{year}%"},
@@ -421,9 +421,10 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
         for yyyymm, amount in sorted(by_period.items()):
             royalties_scope_rows.append([yyyymm, scope, float(amount)])
     _sheet(wb, "i-royalties-scope-sl", ["yyyymm", "scope", "gross_amount"], royalties_scope_rows)
-    _main_sheet(wb, bundle)
+    pos = _main_sheet(wb, bundle)
     _count_sheet_sl(wb, bundle)
     _add_back_links(wb)
+    _shared_services_sheet(wb, bundle, pos)
     wb.save(output_path)
     return output_path
 
@@ -451,7 +452,6 @@ def _sheet(wb: Workbook, title: str, headers: list[str], rows: list[list[Any]]) 
 
 def _add_back_links(wb: Workbook) -> None:
     detail_sheets = (
-        "shared-services",
         "i-shopify-sl",
         "i-marketplaces-sl",
         "i-rappels-sl",
@@ -607,7 +607,7 @@ def _dedupe_fx_rows(rows: tuple[FxRateAuditRow, ...]) -> tuple[FxRateAuditRow, .
     return tuple(sorted(unique.values(), key=lambda item: (item.yyyymm, item.currency_original, item.reporting_currency)))
 
 
-def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
+def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     ws = wb.create_sheet("P&G-SL", 0)
     for idx, yyyymm in enumerate(month_keys(bundle.year), start=4):
         ws.cell(row=1, column=idx, value=yyyymm)
@@ -679,6 +679,9 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
 
     pos["royalties_header"] = row; ws[f"C{row}"] = "Royalties (% sales)"; ws[f"C{row}"].font = BOLD; row += 1
     pos["royalties_detail"] = row; ws[f"C{row}"] = "ROYALTIES"; row += 1
+    pos["royalties_eu"] = row; ws[f"C{row}"] = "eu"; row += 1
+    pos["royalties_uk"] = row; ws[f"C{row}"] = "uk"; row += 1
+    pos["royalties_us"] = row; ws[f"C{row}"] = "us"; row += 1
     pos["royalties_pct"] = row; ws[f"C{row}"] = "% Royalties / sales"; ws[f"C{row}"].font = BOLD; row += 1
 
     pos["payment_fees_header"] = row; ws[f"C{row}"] = "Payment fees (% sales)"; ws[f"C{row}"].font = BOLD; row += 1
@@ -841,23 +844,39 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.summaryRight = False
-    _shared_services_sheet(ws.parent, bundle, pos)
+    # Devolvemos pos para que build_pyg_sl_workbook pueda construir shared-services
+    # DESPUÉS de _add_back_links (que hace insert_rows y desplazaría las referencias)
+    return pos
 
 
 def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str, int]) -> None:
-    """Pestaña de shared services: ajuste de gasto intracompañía SL → LTD (UK) e INC (US)."""
+    """Pestaña de shared services: ajuste de gasto intracompañía SL → LTD (UK) e INC (US).
+
+    Creada DESPUÉS de _add_back_links para que sus referencias de fórmula sean correctas.
+    Fila 1: back-link manual (en lugar de insert_rows).
+    Fila 2: yyyymm (oculta, referenciada como {col}$2 en las fórmulas).
+    Fila 3: título + nombres de mes.
+    Datos desde fila 4.
+    """
     ws = wb.create_sheet("shared-services")
 
-    # Fila 1 (oculta): yyyymm · Fila 2: nombres de mes
-    for idx, yyyymm in enumerate(month_keys(bundle.year), start=4):
-        ws.cell(row=1, column=idx, value=yyyymm)
-        ws.cell(row=2, column=idx, value=MONTH_NAMES_ES[idx - 4])
-    ws["P1"] = "TOTAL"
-    ws["P2"] = "Total"
-    ws["A2"] = f"Shared Services SL → LTD / INC {bundle.year}"
-    ws.merge_cells("A2:C2")
+    # Fila 1: back-link manual (no usamos insert_rows para evitar corrupción de fórmulas)
+    ws["A1"] = "<- Volver a P&G-SL"
+    ws["A1"]._hyperlink = Hyperlink(ref="A1", location="'P&G-SL'!A1", display="<- Volver a P&G-SL")
+    ws["A1"].font = Font(bold=True, color="1F1F1F")
+    ws["A1"].fill = SUBTOTAL_FILL
+    ws["A1"].alignment = Alignment(horizontal="left", vertical="center")
 
-    # Posiciones de fila
+    # Fila 2 (oculta): yyyymm → referenciada como {col}$2 en fórmulas
+    for idx, yyyymm in enumerate(month_keys(bundle.year), start=4):
+        ws.cell(row=2, column=idx, value=yyyymm)
+        ws.cell(row=3, column=idx, value=MONTH_NAMES_ES[idx - 4])
+    ws["P2"] = "TOTAL"
+    ws["P3"] = "Total"
+    ws["A3"] = f"Shared Services SL → LTD / INC {bundle.year}"
+    ws.merge_cells("A3:C3")
+
+    # Posiciones de fila (datos desde fila 4)
     LTD_HDR = 4
     LTD_MK  = 5
     LTD_RY  = 6
@@ -898,14 +917,14 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
 
     for col in [get_column_letter(i) for i in range(4, 16)]:
         # ── LTD (UK) ──────────────────────────────────────────────────────────
-        # Marketing UK: gasto real de g-expenses-sl con detail="uk"
+        # Marketing UK: gasto real de g-expenses-sl con subcategory="marketing" y detail="uk"
         ws[f"{col}{LTD_MK}"] = (
-            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$1,"
-            f"'g-expenses-sl'!$C:$C,\"marketing\",'g-expenses-sl'!$F:$F,\"uk\")"
+            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$2,"
+            f"'g-expenses-sl'!$D:$D,\"marketing\",'g-expenses-sl'!$F:$F,\"uk\")"
         )
         # Royalties UK: gasto real por scope desde i-royalties-scope-sl
         ws[f"{col}{LTD_RY}"] = (
-            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$1,"
+            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$2,"
             f"'i-royalties-scope-sl'!$B:$B,\"uk\")"
         )
         # Staff UK: % configurable del total staff SL
@@ -915,24 +934,24 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
         # Totales LTD
         ws[f"{col}{LTD_EUR}"] = f"=SUM({col}{LTD_MK}:{col}{LTD_AD})"
         ws[f"{col}{LTD_GBP}"] = (
-            f"=IFERROR({col}{LTD_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$1,"
+            f"=IFERROR({col}{LTD_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$2,"
             f"'fx-rates'!$C:$C,\"GBP\",'fx-rates'!$D:$D,\"EUR\"),{col}{LTD_EUR})"
         )
 
         # ── INC (US) ──────────────────────────────────────────────────────────
         ws[f"{col}{INC_MK}"] = (
-            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$1,"
-            f"'g-expenses-sl'!$C:$C,\"marketing\",'g-expenses-sl'!$F:$F,\"us\")"
+            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$2,"
+            f"'g-expenses-sl'!$D:$D,\"marketing\",'g-expenses-sl'!$F:$F,\"us\")"
         )
         ws[f"{col}{INC_RY}"] = (
-            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$1,"
+            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$2,"
             f"'i-royalties-scope-sl'!$B:$B,\"us\")"
         )
         ws[f"{col}{INC_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_us')}"
         ws[f"{col}{INC_AD}"] = f"='P&G-SL'!{col}{ad_row}*{p('pct_admin_us')}"
         ws[f"{col}{INC_EUR}"] = f"=SUM({col}{INC_MK}:{col}{INC_AD})"
         ws[f"{col}{INC_USD}"] = (
-            f"=IFERROR({col}{INC_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$1,"
+            f"=IFERROR({col}{INC_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$2,"
             f"'fx-rates'!$C:$C,\"USD\",'fx-rates'!$D:$D,\"EUR\"),{col}{INC_EUR})"
         )
 
@@ -942,17 +961,18 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
 
     # ── Estilos ───────────────────────────────────────────────────────────────
-    ws.row_dimensions[1].hidden = True
-    for row_idx in range(2, INC_USD + 1):
+    ws.row_dimensions[1].height = ROW_HEIGHT
+    ws.row_dimensions[2].hidden = True
+    for row_idx in range(1, INC_USD + 1):
         ws.row_dimensions[row_idx].height = ROW_HEIGHT
 
-    # Cabecera fila 2
-    for cell in ws[2]:
+    # Cabecera fila 3
+    for cell in ws[3]:
         cell.fill = HEADER_FILL
         cell.font = WHITE_BOLD
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    ws["A2"].font = TITLE_FONT
-    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+    ws["A3"].font = TITLE_FONT
+    ws["A3"].alignment = Alignment(horizontal="left", vertical="center")
 
     # Secciones LTD / INC
     for hdr_row in (LTD_HDR, INC_HDR):
@@ -967,7 +987,7 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
         ws.cell(row=total_row, column=1).font = BOLD
 
     # Formato numérico (EUR / GBP / USD → MONEY_FORMAT)
-    for row in range(3, INC_USD + 1):
+    for row in range(4, INC_USD + 1):
         for col in range(4, 18):
             ws.cell(row=row, column=col).number_format = MONEY_FORMAT
 
@@ -1044,6 +1064,11 @@ def _fill_month_formulas(
         ws[f"{col}{pos['logistics_pct']}"] = f'=IFERROR({col}{pos["logistics_header"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['royalties_header']}"] = f"={col}{pos['royalties_detail']}"
         ws[f"{col}{pos['royalties_pct']}"] = f'=IFERROR({col}{pos["royalties_header"]}/{col}{pos["product_sales"]},0)'
+        for _scope_key, _scope_val in [("royalties_eu", "eu"), ("royalties_uk", "uk"), ("royalties_us", "us")]:
+            ws[f"{col}{pos[_scope_key]}"] = (
+                f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$1,"
+                f"'i-royalties-scope-sl'!$B:$B,\"{_scope_val}\")"
+            )
         ws[f"{col}{pos['payment_fees_header']}"] = f"=SUM({col}{payment_fee_rows[0]}:{col}{payment_fee_rows[-1]})"
         ws[f"{col}{pos['payment_fees_pct']}"] = f'=IFERROR({col}{pos["payment_fees_header"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['cogs']}"] = f"={col}{pos['manufacturing_header']}+{col}{pos['logistics_header']}+{col}{pos['royalties_header']}+{col}{pos['payment_fees_header']}"
@@ -1210,6 +1235,9 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
 
     pos["royalties_header"] = row; lbl("C", row, "Royalties", bold=True); row += 1
     pos["royalties_detail"] = row; lbl("C", row, "ROYALTIES"); row += 1
+    pos["royalties_eu"] = row; lbl("C", row, "eu"); row += 1
+    pos["royalties_uk"] = row; lbl("C", row, "uk"); row += 1
+    pos["royalties_us"] = row; lbl("C", row, "us"); row += 1
 
     pos["payment_fees_header"] = row; lbl("C", row, "Payment fees", bold=True); row += 1
     payment_fee_codes = ["SHOPIFY", "PAYPAL"]
@@ -1301,6 +1329,9 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     # Royalties
     write_counts(pos["royalties_detail"], lambda yyyymm: exp_sc[("royalties", "ROYALTIES")][yyyymm])
     leaf_rows.append(pos["royalties_detail"])
+    for _r, _scope in [(pos["royalties_eu"], "eu"), (pos["royalties_uk"], "uk"), (pos["royalties_us"], "us")]:
+        write_counts(_r, lambda yyyymm, s=_scope: 1 if bundle.royalties_by_scope.get(s, {}).get(yyyymm) else 0)
+        leaf_rows.append(_r)
 
     # Payment fees
     for r, code in zip(payment_fee_rows_list, payment_fee_codes):
@@ -1457,7 +1488,7 @@ def _apply_layout(
         + service_rows
         + manufacturing_rows
         + logistics_rows
-        + [pos["royalties_detail"]]
+        + [pos["royalties_detail"], pos["royalties_eu"], pos["royalties_uk"], pos["royalties_us"]]
         + payment_fee_rows
         + marketing_meta_detail_rows
         + marketing_google_detail_rows
@@ -1536,7 +1567,7 @@ def _apply_layout(
     _collapse_group(ws, service_rows, level=1)
     _collapse_group(ws, manufacturing_rows, level=1)
     _collapse_group(ws, logistics_rows, level=1)
-    _collapse_group(ws, [pos["royalties_detail"]], level=1)
+    _collapse_group(ws, [pos["royalties_detail"], pos["royalties_eu"], pos["royalties_uk"], pos["royalties_us"]], level=1)
     _collapse_group(ws, payment_fee_rows, level=1)
     _collapse_group(ws, [*marketing_rows, *marketing_meta_detail_rows, *marketing_google_detail_rows, pos["marketing_pct"]], level=1)
     _collapse_group(ws, staff_rows, level=1)
