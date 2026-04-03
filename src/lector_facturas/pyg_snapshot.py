@@ -382,6 +382,7 @@ def _materialize_rows(
     formulas: dict[str, tuple[object, ...]],
 ) -> tuple[PygSnapshotRow, ...]:
     child_map: dict[str, list[str]] = {}
+    row_kind_map = {row.code: row.kind for row in row_defs}
     for row in row_defs:
         if row.parent_code:
             child_map.setdefault(row.parent_code, []).append(row.code)
@@ -391,12 +392,12 @@ def _materialize_rows(
 
     def values_for(code: str) -> tuple[Decimal, ...]:
         if code not in computed_base:
-            computed_base[code] = _compute_values(code, months, base_maps, child_map, formulas, computed_base)
+            computed_base[code] = _compute_values(code, months, base_maps, child_map, row_kind_map, formulas, computed_base)
         return computed_base[code]
 
     def eur_values_for(code: str) -> tuple[Decimal, ...]:
         if code not in computed_eur:
-            computed_eur[code] = _compute_values(code, months, eur_maps, child_map, formulas, computed_eur)
+            computed_eur[code] = _compute_values(code, months, eur_maps, child_map, row_kind_map, formulas, computed_eur)
         return computed_eur[code]
 
     return tuple(
@@ -420,11 +421,15 @@ def _compute_values(
     months: list[str],
     maps: dict[str, dict[str, Decimal]],
     child_map: dict[str, list[str]],
+    row_kind_map: dict[str, str],
     formulas: dict[str, tuple[object, ...]],
     cache: dict[str, tuple[Decimal, ...]],
+    stack: tuple[str, ...] = (),
 ) -> tuple[Decimal, ...]:
     if code in cache:
         return cache[code]
+    if code in stack:
+        raise RuntimeError(f"Cycle detected in PYG snapshot rows: {' -> '.join((*stack, code))}")
     if code in maps and code not in formulas:
         cache[code] = tuple(maps[code].get(month, Decimal("0")) for month in months)
         return cache[code]
@@ -434,25 +439,25 @@ def _compute_values(
         return cache[code]
     op = formula[0]
     if op == "sum_children":
-        children = child_map.get(code, [])
-        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, formulas, cache)[idx] for child in children), Decimal("0")) for idx in range(len(months)))
+        children = [child for child in child_map.get(code, []) if row_kind_map.get(child) not in {"metric", "info"}]
+        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for child in children), Decimal("0")) for idx in range(len(months)))
     elif op == "sum_first_level_children":
-        children = [child for child in child_map.get(code, []) if child_map.get(child)] or child_map.get(code, [])
-        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, formulas, cache)[idx] for child in children), Decimal("0")) for idx in range(len(months)))
+        children = [child for child in child_map.get(code, []) if child_map.get(child) and row_kind_map.get(child) not in {"metric", "info"}] or [child for child in child_map.get(code, []) if row_kind_map.get(child) not in {"metric", "info"}]
+        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for child in children), Decimal("0")) for idx in range(len(months)))
     elif op == "sum_codes":
         codes = formula[1]
-        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, formulas, cache)[idx] for child in codes), Decimal("0")) for idx in range(len(months)))
+        cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for child in codes), Decimal("0")) for idx in range(len(months)))
     elif op == "diff":
-        left = _compute_values(formula[1], months, maps, child_map, formulas, cache)
-        right = _compute_values(formula[2], months, maps, child_map, formulas, cache)
+        left = _compute_values(formula[1], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
+        right = _compute_values(formula[2], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
         cache[code] = tuple(left[idx] - right[idx] for idx in range(len(months)))
     elif op == "subtract_many":
-        left = _compute_values(formula[1], months, maps, child_map, formulas, cache)
+        left = _compute_values(formula[1], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
         rights = formula[2]
-        cache[code] = tuple(left[idx] - sum((_compute_values(right, months, maps, child_map, formulas, cache)[idx] for right in rights), Decimal("0")) for idx in range(len(months)))
+        cache[code] = tuple(left[idx] - sum((_compute_values(right, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for right in rights), Decimal("0")) for idx in range(len(months)))
     elif op == "ratio":
-        numerator = _compute_values(formula[1], months, maps, child_map, formulas, cache)
-        denominator = _compute_values(formula[2], months, maps, child_map, formulas, cache)
+        numerator = _compute_values(formula[1], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
+        denominator = _compute_values(formula[2], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
         cache[code] = tuple((numerator[idx] / denominator[idx]) if denominator[idx] else Decimal("0") for idx in range(len(months)))
     else:
         cache[code] = tuple(maps.get(code, {}).get(month, Decimal("0")) for month in months)
