@@ -650,11 +650,17 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _set_amount(base_maps, "shopify_ltd", month, load("product_sales", month, "ltd"))
         _set_amount(base_maps, "shopify_inc", month, load("product_sales", month, "inc"))
         _set_amount(base_maps, "marketplaces", month, load("marketplaces", month, "sl"))
-        _set_amount(base_maps, "services", month, load("services", month, "sl"))
+        _set_amount(base_maps, "services", month, load("service_hannun", month, "sl"))
         _set_amount(base_maps, "rappels", month, load("rappels", month, "sl"))
         _set_amount(base_maps, "supplies", month, load("supplies", month, "sl"))
         _set_amount(base_maps, "otros_ingresos", month, load("otros_ingresos_group", month, "sl") + load("otros_ingresos_group", month, "ltd") + load("otros_ingresos_group", month, "inc"))
-        for key in ("manufacturing", "logistics", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"):
+        _set_amount(
+            base_maps,
+            "manufacturing",
+            month,
+            (load("manufacturing", month, "sl") - load("manufacturing_bbvacnc", month, "sl")) + load("manufacturing", month, "ltd") + load("manufacturing", month, "inc"),
+        )
+        for key in ("logistics", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"):
             _set_amount(base_maps, key, month, load(key, month, "sl") + load(key, month, "ltd") + load(key, month, "inc"))
         _set_amount(base_maps, "royalties", month, load("royalties", month, "sl"))
     eur_maps = {key: dict(values) for key, values in base_maps.items()}
