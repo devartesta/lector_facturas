@@ -105,27 +105,27 @@ def _aggregate_all(
     if bundle.sl_bundle:
         b = bundle.sl_bundle
         for row in b.shopify_rows:
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "shopify")] += c.amount_reporting; fx_audit.append(a)
         for row in b.marketplace_rows:
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "marketplaces")] += c.amount_reporting; fx_audit.append(a)
         for row in b.rappel_rows:
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "rappels")] += c.amount_reporting; fx_audit.append(a)
         for row in b.supplies_rows:
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "supplies")] += c.amount_reporting; fx_audit.append(a)
         for row in b.service_rows:
             key = "services_interco" if row.line_item in {"Ltd", "Inc"} else "services_ext"
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, key)] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "royalties", "marketing", "staff", "administration", "technology", "otros_gastos"}:
-                c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+                c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
                 sl_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
-            c, a = fx.convert(row.amount_net, row.currency, "EUR", row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "payment_fees")] += c.amount_reporting; fx_audit.append(a)
         for yyyymm, amt in b.otros_ingresos_by_period.items():
             sl_amounts[(yyyymm, "otros_ingresos")] += amt
@@ -136,40 +136,40 @@ def _aggregate_all(
         b = bundle.ltd_bundle
         RC = "GBP"
         for row in b.sales_rows:
-            c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             ltd_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "shared_services", "administration", "technology", "otros_gastos"}:
-                c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+                c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
                 ltd_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
-            c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             ltd_amounts[(row.yyyymm, "payment_fees")] += c.amount_reporting; fx_audit.append(a)
         for yyyymm, amt in b.otros_ingresos_by_period.items():
-            c, a = fx.convert(amt, "EUR", RC, yyyymm)
+            c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             ltd_amounts[(yyyymm, "otros_ingresos")] += c.amount_reporting; fx_audit.append(a)
         for yyyymm, amt in b.diferencias_divisas_by_period.items():
-            c, a = fx.convert(amt, "EUR", RC, yyyymm)
+            c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             ltd_amounts[(yyyymm, "diferencias_divisas")] += c.amount_reporting; fx_audit.append(a)
 
     if bundle.inc_bundle:
         b = bundle.inc_bundle
         RC = "USD"
         for row in b.sales_rows:
-            c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             inc_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "shared_services", "administration", "technology", "otros_gastos"}:
-                c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+                c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
                 inc_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
-            c, a = fx.convert(row.amount_net, row.currency, RC, row.yyyymm)
+            c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             inc_amounts[(row.yyyymm, "payment_fees")] += c.amount_reporting; fx_audit.append(a)
         for yyyymm, amt in b.otros_ingresos_by_period.items():
-            c, a = fx.convert(amt, "EUR", RC, yyyymm)
+            c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             inc_amounts[(yyyymm, "otros_ingresos")] += c.amount_reporting; fx_audit.append(a)
         for yyyymm, amt in b.diferencias_divisas_by_period.items():
-            c, a = fx.convert(amt, "EUR", RC, yyyymm)
+            c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             inc_amounts[(yyyymm, "diferencias_divisas")] += c.amount_reporting; fx_audit.append(a)
 
     # Collect EOM GBP/EUR and USD/EUR rates for all months
@@ -186,7 +186,7 @@ def _aggregate_all(
     for yyyymm in month_keys(year):
         for currency in ["GBP", "USD"]:
             if (yyyymm, currency) not in seen:
-                _, a = fx.convert(Decimal("1"), currency, "EUR", yyyymm)
+                _, a = fx.convert(amount=Decimal("1"), source_currency=currency, reporting_currency="EUR", yyyymm=yyyymm)
                 seen.add((yyyymm, currency))
                 fx_rates_rows.append([yyyymm, currency, float(a.reference_rate)])
     fx_rates_rows.sort(key=lambda r: (r[0], r[1]))
