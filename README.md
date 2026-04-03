@@ -760,3 +760,188 @@ La fórmula en el P&G es `profit = turnover - cogs - opex - diferencias_divisas`
 ### Añadir un nuevo mes/año al P&G
 
 Los P&G generan siempre los 12 meses del año indicado (`year` parameter en el endpoint). Los meses sin datos quedan a cero. No se necesita configuración adicional.
+
+### openpyxl `insert_rows` corrompe fórmulas en shared-services
+
+**Síntoma:** La hoja `shared-services` del P&G-SL mostraba valores erróneos o referencias rotas tras añadir una fila de back-link con `ws.insert_rows(1)`.
+
+**Causa:** `insert_rows` desplaza los datos pero NO actualiza referencias a strings de fórmulas en otras celdas, por lo que cualquier fórmula que apuntara a una fila absoluta (e.g. `$A$1`) seguía apuntando a la fila equivocada.
+
+**Solución aplicada:**
+- La hoja `shared-services` se excluye de `_add_back_links` (que hacía el `insert_rows`)
+- Se genera **después** de `_add_back_links`, por lo que nunca sufre el desplazamiento
+- El back-link se añade manualmente en la fila 1 usando `ws.cell(1, 1).hyperlink`
+- El yyyymm de referencia está en la fila 2 (`{col}$2`); todas las fórmulas usan esa referencia
+
+---
+
+## P&G Consolidado — Arquitectura de fórmulas
+
+El consolidado (`pyg_consolidado_YYYY.xlsx`) ya no contiene valores hardcodeados. Toda la lógica numérica vive en fórmulas Excel que leen de tres hojas de datos y una hoja de tipos de cambio.
+
+### Hojas de datos crudos
+
+| Hoja | Contenido | Columnas |
+|------|-----------|---------|
+| `i-sl` | Datos SL en EUR | `yyyymm` \| `line_key` \| `amount_eur` |
+| `i-ltd` | Datos LTD en GBP | `yyyymm` \| `line_key` \| `amount_gbp` |
+| `i-inc` | Datos INC en USD | `yyyymm` \| `line_key` \| `amount_usd` |
+| `fx-rates` | Tipos de cambio BCE fin de mes | `yyyymm` \| `currency` \| `reference_rate` |
+
+**`fx-rates`:** `reference_rate` = unidades de moneda extranjera por 1 EUR (convención BCE).
+- GBP/EUR = 0.83 → para convertir GBP→EUR: `amount_gbp / 0.83`
+- USD/EUR = 1.08 → para convertir USD→EUR: `amount_usd / 1.08`
+
+Los tipos provienen de la API XML del BCE (`sdw-wsrest.ecb.europa.eu`), usando el último día hábil del mes (EOM rate).
+
+### Fórmulas P&G Consolidado
+
+```excel
+-- Helpers (fila 1 = yyyymm del mes)
+GBP_RATE = AVERAGEIFS('fx-rates'!$C:$C,'fx-rates'!$A:$A,D$1,'fx-rates'!$B:$B,"GBP")
+USD_RATE = AVERAGEIFS('fx-rates'!$C:$C,'fx-rates'!$A:$A,D$1,'fx-rates'!$B:$B,"USD")
+
+-- SL (ya en EUR)
+sl("product_sales") = SUMIFS('i-sl'!$C:$C,'i-sl'!$A:$A,D$1,'i-sl'!$B:$B,"product_sales")
+
+-- LTD (GBP → EUR dividiendo por GBP_RATE)
+ltd("product_sales") = IFERROR(SUMIFS('i-ltd'!$C:$C,...)/ GBP_RATE, 0)
+
+-- INC (USD → EUR dividiendo por USD_RATE)
+inc("product_sales") = IFERROR(SUMIFS('i-inc'!$C:$C,...)/ USD_RATE, 0)
+
+-- Shared services (eliminación intercompany)
+-- SL cobra servicios a LTD/INC (services_interco en EUR)
+-- LTD/INC pagan shared_services (en GBP/USD)
+-- En el consolidado: LTD_pay/GBP + INC_pay/USD - SL_income ≈ 0
+shared_services = ltd("shared_services") + inc("shared_services") - sl("services_interco")
+```
+
+### Eliminación intercompany de Shared Services
+
+SL factura servicios compartidos a LTD e INC en EUR. LTD paga en GBP (convirtiendo al tipo del período), INC paga en USD. Al consolidar, LTD y INC convierten de vuelta a EUR con el mismo tipo BCE → la línea `shared_services` del consolidado es exactamente cero.
+
+```
+SL recibe:  +X EUR  (services_interco)
+LTD paga:   -X EUR  → almacenado como -(X * GBP_rate) GBP → en Excel / GBP_rate = -X EUR
+INC paga:   -Y EUR  → almacenado como -(Y * USD_rate) USD → en Excel / USD_rate = -Y EUR
+Neto consolidado:  LTD + INC - SL  ≈  0
+```
+
+---
+
+## P&G-SL — Hoja Shared Services
+
+La hoja `shared-services` del libro `pyg_sl_YYYY.xlsx` muestra el desglose de los costes de servicios compartidos que SL presta a LTD e INC, con el porcentaje aplicado a cada sociedad.
+
+### Estructura de filas
+
+| Fila | Contenido |
+|------|-----------|
+| 1 | Back-link a P&G-SL (hipervínculo) |
+| 2 | yyyymm de cada mes (oculta) — usada como clave de lookup en SUMIFS |
+| 3 | Título + nombres de meses |
+| 4 | **LTD** (cabecera) |
+| 5 | Marketing LTD |
+| 6 | Royalties LTD |
+| 7 | Staff LTD |
+| 8 | Admin + Tech LTD |
+| 9 | **TOTAL LTD EUR** |
+| 10 | TOTAL LTD GBP |
+| 11 | (vacía) |
+| 12 | **INC** (cabecera) |
+| 13-18 | (misma estructura) |
+| 19 | (vacía) |
+| 20 | **TOTAL SHARED SERVICES EUR** (LTD_EUR + INC_EUR) |
+
+### Parámetros de reparto
+
+Los porcentajes de reparto (`pct_marketing_uk`, `pct_royalties_uk`, `pct_admin_uk`, etc.) se definen en `src/lector_facturas/config/params_sl.csv`. Las filas de Admin + Tech de SL se suman antes de aplicar el porcentaje:
+
+```python
+LTD_AD = (P&G-SL[administration_row] + P&G-SL[technology_row]) * pct_admin_uk
+```
+
+---
+
+## P&G-SL — Royalties por ámbito geográfico
+
+Dentro de la sección "Royalties (% sales)" del P&G-SL, se muestran tres sub-filas colapsables con el desglose por zona:
+
+| Sub-fila | `summary_scope` |
+|----------|----------------|
+| `eu` | Royalties Europa |
+| `uk` | Royalties Reino Unido |
+| `us` | Royalties EE.UU. |
+
+**Fuente de datos:** `invoices.artist_royalties_monthly_summary` filtrada por `summary_scope IN ('eu', 'uk', 'us', 'total')`.
+
+**Fórmula en Excel:**
+```excel
+=SUMIFS('i-royalties-scope-sl'!$C:$C,
+        'i-royalties-scope-sl'!$A:$A, D$1,
+        'i-royalties-scope-sl'!$B:$B, "eu")
+```
+
+---
+
+## Control de pagos (Payment Tracking)
+
+### Tablas de base de datos
+
+#### `invoices.suppliers`
+
+Catálogo de proveedores con términos de pago.
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `code` | TEXT | Código del proveedor (PK) |
+| `name` | TEXT | Nombre |
+| `company_code` | TEXT | Sociedad (`SL`, `LTD`, `INC`) |
+| `payment_terms_days` | INT | Días de pago pactados |
+| `is_direct_debit` | BOOL | True si es domiciliación |
+
+#### `invoices.documents` — columnas de pago
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `payment_status` | TEXT | `pending` / `paid` / `partial` / `direct_debit` |
+| `payment_date` | DATE | Fecha de pago efectivo |
+| `payment_method` | TEXT | `bank_transfer` / `direct_debit` / `card` / `other` |
+| `payment_amount` | NUMERIC | Importe pagado (si parcial) |
+| `payment_due_date` | DATE | Fecha de vencimiento calculada |
+| `is_overdue` | BOOL | True si `payment_due_date < today AND payment_status = 'pending'` |
+
+### Endpoints de Payment Tracking
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/suppliers?company_code=SL` | Lista proveedores con términos de pago |
+| `PATCH` | `/suppliers/{code}/payment-settings?company_code=SL` | Actualiza días y domiciliación de un proveedor |
+| `GET` | `/documents/payment-status?company_code=&period_yyyymm=&payment_status=&overdue_only=` | Lista facturas con estado de pago |
+| `POST` | `/documents/{id}/payment` | Registra pago de una factura |
+
+**Body `PATCH /suppliers/{code}/payment-settings`:**
+```json
+{ "payment_terms_days": 30, "is_direct_debit": true }
+```
+
+**Body `POST /documents/{id}/payment`:**
+```json
+{
+  "payment_status": "paid",
+  "payment_date": "2026-03-15",
+  "payment_method": "bank_transfer",
+  "payment_amount": 1234.56,
+  "payment_due_date": "2026-03-31"
+}
+```
+
+**Query params `GET /documents/payment-status`:**
+
+| Param | Tipo | Descripción |
+|-------|------|-------------|
+| `company_code` | TEXT | Filtro por sociedad (opcional) |
+| `period_yyyymm` | TEXT | Filtro por mes, e.g. `202603` (opcional) |
+| `payment_status` | TEXT | `pending` / `paid` / `partial` / `direct_debit` (opcional) |
+| `overdue_only` | BOOL | Solo facturas vencidas (opcional) |
