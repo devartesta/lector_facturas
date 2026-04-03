@@ -745,6 +745,17 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
         amount_dd = bundle.diferencias_divisas_by_period.get(yyyymm)
         if amount_dd is not None:
             ws.cell(row=pos["diferencias_divisas"], column=idx).value = float(amount_dd)
+    # Fila 3: facturación diaria = Product sales / días transcurridos del mes
+    # Meses pasados: dividir por días del mes. Mes actual: dividir por días+horas transcurridos.
+    ps = pos["product_sales"]
+    for col in [get_column_letter(i) for i in range(4, 16)]:
+        d = f'DATE(VALUE(LEFT({col}$1,4)),VALUE(RIGHT({col}$1,2)),1)'
+        ws[f"{col}3"] = (
+            f'=IFERROR(IF({d}>TODAY(),"",'
+            f'IF(EOMONTH({d},0)<TODAY(),'
+            f'{col}{ps}/DAY(EOMONTH({d},0)),'
+            f'{col}{ps}/MAX(NOW()-{d},1/24))),"")'
+        )
     _apply_layout(
         ws,
         pos=pos,
