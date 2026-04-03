@@ -877,20 +877,21 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
     ws.merge_cells("A3:C3")
 
     # Posiciones de fila (datos desde fila 4)
-    LTD_HDR = 4
-    LTD_MK  = 5
-    LTD_RY  = 6
-    LTD_ST  = 7
-    LTD_AD  = 8
-    LTD_EUR = 9
-    LTD_GBP = 10
-    INC_HDR = 12
-    INC_MK  = 13
-    INC_RY  = 14
-    INC_ST  = 15
-    INC_AD  = 16
-    INC_EUR = 17
-    INC_USD = 18
+    LTD_HDR   = 4
+    LTD_MK    = 5
+    LTD_RY    = 6
+    LTD_ST    = 7
+    LTD_AD    = 8
+    LTD_EUR   = 9
+    LTD_GBP   = 10
+    INC_HDR   = 12
+    INC_MK    = 13
+    INC_RY    = 14
+    INC_ST    = 15
+    INC_AD    = 16
+    INC_EUR   = 17
+    INC_USD   = 18
+    TOTAL_EUR = 20  # Total shared services SL→LTD+INC en EUR (fila 19 vacía)
 
     # Etiquetas
     ws[f"A{LTD_HDR}"] = "LTD (UK)"
@@ -907,9 +908,11 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
     ws[f"A{INC_AD}"]  = "Administrativos"
     ws[f"A{INC_EUR}"] = "TOTAL EUR"
     ws[f"A{INC_USD}"] = "TOTAL USD"
+    ws[f"A{TOTAL_EUR}"] = "TOTAL SHARED SERVICES EUR"
 
     st_row = pos["staff_header"]
     ad_row = pos["administration_header"]
+    tech_row = pos["technology_header"]
 
     def p(key: str) -> str:
         """VLOOKUP al sheet params para obtener el parámetro configurable."""
@@ -929,8 +932,8 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
         )
         # Staff UK: % configurable del total staff SL
         ws[f"{col}{LTD_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_uk')}"
-        # Admin UK: % configurable del total admin SL
-        ws[f"{col}{LTD_AD}"] = f"='P&G-SL'!{col}{ad_row}*{p('pct_admin_uk')}"
+        # Admin UK: % configurable del total (administration + technology) SL
+        ws[f"{col}{LTD_AD}"] = f"=('P&G-SL'!{col}{ad_row}+'P&G-SL'!{col}{tech_row})*{p('pct_admin_uk')}"
         # Totales LTD
         ws[f"{col}{LTD_EUR}"] = f"=SUM({col}{LTD_MK}:{col}{LTD_AD})"
         ws[f"{col}{LTD_GBP}"] = (
@@ -948,22 +951,23 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
             f"'i-royalties-scope-sl'!$B:$B,\"us\")"
         )
         ws[f"{col}{INC_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_us')}"
-        ws[f"{col}{INC_AD}"] = f"='P&G-SL'!{col}{ad_row}*{p('pct_admin_us')}"
+        ws[f"{col}{INC_AD}"] = f"=('P&G-SL'!{col}{ad_row}+'P&G-SL'!{col}{tech_row})*{p('pct_admin_us')}"
         ws[f"{col}{INC_EUR}"] = f"=SUM({col}{INC_MK}:{col}{INC_AD})"
         ws[f"{col}{INC_USD}"] = (
             f"=IFERROR({col}{INC_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$2,"
             f"'fx-rates'!$C:$C,\"USD\",'fx-rates'!$D:$D,\"EUR\"),{col}{INC_EUR})"
         )
+        ws[f"{col}{TOTAL_EUR}"] = f"={col}{LTD_EUR}+{col}{INC_EUR}"
 
     # Columna TOTAL (P)
     for row in (LTD_MK, LTD_RY, LTD_ST, LTD_AD, LTD_EUR, LTD_GBP,
-                INC_MK, INC_RY, INC_ST, INC_AD, INC_EUR, INC_USD):
+                INC_MK, INC_RY, INC_ST, INC_AD, INC_EUR, INC_USD, TOTAL_EUR):
         ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
 
     # ── Estilos ───────────────────────────────────────────────────────────────
     ws.row_dimensions[1].height = ROW_HEIGHT
     ws.row_dimensions[2].hidden = True
-    for row_idx in range(1, INC_USD + 1):
+    for row_idx in range(1, TOTAL_EUR + 1):
         ws.row_dimensions[row_idx].height = ROW_HEIGHT
 
     # Cabecera fila 3
@@ -980,19 +984,24 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
             ws.cell(row=hdr_row, column=col).fill = SECTION_FILL
         ws.cell(row=hdr_row, column=1).font = BOLD
 
-    # Filas de total
+    # Filas de total parcial
     for total_row in (LTD_EUR, LTD_GBP, INC_EUR, INC_USD):
         for col in range(1, 18):
             ws.cell(row=total_row, column=col).fill = SUBSECTION_FILL
         ws.cell(row=total_row, column=1).font = BOLD
 
+    # Fila TOTAL SHARED SERVICES EUR — fondo KPI y fuente en negrita
+    for col in range(1, 18):
+        ws.cell(row=TOTAL_EUR, column=col).fill = KPI_FILL
+    ws.cell(row=TOTAL_EUR, column=1).font = Font(bold=True, size=10)
+
     # Formato numérico (EUR / GBP / USD → MONEY_FORMAT)
-    for row in range(4, INC_USD + 1):
+    for row in list(range(4, INC_USD + 1)) + [TOTAL_EUR]:
         for col in range(4, 18):
             ws.cell(row=row, column=col).number_format = MONEY_FORMAT
 
     # Anchos de columna
-    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["A"].width = 30
     ws.column_dimensions["P"].width = 14
     for idx in range(4, 16):
         ws.column_dimensions[get_column_letter(idx)].width = 14

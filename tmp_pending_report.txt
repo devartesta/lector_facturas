@@ -1,0 +1,96 @@
+PENDING_2026_COUNT 70
+TOP_PENDING_2026
+4 :: 1Q\202602\Gastos\Artistas\pagos
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Artistas\pagos\resultado_pagos_paypal_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Artistas\pagos\remesa_caixabank_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Artistas\pagos\detalle_1x_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Artistas\pagos\comprobante_pago_artistas202602.pdf
+3 :: 1Q\202602\Gastos\Proveedores\DCT
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\DCT\ErneuterVersand 28.02.2026.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\DCT\ArtestaAT_09-2026.xls
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\DCT\ArtestaAT_07-2026.xls
+3 :: 1Q\202602\Gastos\Proveedores\CHATGPT
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\CHATGPT\Receipt-2699-8822-5500.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\CHATGPT\Invoice-BZHJNTUB-0006.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\CHATGPT\Invoice-BZHJNTUB-0003.pdf
+3 :: 1Q\202601\Gastos\Proveedores\DCT
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\DCT\ErneuterVersand 31.01.2026.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\DCT\ArtestaAT_05-2026.xls
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\DCT\ArtestaAT_03-2026.xls
+2 :: 1Q\202602\Gastos\Proveedores\pressing
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\pressing\OT.313362 Cornella febrer..xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\pressing\OT.313361 Sant Feliu febrer.xlsx
+2 :: 1Q\202601\Gastos\Proveedores\Pressing
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\Pressing\Sant Feliu.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\Pressing\Cornellá.xlsx
+2 :: 1Q\202601\Gastos\Proveedores\Meta
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\Meta\Transaction_249902419.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\Meta\249902419pay.pdf
+2 :: 1Q\202601\Gastos\Proveedores\godaddy
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\godaddy\Mi cuenta _ Facturacio╠ün_2.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Gastos\Proveedores\godaddy\Mi cuenta _ Facturacio╠ün.pdf
+1 :: 1Q\202603\Ingresos\CHOOSE\invoice-AS-101940.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202603\Ingresos\CHOOSE\invoice-AS-101940.pdf
+1 :: 1Q\202602\Operating Expenses\regus\Invoice(3313-43718) (2) (2).pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Inc\2026\1Q\202602\Operating Expenses\regus\Invoice(3313-43718) (2) (2).pdf
+1 :: 1Q\202603\Gastos\Proveedores\rever
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202603\Gastos\Proveedores\rever\factura\Invoice-RVR-18216 (1).pdf
+1 :: 1Q\202603\Gastos\Proveedores\Artlink
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202603\Gastos\Proveedores\Artlink\Artesta Store S.L invoice no 000203570 (Freight cost to order DCT 3001583).pdf
+1 :: 1Q\202603\Cost of sales\port clearence\wise_transfer_confirmation__transfer__2024906557__7741728334__en.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Stores (UK) Ltd\2026\1Q\202603\Cost of sales\port clearence\wise_transfer_confirmation__transfer__2024906557__7741728334__en.pdf
+1 :: 1Q\202603\Cost of sales\port clearence\INVOICE-PCSI2601529.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Stores (UK) Ltd\2026\1Q\202603\Cost of sales\port clearence\INVOICE-PCSI2601529.pdf
+1 :: 1Q\202603\Gastos\Proveedores\AP PHOTO
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202603\Gastos\Proveedores\AP PHOTO\2026-1-2805.PDF
+1 :: 1Q\202601\Operating Expenses\TGI\Proforma shooting Hannun - Terra (1).pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Inc\2026\1Q\202601\Operating Expenses\TGI\Proforma shooting Hannun - Terra (1).pdf
+1 :: 1Q\202601\Operating Expenses\TGI\Copy of January_2026-Final.xlsx art.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Inc\2026\1Q\202601\Operating Expenses\TGI\Copy of January_2026-Final.xlsx art.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\transactions_eu_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\transactions_eu_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20260303_Validacion_Ventas_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20260303_Validacion_Ventas_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20260303-Pagos_Manuales_B2B_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20260303-Pagos_Manuales_B2B_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20260302_ventas_hannun_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20260302_ventas_hannun_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20260302_ventas_eu_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20260302_ventas_eu_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20250303-Paypal_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20250303-Paypal_202602.xlsx
+1 :: 1Q\202602\Ingresos\VENTAS\20250303-Payouts_Shopify_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\VENTAS\20250303-Payouts_Shopify_202602.xlsx
+1 :: 1Q\202602\Ingresos\TOASTY\invoice-AS-99158.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\TOASTY\invoice-AS-99158.pdf
+1 :: 1Q\202602\Ingresos\QHANDS\Factura_2026-0012.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\QHANDS\Factura_2026-0012.pdf
+1 :: 1Q\202602\Ingresos\LTD\Factura_2026-0015.pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\LTD\Factura_2026-0015.pdf
+1 :: 1Q\202602\Ingresos\B2B\Validacion_202601_202602.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Ingresos\B2B\Validacion_202601_202602.xlsx
+1 :: 1Q\202602_uk\Cost of sales\Proco\Copy of Artesta_February_2026.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Stores (UK) Ltd\2026\1Q\202602_uk\Cost of sales\Proco\Copy of Artesta_February_2026.xlsx
+1 :: 1Q\202602\Gastos\Proveedores\RAILWAY
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\RAILWAY\Invoice-1602C2F5-0016.pdf
+1 :: 1Q\202602\Gastos\Proveedores\Product Hero
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\Product Hero\invoice_211723.pdf
+1 :: 1Q\202601_UK\Cost of sales\Proco\Artesta_January_2026.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Stores (UK) Ltd\2026\1Q\202601_UK\Cost of sales\Proco\Artesta_January_2026.xlsx
+1 :: 1Q\202602\Gastos\Proveedores\microsoft
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\microsoft\G141681724_aca72520f4e64e60844a2344f7db077d.pdf
+1 :: 1Q\202602\Gastos\Proveedores\meta
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\meta\factura\250807809.pdf
+1 :: 1Q\202602\Gastos\Proveedores\masmovil
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\masmovil\5cfd3fc3-0e0b-4380-b3ea-559dd706544f (1).pdf
+1 :: 1Q\202602\Gastos\Proveedores\hannun
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\hannun\HANNUN ARTESTA FEES.xlsx
+1 :: 1Q\202602\Gastos\Proveedores\GSUITE
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Proveedores\GSUITE\5505030303 (1).pdf
+1 :: 1Q\202602\Gastos\Nóminas\ARTESTA STORE NOMINAS (1).pdf
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202602\Gastos\Nóminas\ARTESTA STORE NOMINAS (1).pdf
+1 :: 1Q\202601\Ingresos\VENTAS\transactions_eu_202601.xlsx
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Ingresos\VENTAS\transactions_eu_202601.xlsx
+1 :: 1Q\202601\Ingresos\VENTAS\codigo_validacion.sql.txt
+  - C:\Users\AdriàSebastià\OneDrive - Artesta\ARTESTA - 6. Finances\Artesta Store, S.L\2026\1Q\202601\Ingresos\VENTAS\codigo_validacion.sql.txt
+POTENTIAL_2025_PROVIDER_DIRS

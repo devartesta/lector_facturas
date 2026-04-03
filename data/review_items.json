@@ -1,0 +1,42 @@
+[
+  {
+    "id": "403c09f4-2d69-4929-a984-60c0daf16876",
+    "kind": "unmatched_supplier",
+    "status": "open",
+    "company": "ARTESTA INC",
+    "period_yyyymm": "202601",
+    "source_sender": "andrea@artestastore.com",
+    "source_subject": "Factura_2026-0009.pdf",
+    "attachment_names": [
+      "Factura_2026-0009.pdf"
+    ],
+    "review_path": "ARTESTA - 6. Finances\\Artesta Inc\\2026\\202601\\validation\\pending_supplier_review",
+    "source_file": "ARTESTA - 6. Finances\\Artesta Inc\\2026\\202601\\validation\\pending_supplier_review\\Factura_2026-0009.pdf",
+    "suggested_provider": "ARTESTA STORE, S.L.",
+    "suggested_supplier_code": "SHAREDSERVICESSL",
+    "notes": "Sample seeded review item for API integration.",
+    "destination_file": "",
+    "drive_file_id": "",
+    "drive_view_url": ""
+  },
+  {
+    "id": "dbb8623b-f594-4a2b-9aff-669697267e6d",
+    "kind": "unmatched_supplier",
+    "status": "open",
+    "company": "ARTESTA STORE, S.L.",
+    "period_yyyymm": "202601",
+    "source_sender": "adobe@notification.example",
+    "source_subject": "IEE2026001813920.pdf",
+    "attachment_names": [
+      "IEE2026001813920.pdf"
+    ],
+    "review_path": "ARTESTA - 6. Finances\\Artesta Store, S.L\\2026\\202601\\validation\\pending_supplier_review",
+    "source_file": "ARTESTA - 6. Finances\\Artesta Store, S.L\\2026\\202601\\validation\\pending_supplier_review\\IEE2026001813920.pdf",
+    "suggested_provider": "ADOBE SYSTEMS SOFTWARE IRELAND LTD",
+    "suggested_supplier_code": "ADOBE",
+    "notes": "Sample seeded review item for API integration.",
+    "destination_file": "",
+    "drive_file_id": "",
+    "drive_view_url": ""
+  }
+]
