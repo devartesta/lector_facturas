@@ -117,11 +117,19 @@ def _aggregate_all(
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "supplies")] += c.amount_reporting; fx_audit.append(a)
         for row in b.service_rows:
-            key = "services_interco" if row.line_item in {"Ltd", "Inc"} else "services_ext"
+            if row.line_item in {"Ltd", "Inc"}:
+                # Shared services interco: excluded entirely from consolidated
+                continue
+            if row.detail == "renting_cnc":
+                # CNC renting interco: income from HANNUN/QHANDS, offset by BBVACNC lease expense
+                continue
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
-            sl_amounts[(row.yyyymm, key)] += c.amount_reporting; fx_audit.append(a)
+            sl_amounts[(row.yyyymm, "services_ext")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "royalties", "marketing", "staff", "administration", "technology", "otros_gastos"}:
+                # Exclude BBVACNC (CNC machine leasing): offset by renting_cnc income above
+                if row.supplier_code == "BBVACNC":
+                    continue
                 c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
                 sl_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
@@ -139,7 +147,8 @@ def _aggregate_all(
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             ltd_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
-            if row.subcategory in {"manufacturing", "logistics", "shared_services", "administration", "technology", "otros_gastos"}:
+            if row.subcategory in {"manufacturing", "logistics", "administration", "technology", "otros_gastos"}:
+                # shared_services excluded entirely from consolidated
                 c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
                 ltd_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
@@ -159,7 +168,8 @@ def _aggregate_all(
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             inc_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
-            if row.subcategory in {"manufacturing", "logistics", "shared_services", "administration", "technology", "otros_gastos"}:
+            if row.subcategory in {"manufacturing", "logistics", "administration", "technology", "otros_gastos"}:
+                # shared_services excluded entirely from consolidated
                 c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
                 inc_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
@@ -271,7 +281,6 @@ _ROWS: list[tuple[str, str, int, str]] = [
     ("administration",          "Administration",                            2, "section"),
     ("technology",              "Technology",                                2, "section"),
     ("otros_gastos",            "Otros gastos",                              2, "section"),
-    ("shared_services",         "Shared services (eliminacion interco)",     2, "section"),
     ("diferencias_divisas",     "Diferencias divisas",                       1, "section"),
     ("profit",                  "PROFIT",                                    0, "kpi"),
     ("profit_pct",              "% Profit / product sales",                  0, "kpi"),
@@ -367,10 +376,6 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     ws[f"{col}{rm['diferencias_divisas']}"] = (
         f"={sl('diferencias_divisas')}+{ltd('diferencias_divisas')}+{inc('diferencias_divisas')}"
     )
-    # Shared services elimination: LTD expense + INC expense − SL interco income ≈ 0
-    ws[f"{col}{rm['shared_services']}"] = (
-        f"={ltd('shared_services')}+{inc('shared_services')}-{sl('services_interco')}"
-    )
 
     # ── Derived rows (formulas referencing other cells in this sheet) ────────
     ws[f"{col}{rm['turnover']}"] = (
@@ -384,7 +389,7 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     )
     ws[f"{col}{rm['opex']}"] = (
         f"={col}{rm['marketing']}+{col}{rm['staff']}+{col}{rm['administration']}"
-        f"+{col}{rm['technology']}+{col}{rm['otros_gastos']}+{col}{rm['shared_services']}"
+        f"+{col}{rm['technology']}+{col}{rm['otros_gastos']}"
     )
     ws[f"{col}{rm['expenses']}"]  = f"={col}{rm['cogs']}+{col}{rm['opex']}"
     ws[f"{col}{rm['gross_margin']}"] = f"={col}{rm['product_sales']}-{col}{rm['manufacturing']}"
