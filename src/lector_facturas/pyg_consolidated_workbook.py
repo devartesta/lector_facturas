@@ -86,6 +86,7 @@ def build_pyg_consolidated_workbook(bundle: ConsolidatedPygBundle, output_path: 
 
     # ── Build P&G with formulas ────────────────────────────────────────────
     _build_main_sheet(wb, bundle)
+    _build_quarterly_sheet(wb, bundle)
 
     wb.save(output_path)
     return output_path
@@ -488,3 +489,160 @@ def _apply_main_styles(ws, row_map: dict[str, int]) -> None:
 def _border_row(ws, row: int, border) -> None:
     for c in range(1, 17):
         ws.cell(row=row, column=c).border = border
+
+
+def _build_quarterly_sheet(wb: Workbook, bundle: ConsolidatedPygBundle) -> None:
+    """Quarterly summary referencing P&G-CONSOLIDADO monthly cells via SUM formulas."""
+    ws = wb.create_sheet("P&G-TRIMESTRAL")
+    src = "'P&G-CONSOLIDADO'"
+
+    # In P&G-CONSOLIDADO: D=Jan, E=Feb, F=Mar, G=Apr, H=May, I=Jun,
+    #                      J=Jul, K=Aug, L=Sep, M=Oct, N=Nov, O=Dec
+    # Quarters (column ranges in source sheet):
+    QUARTERS = [
+        ("Q1", "D", "F"),  # Jan-Mar
+        ("Q2", "G", "I"),  # Apr-Jun
+        ("Q3", "J", "L"),  # Jul-Sep
+        ("Q4", "M", "O"),  # Oct-Dec
+    ]
+    # Output columns: A=label, B=Q1, C=Q2, D=Q3, E=Q4, F=Total
+    Q_COLS = ["B", "C", "D", "E"]
+    TOTAL_COL = "F"
+
+    year = bundle.year
+
+    # ── Build row_map (same rows as main sheet, starting at row 4) ───────────
+    row_map: dict[str, int] = {}
+    r = 4
+    for key, label, _indent, _rtype in _ROWS:
+        row_map[key] = r
+        ws[f"A{r}"] = label
+        r += 1
+
+    pct_keys = {"gross_margin_pct", "contributive_margin_pct", "profit_pct"}
+
+    # ── Row 1: hidden quarter labels (for reference) ─────────────────────────
+    ws.row_dimensions[1].hidden = True
+
+    # ── Row 2: header ─────────────────────────────────────────────────────────
+    ws["A2"] = f"P&G CONSOLIDADO TRIMESTRAL {year} ({REPORTING_CURRENCY})"
+    ws.merge_cells("A2:C2")
+    for col, (q_label, _, __) in zip(Q_COLS, QUARTERS):
+        ws[f"{col}2"] = q_label
+    ws[f"{TOTAL_COL}2"] = "Total"
+
+    # ── Row 3: generated_at (pulled from P&G-CONSOLIDADO) ────────────────────
+    ws["A3"] = f"={src}!A3"
+    ws.merge_cells("A3:C3")
+
+    # ── Data rows: SUM quarterly ranges from main sheet ──────────────────────
+    for key, _label, _indent, _rtype in _ROWS:
+        src_row = row_map[key]
+        is_pct = key in pct_keys
+
+        for q_col, (_q_label, c_from, c_to) in zip(Q_COLS, QUARTERS):
+            if is_pct:
+                # Percentages: recompute from quarterly totals
+                if key == "gross_margin_pct":
+                    num_key, den_key = "gross_margin", "product_sales"
+                elif key == "contributive_margin_pct":
+                    num_key, den_key = "contributive_margin", "product_sales"
+                else:
+                    num_key, den_key = "profit", "product_sales"
+                num_row = row_map[num_key]
+                den_row = row_map[den_key]
+                ws[f"{q_col}{src_row}"] = (
+                    f"=IFERROR(SUM({src}!{c_from}{num_row}:{c_to}{num_row})"
+                    f"/SUM({src}!{c_from}{den_row}:{c_to}{den_row}),0)"
+                )
+            else:
+                ws[f"{q_col}{src_row}"] = f"=SUM({src}!{c_from}{src_row}:{c_to}{src_row})"
+
+        # Total column
+        if is_pct:
+            if key == "gross_margin_pct":
+                num_key, den_key = "gross_margin", "product_sales"
+            elif key == "contributive_margin_pct":
+                num_key, den_key = "contributive_margin", "product_sales"
+            else:
+                num_key, den_key = "profit", "product_sales"
+            ws[f"{TOTAL_COL}{src_row}"] = (
+                f"=IFERROR({src}!P{row_map[num_key]}/{src}!P{row_map[den_key]},0)"
+            )
+        else:
+            ws[f"{TOTAL_COL}{src_row}"] = f"={src}!P{src_row}"
+
+    # ── Styles (reuse same logic as main sheet) ────────────────────────────────
+    key_to_rtype  = {key: rtype  for key, _lbl, _ind, rtype  in _ROWS}
+    key_to_indent = {key: indent for key, _lbl, indent, _rtype in _ROWS}
+
+    major_rows    = {row_map[k] for k, _, _, t in _ROWS if t == "major"}
+    kpi_rows      = {row_map[k] for k, _, _, t in _ROWS if t == "kpi"}
+    subtotal_rows = {row_map[k] for k, _, _, t in _ROWS if t == "subtotal"}
+    pct_rows      = {row_map[k] for k in pct_keys}
+
+    # Header row 2
+    for cell in ws[2]:
+        cell.fill = HEADER_FILL
+        cell.font = WHITE_BOLD
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws["A2"].font = TITLE_FONT
+    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+    ws["A3"].font = Font(size=9, italic=True, color="666666")
+    ws["A3"].alignment = Alignment(horizontal="left", vertical="center")
+
+    max_row = max(row_map.values())
+    for rr in range(2, max_row + 1):
+        ws.row_dimensions[rr].height = ROW_HEIGHT
+
+    ALL_COLS = Q_COLS + [TOTAL_COL]
+    n_cols = len(ALL_COLS) + 1  # A + Q1-Q4 + Total
+
+    for rr in range(4, max_row + 1):
+        label_cell = ws.cell(row=rr, column=1)
+        key = next((k for k, v in row_map.items() if v == rr), None)
+        indent = key_to_indent.get(key, 0) if key else 0
+        rtype = key_to_rtype.get(key, "section") if key else "section"
+
+        if rtype == "major":
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).fill = SECTION_FILL
+            label_cell.font = Font(bold=True, size=10)
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=0)
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).border = MEDIUM_TOP_BORDER
+        elif rtype == "kpi":
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).fill = KPI_FILL
+            label_cell.font = Font(bold=True, size=10) if rr not in pct_rows else Font(italic=True, size=9)
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=0)
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).border = MEDIUM_TOP_BORDER
+        elif rtype == "subtotal":
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).fill = SUBSECTION_FILL
+            label_cell.font = Font(bold=True, size=9)
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            for c in range(1, n_cols + 1):
+                ws.cell(row=rr, column=c).border = THIN_TOP_BORDER
+        else:
+            label_cell.font = Font(size=9)
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=indent + 1)
+
+        for col_letter in ALL_COLS:
+            cell = ws[f"{col_letter}{rr}"]
+            cell.number_format = PERCENT_FORMAT if rr in pct_rows else MONEY_FORMAT
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.font = Font(size=9)
+
+        # Total column styling
+        ws[f"{TOTAL_COL}{rr}"].fill = TOTAL_FILL
+        if rr in major_rows | subtotal_rows | kpi_rows:
+            ws[f"{TOTAL_COL}{rr}"].font = BOLD
+
+    # Column widths
+    ws.column_dimensions["A"].width = 40
+    for col_letter in ALL_COLS:
+        ws.column_dimensions[col_letter].width = 16
+    ws.freeze_panes = "B4"
+    ws.sheet_view.showGridLines = False
