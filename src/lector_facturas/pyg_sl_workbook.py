@@ -113,6 +113,8 @@ class PygSlDataBundle:
     fx_rate_rows: tuple[FxRateAuditRow, ...] = field(default_factory=tuple)
     otros_ingresos_by_period: dict[str, Decimal] = field(default_factory=dict)
     diferencias_divisas_by_period: dict[str, Decimal] = field(default_factory=dict)
+    # scope → {yyyymm → gross_amount}: royalties desglosados por región (uk, us)
+    royalties_by_scope: dict[str, dict[str, Decimal]] = field(default_factory=dict)
 
 
 def default_output_path(root: Path, year: int) -> Path:
@@ -203,6 +205,15 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             FROM invoices.artist_royalties_monthly_summary
             WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s AND summary_scope = 'total'
             ORDER BY period_yyyymm
+            """,
+            {"company": COMPANY_CODE, "period": f"{year}%"},
+        ).fetchall()
+        royalties_scope = conn.execute(
+            """
+            SELECT period_yyyymm, summary_scope, gross_amount
+            FROM invoices.artist_royalties_monthly_summary
+            WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s AND summary_scope IN ('uk', 'us')
+            ORDER BY period_yyyymm, summary_scope
             """,
             {"company": COMPANY_CODE, "period": f"{year}%"},
         ).fetchall()
@@ -354,7 +365,11 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
     service_rows = _dedupe_stage_rows(service_rows)
     otros_ingresos_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in otros_ingresos}
     diferencias_divisas_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in diferencias_divisas}
-    return PygSlDataBundle(year, datetime.now(UTC), tuple(shopify_rows), tuple(marketplace_rows), tuple(rappel_rows), tuple(supplies_rows), tuple(service_rows), tuple(expense_rows), payment_fee_rows, provider_rows, tuple(DEFAULT_SHOPIFY_MARKETS), otros_ingresos_by_period=otros_ingresos_by_period, diferencias_divisas_by_period=diferencias_divisas_by_period)
+    royalties_by_scope: dict[str, dict[str, Decimal]] = {}
+    for row in royalties_scope:
+        scope = str(row["summary_scope"])
+        royalties_by_scope.setdefault(scope, {})[str(row["period_yyyymm"])] = _decimal(row["gross_amount"])
+    return PygSlDataBundle(year, datetime.now(UTC), tuple(shopify_rows), tuple(marketplace_rows), tuple(rappel_rows), tuple(supplies_rows), tuple(service_rows), tuple(expense_rows), payment_fee_rows, provider_rows, tuple(DEFAULT_SHOPIFY_MARKETS), otros_ingresos_by_period=otros_ingresos_by_period, diferencias_divisas_by_period=diferencias_divisas_by_period, royalties_by_scope=royalties_by_scope)
 
 
 def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
@@ -382,7 +397,15 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
         + payment_fee_fx_rows
     )
     generated_at_utc = bundle.generated_at.astimezone(UTC) if bundle.generated_at.tzinfo else bundle.generated_at.replace(tzinfo=UTC)
-    _sheet(wb, "params", ["key", "value"], [["entity", COMPANY_CODE], ["year", bundle.year], ["generated_at_utc", generated_at_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")]])
+    _sheet(wb, "params", ["key", "value"], [
+        ["entity", COMPANY_CODE],
+        ["year", bundle.year],
+        ["generated_at_utc", generated_at_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")],
+        ["pct_staff_uk", 0.20],
+        ["pct_staff_us", 0.15],
+        ["pct_admin_uk", 0.20],
+        ["pct_admin_us", 0.15],
+    ])
     _sheet(wb, "i-shopify-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], shopify_sheet_rows)
     _sheet(wb, "i-marketplaces-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], marketplace_sheet_rows)
     _sheet(wb, "i-rappels-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], rappel_sheet_rows)
@@ -392,6 +415,12 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
     _sheet(wb, "g-payment-fees-sl", ["yyyymm", "entity", "supplier_code", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source"], payment_fee_sheet_rows)
     _sheet(wb, "fx-rates", ["yyyymm", "rate_date", "currency_original", "reporting_currency", "reference_rate", "fx_rate", "source"], [[r.yyyymm, r.rate_date, r.currency_original, r.reporting_currency, float(r.reference_rate), float(r.fx_rate), r.source] for r in fx_rate_rows])
     _sheet(wb, "catalog-sl", ["supplier_code", "supplier_name", "current_folder", "destination_path", "notes"], [[r.supplier_code, r.supplier_name, r.current_folder, r.destination_path, r.notes] for r in bundle.provider_catalog_rows])
+    # Royalties desglosados por scope (uk, us) para shared services
+    royalties_scope_rows: list[list[Any]] = []
+    for scope, by_period in bundle.royalties_by_scope.items():
+        for yyyymm, amount in sorted(by_period.items()):
+            royalties_scope_rows.append([yyyymm, scope, float(amount)])
+    _sheet(wb, "i-royalties-scope-sl", ["yyyymm", "scope", "gross_amount"], royalties_scope_rows)
     _main_sheet(wb, bundle)
     _count_sheet_sl(wb, bundle)
     _add_back_links(wb)
@@ -422,11 +451,13 @@ def _sheet(wb: Workbook, title: str, headers: list[str], rows: list[list[Any]]) 
 
 def _add_back_links(wb: Workbook) -> None:
     detail_sheets = (
+        "shared-services",
         "i-shopify-sl",
         "i-marketplaces-sl",
         "i-rappels-sl",
         "i-supplies-sl",
         "i-services-sl",
+        "i-royalties-scope-sl",
         "g-expenses-sl",
         "g-payment-fees-sl",
         "fx-rates",
@@ -810,6 +841,144 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> None:
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.outlinePr.summaryBelow = False
     ws.sheet_properties.outlinePr.summaryRight = False
+    _shared_services_sheet(ws.parent, bundle, pos)
+
+
+def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str, int]) -> None:
+    """Pestaña de shared services: ajuste de gasto intracompañía SL → LTD (UK) e INC (US)."""
+    ws = wb.create_sheet("shared-services")
+
+    # Fila 1 (oculta): yyyymm · Fila 2: nombres de mes
+    for idx, yyyymm in enumerate(month_keys(bundle.year), start=4):
+        ws.cell(row=1, column=idx, value=yyyymm)
+        ws.cell(row=2, column=idx, value=MONTH_NAMES_ES[idx - 4])
+    ws["P1"] = "TOTAL"
+    ws["P2"] = "Total"
+    ws["A2"] = f"Shared Services SL → LTD / INC {bundle.year}"
+    ws.merge_cells("A2:C2")
+
+    # Posiciones de fila
+    LTD_HDR = 4
+    LTD_MK  = 5
+    LTD_RY  = 6
+    LTD_ST  = 7
+    LTD_AD  = 8
+    LTD_EUR = 9
+    LTD_GBP = 10
+    INC_HDR = 12
+    INC_MK  = 13
+    INC_RY  = 14
+    INC_ST  = 15
+    INC_AD  = 16
+    INC_EUR = 17
+    INC_USD = 18
+
+    # Etiquetas
+    ws[f"A{LTD_HDR}"] = "LTD (UK)"
+    ws[f"A{LTD_MK}"]  = "Marketing"
+    ws[f"A{LTD_RY}"]  = "Royalties"
+    ws[f"A{LTD_ST}"]  = "Staff"
+    ws[f"A{LTD_AD}"]  = "Administrativos"
+    ws[f"A{LTD_EUR}"] = "TOTAL EUR"
+    ws[f"A{LTD_GBP}"] = "TOTAL GBP"
+    ws[f"A{INC_HDR}"] = "INC (US)"
+    ws[f"A{INC_MK}"]  = "Marketing"
+    ws[f"A{INC_RY}"]  = "Royalties"
+    ws[f"A{INC_ST}"]  = "Staff"
+    ws[f"A{INC_AD}"]  = "Administrativos"
+    ws[f"A{INC_EUR}"] = "TOTAL EUR"
+    ws[f"A{INC_USD}"] = "TOTAL USD"
+
+    st_row = pos["staff_header"]
+    ad_row = pos["administration_header"]
+
+    def p(key: str) -> str:
+        """VLOOKUP al sheet params para obtener el parámetro configurable."""
+        return f'VLOOKUP("{key}",params!$A:$B,2,0)'
+
+    for col in [get_column_letter(i) for i in range(4, 16)]:
+        # ── LTD (UK) ──────────────────────────────────────────────────────────
+        # Marketing UK: gasto real de g-expenses-sl con detail="uk"
+        ws[f"{col}{LTD_MK}"] = (
+            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$1,"
+            f"'g-expenses-sl'!$C:$C,\"marketing\",'g-expenses-sl'!$F:$F,\"uk\")"
+        )
+        # Royalties UK: gasto real por scope desde i-royalties-scope-sl
+        ws[f"{col}{LTD_RY}"] = (
+            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$1,"
+            f"'i-royalties-scope-sl'!$B:$B,\"uk\")"
+        )
+        # Staff UK: % configurable del total staff SL
+        ws[f"{col}{LTD_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_uk')}"
+        # Admin UK: % configurable del total admin SL
+        ws[f"{col}{LTD_AD}"] = f"='P&G-SL'!{col}{ad_row}*{p('pct_admin_uk')}"
+        # Totales LTD
+        ws[f"{col}{LTD_EUR}"] = f"=SUM({col}{LTD_MK}:{col}{LTD_AD})"
+        ws[f"{col}{LTD_GBP}"] = (
+            f"=IFERROR({col}{LTD_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$1,"
+            f"'fx-rates'!$C:$C,\"GBP\",'fx-rates'!$D:$D,\"EUR\"),{col}{LTD_EUR})"
+        )
+
+        # ── INC (US) ──────────────────────────────────────────────────────────
+        ws[f"{col}{INC_MK}"] = (
+            f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$1,"
+            f"'g-expenses-sl'!$C:$C,\"marketing\",'g-expenses-sl'!$F:$F,\"us\")"
+        )
+        ws[f"{col}{INC_RY}"] = (
+            f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$1,"
+            f"'i-royalties-scope-sl'!$B:$B,\"us\")"
+        )
+        ws[f"{col}{INC_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_us')}"
+        ws[f"{col}{INC_AD}"] = f"='P&G-SL'!{col}{ad_row}*{p('pct_admin_us')}"
+        ws[f"{col}{INC_EUR}"] = f"=SUM({col}{INC_MK}:{col}{INC_AD})"
+        ws[f"{col}{INC_USD}"] = (
+            f"=IFERROR({col}{INC_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$1,"
+            f"'fx-rates'!$C:$C,\"USD\",'fx-rates'!$D:$D,\"EUR\"),{col}{INC_EUR})"
+        )
+
+    # Columna TOTAL (P)
+    for row in (LTD_MK, LTD_RY, LTD_ST, LTD_AD, LTD_EUR, LTD_GBP,
+                INC_MK, INC_RY, INC_ST, INC_AD, INC_EUR, INC_USD):
+        ws[f"P{row}"] = f"=SUM(D{row}:O{row})"
+
+    # ── Estilos ───────────────────────────────────────────────────────────────
+    ws.row_dimensions[1].hidden = True
+    for row_idx in range(2, INC_USD + 1):
+        ws.row_dimensions[row_idx].height = ROW_HEIGHT
+
+    # Cabecera fila 2
+    for cell in ws[2]:
+        cell.fill = HEADER_FILL
+        cell.font = WHITE_BOLD
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws["A2"].font = TITLE_FONT
+    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+
+    # Secciones LTD / INC
+    for hdr_row in (LTD_HDR, INC_HDR):
+        for col in range(1, 18):
+            ws.cell(row=hdr_row, column=col).fill = SECTION_FILL
+        ws.cell(row=hdr_row, column=1).font = BOLD
+
+    # Filas de total
+    for total_row in (LTD_EUR, LTD_GBP, INC_EUR, INC_USD):
+        for col in range(1, 18):
+            ws.cell(row=total_row, column=col).fill = SUBSECTION_FILL
+        ws.cell(row=total_row, column=1).font = BOLD
+
+    # Formato numérico (EUR / GBP / USD → MONEY_FORMAT)
+    for row in range(3, INC_USD + 1):
+        for col in range(4, 18):
+            ws.cell(row=row, column=col).number_format = MONEY_FORMAT
+
+    # Anchos de columna
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["P"].width = 14
+    for idx in range(4, 16):
+        ws.column_dimensions[get_column_letter(idx)].width = 14
+
+    ws.freeze_panes = "D4"
+    ws.sheet_view.showGridLines = False
 
 
 def _fill_month_formulas(
