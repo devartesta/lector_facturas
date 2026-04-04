@@ -381,11 +381,7 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     )
 
     # ── Derived rows (formulas referencing other cells in this sheet) ────────
-    ws[f"{col}{rm['turnover']}"] = (
-        f"={col}{rm['product_sales']}+{col}{rm['marketplaces']}"
-        f"+{col}{rm['services']}+{col}{rm['rappels']}+{col}{rm['supplies']}"
-        f"+{col}{rm['otros_ingresos']}"
-    )
+    ws[f"{col}{rm['turnover']}"] = f"={col}{rm['product_sales']}+{col}{rm['services']}+{col}{rm['otros_ingresos']}"
     ws[f"{col}{rm['cogs']}"] = (
         f"={col}{rm['manufacturing']}+{col}{rm['logistics']}"
         f"+{col}{rm['royalties']}+{col}{rm['payment_fees']}"

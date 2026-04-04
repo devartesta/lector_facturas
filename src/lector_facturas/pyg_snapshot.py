@@ -153,8 +153,13 @@ def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSet
         for row in bundle.service_rows:
             if row.yyyymm in months:
                 code = f"service_{row.line_item.lower()}"
-                _add_amount(base_maps, code, row.yyyymm, _to_currency(fx_service, row.amount_net, row.currency, SL_REPORTING_CURRENCY, row.yyyymm))
-                _add_amount(eur_maps, code, row.yyyymm, _to_currency(fx_service, row.amount_net, row.currency, "EUR", row.yyyymm))
+                base_value = _to_currency(fx_service, row.amount_net, row.currency, SL_REPORTING_CURRENCY, row.yyyymm)
+                eur_value = _to_currency(fx_service, row.amount_net, row.currency, "EUR", row.yyyymm)
+                _add_amount(base_maps, code, row.yyyymm, base_value)
+                _add_amount(eur_maps, code, row.yyyymm, eur_value)
+                if row.line_item not in {"Ltd", "Inc"} and row.detail != "renting_cnc":
+                    _add_amount(base_maps, "services_external", row.yyyymm, base_value)
+                    _add_amount(eur_maps, "services_external", row.yyyymm, eur_value)
         for row in bundle.expense_rows:
             if row.yyyymm not in months:
                 continue
@@ -297,7 +302,7 @@ def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSet
             "manufacturing_pct": ("ratio", "manufacturing", "product_sales"),
             "logistics": ("sum_children",),
             "logistics_pct": ("ratio", "logistics", "product_sales"),
-            "royalties": ("sum_children",),
+            "royalties": ("sum_codes", ("royalties_total",)),
             "royalties_pct": ("ratio", "royalties", "product_sales"),
             "payment_fees": ("sum_children",),
             "payment_fees_pct": ("ratio", "payment_fees", "product_sales"),
@@ -650,7 +655,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _set_amount(base_maps, "shopify_ltd", month, load("product_sales", month, "ltd"))
         _set_amount(base_maps, "shopify_inc", month, load("product_sales", month, "inc"))
         _set_amount(base_maps, "marketplaces", month, load("marketplaces", month, "sl"))
-        _set_amount(base_maps, "services", month, load("service_hannun", month, "sl"))
+        _set_amount(base_maps, "services", month, load("services_external", month, "sl"))
         _set_amount(base_maps, "rappels", month, load("rappels", month, "sl"))
         _set_amount(base_maps, "supplies", month, load("supplies", month, "sl"))
         _set_amount(base_maps, "otros_ingresos", month, load("otros_ingresos_group", month, "sl") + load("otros_ingresos_group", month, "ltd") + load("otros_ingresos_group", month, "inc"))
@@ -662,7 +667,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         )
         for key in ("logistics", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"):
             _set_amount(base_maps, key, month, load(key, month, "sl") + load(key, month, "ltd") + load(key, month, "inc"))
-        _set_amount(base_maps, "royalties", month, load("royalties", month, "sl"))
+        _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
     eur_maps = {key: dict(values) for key, values in base_maps.items()}
 
     row_defs = [
