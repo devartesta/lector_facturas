@@ -38,9 +38,9 @@ def test_build_pyg_ltd_workbook_creates_expected_sheets_and_formulas(tmp_path: P
     assert ws["A4"].value == "Turnover"
     assert ws["A7"].value.strip() == "GB"
     assert ws["D6"].value == "=SUM(D7:D7)"
-    assert ws["A12"].value.strip() == "ARTLINK"
-    assert ws["A13"].value.strip() == "JONDO"
-    assert ws["D12"].value == "=SUMIFS('g-expenses-ltd'!$K:$K,'g-expenses-ltd'!$A:$A,D$1,'g-expenses-ltd'!$D:$D,\"manufacturing\",'g-expenses-ltd'!$E:$E,TRIM($A12))"
-    assert "% Manufacturing / sales" in str(ws["A15"].value)
-    assert ws["D15"].value == '=IFERROR(D11/D5,0)'
-    assert ws["A25"].value == "GROSS MARGIN (SALES-MANUFACTURING)"
+    assert ws["A14"].value.strip() == "ARTLINK"
+    assert ws["A15"].value.strip() == "JONDO"
+    assert ws["D14"].value == "=SUMIFS('g-expenses-ltd'!$K:$K,'g-expenses-ltd'!$A:$A,D$1,'g-expenses-ltd'!$D:$D,\"manufacturing\",'g-expenses-ltd'!$E:$E,TRIM($A14))"
+    assert "% Manufacturing / sales" in str(ws["A18"].value)
+    assert ws["D18"].value == '=IFERROR(D13/D5,0)'
+    assert ws["A28"].value == "GROSS MARGIN (SALES-MANUFACTURING)"

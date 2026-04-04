@@ -200,11 +200,52 @@ class PygConsistencyTests(unittest.TestCase):
 
         rows = {row.code: row for row in snapshot.rows}
         self.assertEqual(rows["services"].values_eur[0], Decimal("4"))
+        self.assertEqual(rows["services"].level, 1)
+        self.assertEqual(rows["otros_ingresos"].label, "Uncategorized income")
+        self.assertEqual(rows["otros_gastos_group"].label, "Uncategorized Expenses")
+        self.assertEqual(rows["diferencias_divisas_group"].label, "Currency Adjustment")
         self.assertEqual(rows["royalties"].values_eur[0], Decimal("10"))
         self.assertEqual(rows["administration"].values_eur[0], Decimal("12"))
         self.assertEqual(rows["shopify"].values_eur[0], Decimal("170"))
         self.assertEqual(rows["product_sales"].values_eur[0], Decimal("177"))
         self.assertEqual(rows["turnover"].values_eur[0], Decimal("184"))
+
+    def test_simple_company_snapshot_keeps_income_hierarchy_with_services_bucket(self) -> None:
+        bundle = PygIncDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            sales_rows=(),
+            expense_rows=(),
+            payment_fee_rows=(),
+            provider_catalog_rows=(),
+            otros_ingresos_by_period={"202601": Decimal("11")},
+        )
+
+        snapshot = _build_simple_company_snapshot(
+            company="inc",
+            reporting_currency="USD",
+            months=["202601"],
+            database_url="postgres://ignored",
+            settings=None,
+            collect_bundle=lambda **_: bundle,
+            expense_mapper=map_inc_expense_subcategory,
+            sales_markets=("US",),
+            manufacturing_lines=("JONDO",),
+            logistics_lines=("TGI",),
+            payment_fee_lines=("SHOPIFY",),
+            shared_service_lines=("SHAREDSERVICESSL",),
+            administration_lines=("CONTINUUM",),
+            technology_lines=("REVER",),
+            file_name="pyg_inc_2026.xlsx",
+        )
+
+        rows = {row.code: row for row in snapshot.rows}
+        self.assertEqual(rows["services"].label, "Services")
+        self.assertEqual(rows["services"].level, 1)
+        self.assertEqual(rows["services"].values_eur[0], Decimal("0"))
+        self.assertEqual(rows["otros_ingresos_group"].label, "Uncategorized income")
+        self.assertEqual(rows["otros_ingresos"].label, "Uncategorized income")
+        self.assertEqual(rows["turnover"].values_eur[0], Decimal("11"))
 
     def test_consolidated_workbook_turnover_formula_does_not_double_count_product_sales_components(self) -> None:
         bundle = ConsolidatedPygBundle(year=2026, generated_at=datetime(2026, 4, 4, 12, 0, 0))

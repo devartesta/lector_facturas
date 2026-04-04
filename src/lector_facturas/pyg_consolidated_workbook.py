@@ -267,10 +267,10 @@ _ROWS: list[tuple[str, str, int, str]] = [
     ("product_sales",           "Product sales",                             1, "subtotal"),
     ("shopify",                 "Shopify",                                   2, "section"),
     ("marketplaces",            "Marketplaces",                              2, "section"),
-    ("services",                "Services",                                  2, "section"),
+    ("services",                "Services",                                  1, "subtotal"),
     ("rappels",                 "Rappels",                                   2, "section"),
     ("supplies",                "Supplies",                                  2, "section"),
-    ("otros_ingresos",          "Otros ingresos",                            2, "section"),
+    ("otros_ingresos",          "Uncategorized income",                      1, "section"),
     ("expenses",                "EXPENSES",                                  0, "major"),
     ("cogs",                    "COGS",                                      1, "subtotal"),
     ("manufacturing",           "Manufacturing",                             2, "section"),
@@ -278,18 +278,18 @@ _ROWS: list[tuple[str, str, int, str]] = [
     ("royalties",               "Royalties",                                 2, "section"),
     ("payment_fees",            "Payment fees",                              2, "section"),
     ("gross_margin",            "GROSS MARGIN (SALES-MANUFACTURING)",        0, "kpi"),
-    ("gross_margin_pct",        "% GROSS MARGIN",                           0, "kpi"),
-    ("contributive_margin",     "CONTRIBUTIVE MARGIN (TURNOVER-COGS)",       0, "kpi"),
-    ("contributive_margin_pct", "% CONTRIBUTIVE MARGIN",                    0, "kpi"),
+    ("gross_margin_pct",        "% gross margin",                           0, "kpi"),
+    ("contributive_margin",     "Contributive margin (product sales-COGS)", 0, "kpi"),
+    ("contributive_margin_pct", "% contributive margin",                    0, "kpi"),
     ("opex",                    "OPEX",                                      1, "subtotal"),
     ("marketing",               "Marketing",                                 2, "section"),
     ("staff",                   "Staff",                                     2, "section"),
     ("administration",          "Administration",                            2, "section"),
     ("technology",              "Technology",                                2, "section"),
-    ("otros_gastos",            "Otros gastos",                              2, "section"),
-    ("diferencias_divisas",     "Diferencias divisas",                       1, "section"),
+    ("otros_gastos",            "Uncategorized Expenses",                    2, "section"),
+    ("diferencias_divisas",     "Currency Adjustment",                       1, "section"),
     ("profit",                  "PROFIT",                                    0, "kpi"),
-    ("profit_pct",              "% Profit / product sales",                  0, "kpi"),
+    ("profit_pct",              "% profit / product sales",                  0, "kpi"),
 ]
 
 
@@ -399,7 +399,7 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     ws[f"{col}{rm['gross_margin_pct']}"] = (
         f"=IFERROR({col}{rm['gross_margin']}/{col}{rm['product_sales']},0)"
     )
-    ws[f"{col}{rm['contributive_margin']}"] = f"={col}{rm['turnover']}-{col}{rm['cogs']}"
+    ws[f"{col}{rm['contributive_margin']}"] = f"={col}{rm['product_sales']}-{col}{rm['cogs']}"
     ws[f"{col}{rm['contributive_margin_pct']}"] = (
         f"=IFERROR({col}{rm['contributive_margin']}/{col}{rm['product_sales']},0)"
     )

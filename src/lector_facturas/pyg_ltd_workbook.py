@@ -51,6 +51,7 @@ SUBTOTAL_FILL = PatternFill("solid", fgColor="F3F6F8")
 WHITE_BOLD = Font(color="FFFFFF", bold=True)
 BOLD = Font(bold=True)
 TITLE_FONT = Font(size=12, bold=True, color="FFFFFF")
+INFO_FONT = Font(size=9, italic=True, color="666666")
 THIN_TOP_BORDER = Border(top=Side(style="thin", color="A6A6A6"))
 MEDIUM_TOP_BORDER = Border(top=Side(style="medium", color="7F7F7F"))
 
@@ -476,7 +477,8 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     for idx, market in enumerate(DEFAULT_SALES_MARKETS):
         ws[f"A{row + idx}"] = f"      {market}"
     row += len(sales_rows)
-    pos["otros_ingresos"] = row; ws[f"A{row}"] = "  Otros ingresos"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["services"] = row; ws[f"A{row}"] = "  Services"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["otros_ingresos"] = row; ws[f"A{row}"] = "  Uncategorized income"; ws[f"A{row}"].font = BOLD; row += 2
 
     pos["expenses"] = row; ws[f"A{row}"] = "Expenses"; ws[f"A{row}"].font = BOLD; row += 1
     pos["cogs"] = row; ws[f"A{row}"] = "  COGS"; ws[f"A{row}"].font = BOLD; row += 1
@@ -486,24 +488,24 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(manufacturing_rows)
     pos["marcos_consumed"] = row; ws[f"A{row}"] = "      Consumo marcos"; row += 1
-    pos["manufacturing_pct"] = row; ws[f"A{row}"] = "    % Manufacturing / sales"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["manufacturing_pct"] = row; ws[f"A{row}"] = "    % Manufacturing / sales"; ws[f"A{row}"].font = INFO_FONT; row += 1
     pos["logistics"] = row; ws[f"A{row}"] = "    Logistics"; ws[f"A{row}"].font = BOLD; row += 1
     logistics_rows = list(range(row, row + len(DEFAULT_LOGISTICS_LINES)))
     for idx, supplier in enumerate(DEFAULT_LOGISTICS_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(logistics_rows)
-    pos["logistics_pct"] = row; ws[f"A{row}"] = "    % Logistics / sales"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["logistics_pct"] = row; ws[f"A{row}"] = "    % Logistics / sales"; ws[f"A{row}"].font = INFO_FONT; row += 1
     pos["payment_fees"] = row; ws[f"A{row}"] = "    Payment fees"; ws[f"A{row}"].font = BOLD; row += 1
     payment_fee_rows = list(range(row, row + len(DEFAULT_PAYMENT_FEE_LINES)))
     for idx, supplier in enumerate(DEFAULT_PAYMENT_FEE_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(payment_fee_rows) + 1
-    pos["payment_fees_pct"] = row; ws[f"A{row}"] = "    % Payment fees / sales"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["payment_fees_pct"] = row; ws[f"A{row}"] = "    % Payment fees / sales"; ws[f"A{row}"].font = INFO_FONT; row += 2
 
     pos["gross_margin"] = row; ws[f"A{row}"] = "GROSS MARGIN (SALES-MANUFACTURING)"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["gross_margin_pct"] = row; ws[f"A{row}"] = "% GROSS MARGIN"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["contributive_margin"] = row; ws[f"A{row}"] = "CONTRIBUTIVE MARGIN (TURNOVER-COGS)"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["contributive_margin_pct"] = row; ws[f"A{row}"] = "% CONTRIBUTIVE MARGIN"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["gross_margin_pct"] = row; ws[f"A{row}"] = "% gross margin"; ws[f"A{row}"].font = INFO_FONT; row += 1
+    pos["contributive_margin"] = row; ws[f"A{row}"] = "Contributive margin (product sales-COGS)"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["contributive_margin_pct"] = row; ws[f"A{row}"] = "% contributive margin"; ws[f"A{row}"].font = INFO_FONT; row += 2
 
     pos["opex"] = row; ws[f"A{row}"] = "  Opex"; ws[f"A{row}"].font = BOLD; row += 1
     pos["shared_services"] = row; ws[f"A{row}"] = "    Shared services"; ws[f"A{row}"].font = BOLD; row += 1
@@ -521,10 +523,10 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     for idx, supplier in enumerate(DEFAULT_TECH_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
     row += len(technology_rows)
-    pos["otros_gastos"] = row; ws[f"A{row}"] = "    Otros gastos"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Diferencias divisas"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["otros_gastos"] = row; ws[f"A{row}"] = "    Uncategorized Expenses"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["diferencias_divisas"] = row; ws[f"A{row}"] = "  Currency Adjustment"; ws[f"A{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / product sales"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["profit_pct"] = row; ws[f"A{row}"] = "% profit / product sales"; ws[f"A{row}"].font = INFO_FONT; row += 2
     pos["stock_inicial"] = row; ws[f"A{row}"] = "Stock inicial marcos"; ws[f"A{row}"].font = BOLD; row += 1
     pos["stock_final"] = row; ws[f"A{row}"] = "Stock final marcos"; ws[f"A{row}"].font = BOLD
 
@@ -623,7 +625,8 @@ def _fill_ltd_formulas(
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-shopify-ltd\'!$I:$I,\'i-shopify-ltd\'!$A:$A,{col}$1,\'i-shopify-ltd\'!$C:$C,TRIM($A{row}))'
         ws[f"{col}{pos['shopify']}"] = f"=SUM({col}{sales_rows[0]}:{col}{sales_rows[-1]})"
         ws[f"{col}{pos['product_sales']}"] = f"={col}{pos['shopify']}"
-        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['otros_ingresos']}"
+        ws[f"{col}{pos['services']}"] = "=0"
+        ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['services']}+{col}{pos['otros_ingresos']}"
 
         for row in manufacturing_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'g-expenses-ltd\'!$K:$K,\'g-expenses-ltd\'!$A:$A,{col}$1,\'g-expenses-ltd\'!$D:$D,"manufacturing",\'g-expenses-ltd\'!$E:$E,TRIM($A{row}))'
@@ -647,7 +650,7 @@ def _fill_ltd_formulas(
         ws[f"{col}{pos['cogs']}"] = f"={col}{pos['manufacturing']}+{col}{pos['logistics']}+{col}{pos['payment_fees']}"
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
-        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}"
+        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['cogs']}"
         ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['shared_services']}"] = f"=SUM({col}{shared_service_rows[0]}:{col}{shared_service_rows[-1]})"
         ws[f"{col}{pos['administration']}"] = f"=SUM({col}{administration_rows[0]}:{col}{administration_rows[-1]})"
@@ -749,7 +752,8 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     for idx, market in enumerate(DEFAULT_SALES_MARKETS):
         lbl("C", row + idx, market)
     row += len(DEFAULT_SALES_MARKETS)
-    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 2
+    pos["services"] = row; lbl("B", row, "Services", bold=True); row += 1
+    pos["otros_ingresos"] = row; lbl("B", row, "Uncategorized income", bold=True); row += 2
 
     pos["expenses"] = row; lbl("A", row, "Expenses", bold=True); row += 1
     pos["cogs"] = row; lbl("B", row, "COGS", bold=True); row += 1
@@ -790,14 +794,17 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     for idx, supplier in enumerate(DEFAULT_TECH_LINES):
         lbl("C", row + idx, supplier)
     row += len(DEFAULT_TECH_LINES)
-    pos["otros_gastos"] = row; lbl("C", row, "Otros gastos", bold=True); row += 1
-    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 1
+    pos["otros_gastos"] = row; lbl("C", row, "Uncategorized Expenses", bold=True); row += 1
+    pos["diferencias_divisas"] = row; lbl("B", row, "Currency Adjustment", bold=True); row += 1
     max_data_row = row - 1
 
     # Write counts
     for r, market in zip(sales_rows_list, DEFAULT_SALES_MARKETS):
         write_counts(r, lambda yyyymm, m=market: sales_by_market[m][yyyymm])
         leaf_rows.append(r)
+
+    write_counts(pos["services"], lambda _yyyymm: 0)
+    leaf_rows.append(pos["services"])
 
     write_counts(pos["otros_ingresos"], lambda yyyymm: 1 if yyyymm in bundle.otros_ingresos_by_period else 0)
     leaf_rows.append(pos["otros_ingresos"])
@@ -840,7 +847,7 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     # Aggregate rows
     write_sum_rows(pos["shopify_header"], sales_rows_list)
     write_sum_rows(pos["product_sales"], sales_rows_list)
-    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["otros_ingresos"]])
+    write_sum_rows(pos["turnover"], [pos["product_sales"], pos["services"], pos["otros_ingresos"]])
     write_sum_rows(pos["manufacturing_header"], manufacturing_rows_list)
     write_sum_rows(pos["logistics_header"], logistics_rows_list)
     write_sum_rows(pos["payment_fees_header"], payment_fee_rows_list)
@@ -853,7 +860,7 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
 
     # Styling
     major_rows = {pos["turnover"], pos["expenses"]}
-    subtotal_rows = {pos["product_sales"], pos["cogs"], pos["opex"]}
+    subtotal_rows = {pos["product_sales"], pos["services"], pos["cogs"], pos["opex"]}
     section_rows = {
         pos["shopify_header"], pos["manufacturing_header"], pos["logistics_header"],
         pos["payment_fees_header"], pos["shared_services_header"], pos["administration_header"],
@@ -889,7 +896,7 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
 
 def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int]) -> None:
     major_rows = {pos["turnover"], pos["expenses"], pos["gross_margin"], pos["contributive_margin"], pos["profit"]}
-    subtotal_rows = {pos["product_sales"], pos["cogs"], pos["opex"]}
+    subtotal_rows = {pos["product_sales"], pos["services"], pos["cogs"], pos["opex"]}
     section_rows = {pos["shopify"], pos["manufacturing"], pos["logistics"], pos["payment_fees"], pos["shared_services"], pos["administration"], pos["technology"], pos["otros_gastos"], pos["otros_ingresos"], pos["diferencias_divisas"]}
     percent_rows = {pos["manufacturing_pct"], pos["logistics_pct"], pos["payment_fees_pct"], pos["gross_margin_pct"], pos["contributive_margin_pct"], pos["profit_pct"]}
 
@@ -913,7 +920,7 @@ def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int]) -> Non
                     cell.font = BOLD
             elif row_idx in percent_rows:
                 if col_idx == 1:
-                    cell.font = Font(italic=True, color="666666")
+                    cell.font = INFO_FONT
         if row_idx in detail_rows:
             ws.row_dimensions[row_idx].outlineLevel = 3
             ws.row_dimensions[row_idx].hidden = True

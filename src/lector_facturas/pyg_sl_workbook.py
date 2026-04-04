@@ -46,6 +46,7 @@ PERCENT_ROW_FILL = PatternFill("solid", fgColor="FAFAFA")
 WHITE_BOLD = Font(color="FFFFFF", bold=True)
 BOLD = Font(bold=True)
 TITLE_FONT = Font(size=12, bold=True, color="FFFFFF")
+INFO_FONT = Font(size=9, italic=True, color="666666")
 THIN_TOP_BORDER = Border(top=Side(style="thin", color="A6A6A6"))
 MEDIUM_TOP_BORDER = Border(top=Side(style="medium", color="7F7F7F"))
 
@@ -659,7 +660,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     for idx, code in enumerate(service_codes):
         ws[f"C{row + idx}"] = code
     row += len(service_codes)
-    pos["otros_ingresos"] = row; ws[f"B{row}"] = "Otros ingresos"; ws[f"B{row}"].font = BOLD; row += 2
+    pos["otros_ingresos"] = row; ws[f"B{row}"] = "Uncategorized income"; ws[f"B{row}"].font = BOLD; row += 2
 
     pos["expenses"] = row; ws[f"A{row}"] = "Expenses"; ws[f"A{row}"].font = BOLD; row += 1
     pos["cogs"] = row; ws[f"B{row}"] = "COGS"; ws[f"B{row}"].font = BOLD; row += 1
@@ -668,21 +669,21 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     for idx, supplier in enumerate(groups["manufacturing"]):
         ws[f"C{row + idx}"] = supplier
     row += len(manufacturing_rows)
-    pos["manufacturing_pct"] = row; ws[f"C{row}"] = "% Manufacturing / sales"; ws[f"C{row}"].font = BOLD; row += 1
+    pos["manufacturing_pct"] = row; ws[f"C{row}"] = "% Manufacturing / sales"; ws[f"C{row}"].font = INFO_FONT; row += 1
 
     pos["logistics_header"] = row; ws[f"C{row}"] = "Logistics (% sales)"; ws[f"C{row}"].font = BOLD; row += 1
     logistics_rows = list(range(row, row + len(groups["logistics"])))
     for idx, supplier in enumerate(groups["logistics"]):
         ws[f"C{row + idx}"] = supplier
     row += len(logistics_rows)
-    pos["logistics_pct"] = row; ws[f"C{row}"] = "% Logistics / sales"; ws[f"C{row}"].font = BOLD; row += 1
+    pos["logistics_pct"] = row; ws[f"C{row}"] = "% Logistics / sales"; ws[f"C{row}"].font = INFO_FONT; row += 1
 
     pos["royalties_header"] = row; ws[f"C{row}"] = "Royalties (% sales)"; ws[f"C{row}"].font = BOLD; row += 1
     pos["royalties_detail"] = row; ws[f"C{row}"] = "ROYALTIES"; row += 1
     pos["royalties_eu"] = row; ws[f"C{row}"] = "eu"; row += 1
     pos["royalties_uk"] = row; ws[f"C{row}"] = "uk"; row += 1
     pos["royalties_us"] = row; ws[f"C{row}"] = "us"; row += 1
-    pos["royalties_pct"] = row; ws[f"C{row}"] = "% Royalties / sales"; ws[f"C{row}"].font = BOLD; row += 1
+    pos["royalties_pct"] = row; ws[f"C{row}"] = "% Royalties / sales"; ws[f"C{row}"].font = INFO_FONT; row += 1
 
     pos["payment_fees_header"] = row; ws[f"C{row}"] = "Payment fees (% sales)"; ws[f"C{row}"].font = BOLD; row += 1
     payment_fee_codes = ["SHOPIFY", "PAYPAL"]
@@ -690,12 +691,12 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     for idx, code in enumerate(payment_fee_codes):
         ws[f"C{row + idx}"] = code
     row += len(payment_fee_rows)
-    pos["payment_fees_pct"] = row; ws[f"C{row}"] = "% Payment fees / sales"; ws[f"C{row}"].font = BOLD; row += 2
+    pos["payment_fees_pct"] = row; ws[f"C{row}"] = "% Payment fees / sales"; ws[f"C{row}"].font = INFO_FONT; row += 2
 
     pos["gross_margin"] = row; ws[f"A{row}"] = "GROSS MARGIN (SALES-MANUFACTURING)"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["gross_margin_pct"] = row; ws[f"A{row}"] = "% GROSS MARGIN"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["contributive_margin"] = row; ws[f"A{row}"] = "CONTRIBUTIVE MARGIN (TURNOVER-COGS)"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["contributive_margin_pct"] = row; ws[f"A{row}"] = "% CONTRIBUTIVE MARGIN"; ws[f"A{row}"].font = BOLD; row += 2
+    pos["gross_margin_pct"] = row; ws[f"A{row}"] = "% gross margin"; ws[f"A{row}"].font = INFO_FONT; row += 1
+    pos["contributive_margin"] = row; ws[f"A{row}"] = "Contributive margin (product sales-COGS)"; ws[f"A{row}"].font = BOLD; row += 1
+    pos["contributive_margin_pct"] = row; ws[f"A{row}"] = "% contributive margin"; ws[f"A{row}"].font = INFO_FONT; row += 2
 
     pos["opex"] = row; ws[f"B{row}"] = "Opex"; ws[f"B{row}"].font = BOLD; row += 1
     pos["marketing_header"] = row; ws[f"C{row}"] = "Marketing"; ws[f"C{row}"].font = BOLD; row += 1
@@ -733,10 +734,10 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     for idx, supplier in enumerate(groups["technology"]):
         ws[f"C{row + idx}"] = supplier
     row += len(technology_rows)
-    pos["otros_gastos"] = row; ws[f"C{row}"] = "Otros gastos"; ws[f"C{row}"].font = BOLD; row += 1
-    pos["diferencias_divisas"] = row; ws[f"B{row}"] = "Diferencias divisas"; ws[f"B{row}"].font = BOLD; row += 2
+    pos["otros_gastos"] = row; ws[f"C{row}"] = "Uncategorized Expenses"; ws[f"C{row}"].font = BOLD; row += 1
+    pos["diferencias_divisas"] = row; ws[f"B{row}"] = "Currency Adjustment"; ws[f"B{row}"].font = BOLD; row += 2
     pos["profit"] = row; ws[f"A{row}"] = "PROFIT"; ws[f"A{row}"].font = BOLD; row += 1
-    pos["profit_pct"] = row; ws[f"A{row}"] = "% Profit / product sales"; ws[f"A{row}"].font = BOLD
+    pos["profit_pct"] = row; ws[f"A{row}"] = "% profit / product sales"; ws[f"A{row}"].font = INFO_FONT
 
     for section_row in (pos["turnover"], pos["expenses"]):
         for col in range(1, 18):
@@ -1083,7 +1084,7 @@ def _fill_month_formulas(
         ws[f"{col}{pos['cogs']}"] = f"={col}{pos['manufacturing_header']}+{col}{pos['logistics_header']}+{col}{pos['royalties_header']}+{col}{pos['payment_fees_header']}"
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing_header']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
-        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['turnover']}-{col}{pos['cogs']}"
+        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['cogs']}"
         ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['marketing_meta']}"] = f"=SUM({col}{marketing_meta_detail_rows[0]}:{col}{marketing_meta_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_google']}"] = f"=SUM({col}{marketing_google_detail_rows[0]}:{col}{marketing_google_detail_rows[-1]})"
@@ -1226,7 +1227,7 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     for idx, code in enumerate(service_codes):
         lbl("C", row + idx, code)
     row += len(service_codes)
-    pos["otros_ingresos"] = row; lbl("B", row, "Otros ingresos", bold=True); row += 2
+    pos["otros_ingresos"] = row; lbl("B", row, "Uncategorized income", bold=True); row += 2
 
     pos["expenses"] = row; lbl("A", row, "Expenses", bold=True); row += 1
     pos["cogs"] = row; lbl("B", row, "COGS", bold=True); row += 1
@@ -1293,8 +1294,8 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
     for idx, supplier in enumerate(groups["technology"]):
         lbl("C", row + idx, supplier)
     row += len(technology_rows_list)
-    pos["otros_gastos"] = row; lbl("C", row, "Otros gastos", bold=True); row += 1
-    pos["diferencias_divisas"] = row; lbl("B", row, "Diferencias divisas", bold=True); row += 1
+    pos["otros_gastos"] = row; lbl("C", row, "Uncategorized Expenses", bold=True); row += 1
+    pos["diferencias_divisas"] = row; lbl("B", row, "Currency Adjustment", bold=True); row += 1
     max_data_row = row - 1
 
     # ── Write counts ─────────────────────────────────────────────────────────
