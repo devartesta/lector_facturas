@@ -309,7 +309,7 @@ def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSet
             "cogs": ("sum_codes", ("manufacturing", "logistics", "royalties", "payment_fees")),
             "gross_margin": ("diff", "product_sales", "manufacturing"),
             "gross_margin_pct": ("ratio", "gross_margin", "product_sales"),
-            "contributive_margin": ("diff", "product_sales", "cogs"),
+            "contributive_margin": ("subtract_many", "product_sales", ("manufacturing", "logistics", "royalties_eu", "payment_fees")),
             "contributive_margin_pct": ("ratio", "contributive_margin", "product_sales"),
             "marketing_metaads": ("sum_children",),
             "marketing_googleads": ("sum_children",),
@@ -539,6 +539,12 @@ def _build_simple_company_snapshot(
             if yyyymm in months:
                 _add_amount(base_maps, "diferencias_divisas", yyyymm, amount)
                 _add_amount(eur_maps, "diferencias_divisas", yyyymm, amount)
+        for yyyymm, amount in getattr(bundle, "royalties_by_period", {}).items():
+            if yyyymm in months:
+                _add_amount(base_maps, "royalties", yyyymm, amount)
+        for yyyymm, amount in getattr(bundle, "royalties_eur_by_period", {}).items():
+            if yyyymm in months:
+                _add_amount(eur_maps, "royalties", yyyymm, amount)
         for yyyymm, amount in bundle.frame_consumed_by_period.items():
             if yyyymm in months:
                 _add_amount(base_maps, "marcos_consumed", yyyymm, amount)
@@ -571,6 +577,7 @@ def _build_simple_company_snapshot(
         _RowDef("logistics_pct", "% Logistics / sales", 2, "metric", "logistics", "metric"),
         _RowDef("payment_fees", "Payment fees", 2, "section", "cogs", "section"),
         *[_RowDef(f"payment_fee_{code.lower()}", code, 3, "detail", "payment_fees", "detail") for code in payment_fee_lines],
+        _RowDef("royalties", "Royalties", 2, "info", "cogs", "info"),
         _RowDef("payment_fees_pct", "% Payment fees / sales", 2, "metric", "payment_fees", "metric"),
         _RowDef("gross_margin", "GROSS MARGIN (SALES-MANUFACTURING)", 0, "metric", None, "kpi"),
         _RowDef("gross_margin_pct", "% gross margin", 0, "metric", None, "kpi"),
@@ -612,7 +619,7 @@ def _build_simple_company_snapshot(
             "cogs": ("sum_codes", ("manufacturing", "logistics", "payment_fees")),
             "gross_margin": ("diff", "product_sales", "manufacturing"),
             "gross_margin_pct": ("ratio", "gross_margin", "product_sales"),
-            "contributive_margin": ("diff", "product_sales", "cogs"),
+            "contributive_margin": ("subtract_many", "product_sales", ("cogs", "royalties")),
             "contributive_margin_pct": ("ratio", "contributive_margin", "product_sales"),
             "shared_services": ("sum_children",),
             "administration": ("sum_children",),

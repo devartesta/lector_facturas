@@ -62,6 +62,9 @@ DEFAULT_PAYMENT_FEE_LINES = ("SHOPIFY",)
 DEFAULT_SHARED_SERVICE_LINES = ("SHAREDSERVICESSL",)
 DEFAULT_ADMIN_LINES = ("YOURACCOUNTSTAXES",)
 DEFAULT_TECH_LINES = ("REVER",)
+ROYALTIES_SCOPE = "uk"
+ROYALTIES_SOURCE_COMPANY = "SL"
+MUTED_FONT = Font(color="666666")
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,8 @@ class PygLtdDataBundle:
     fx_rate_rows: tuple[FxRateAuditRow, ...] = field(default_factory=tuple)
     otros_ingresos_by_period: dict[str, Decimal] = field(default_factory=dict)
     diferencias_divisas_by_period: dict[str, Decimal] = field(default_factory=dict)
+    royalties_by_period: dict[str, Decimal] = field(default_factory=dict)
+    royalties_eur_by_period: dict[str, Decimal] = field(default_factory=dict)
     frame_consumed_by_period: dict[str, Decimal] = field(default_factory=dict)
     frame_opening_by_period: dict[str, Decimal] = field(default_factory=dict)
     frame_closing_by_period: dict[str, Decimal] = field(default_factory=dict)
@@ -223,6 +228,15 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
             """,
             {"company": COMPANY_CODE, "period": f"{year}%"},
         ).fetchall()
+        royalties_scope = conn.execute(
+            """
+            SELECT period_yyyymm, gross_amount
+            FROM invoices.artist_royalties_monthly_summary
+            WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s AND summary_scope = %(scope)s
+            ORDER BY period_yyyymm
+            """,
+            {"company": ROYALTIES_SOURCE_COMPANY, "period": f"{year}%", "scope": ROYALTIES_SCOPE},
+        ).fetchall()
 
     sales_rows = tuple(
         StageRow(
@@ -300,8 +314,19 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
         )
         for row in suppliers
     )
+    fx_service = EcbFxService()
     otros_ingresos_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in otros_ingresos}
     diferencias_divisas_by_period = {str(row["period_yyyymm"]): _decimal(row["amount_eur"]) for row in diferencias_divisas}
+    royalties_eur_by_period = {str(row["period_yyyymm"]): _decimal(row["gross_amount"]) for row in royalties_scope}
+    royalties_by_period = {
+        yyyymm: fx_service.convert(
+            amount=amount_eur,
+            source_currency="EUR",
+            reporting_currency=REPORTING_CURRENCY,
+            yyyymm=yyyymm,
+        )[0].amount_reporting
+        for yyyymm, amount_eur in royalties_eur_by_period.items()
+    }
 
     from lector_facturas.supply_stock import compute_frame_stock_by_year
     frame_stock = compute_frame_stock_by_year(fabricante="Proco", year=year, database_url=database_url)
@@ -318,6 +343,8 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
         provider_catalog_rows=provider_rows,
         otros_ingresos_by_period=otros_ingresos_by_period,
         diferencias_divisas_by_period=diferencias_divisas_by_period,
+        royalties_by_period=royalties_by_period,
+        royalties_eur_by_period=royalties_eur_by_period,
         frame_consumed_by_period=frame_consumed_by_period,
         frame_opening_by_period=frame_opening_by_period,
         frame_closing_by_period=frame_closing_by_period,
@@ -499,7 +526,9 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     payment_fee_rows = list(range(row, row + len(DEFAULT_PAYMENT_FEE_LINES)))
     for idx, supplier in enumerate(DEFAULT_PAYMENT_FEE_LINES):
         ws[f"A{row + idx}"] = f"      {supplier}"
-    row += len(payment_fee_rows) + 1
+    row += len(payment_fee_rows)
+    pos["royalties"] = row; ws[f"A{row}"] = "    Royalties"; ws[f"A{row}"].font = MUTED_FONT; row += 1
+    row += 1
     pos["payment_fees_pct"] = row; ws[f"A{row}"] = "    % Payment fees / sales"; ws[f"A{row}"].font = INFO_FONT; row += 2
 
     pos["gross_margin"] = row; ws[f"A{row}"] = "GROSS MARGIN (SALES-MANUFACTURING)"; ws[f"A{row}"].font = BOLD; row += 1
@@ -548,6 +577,9 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         amount_dd = bundle.diferencias_divisas_by_period.get(yyyymm)
         if amount_dd is not None:
             ws.cell(row=pos["diferencias_divisas"], column=idx).value = float(amount_dd)
+        amount_royalties = bundle.royalties_by_period.get(yyyymm)
+        if amount_royalties is not None and amount_royalties != 0:
+            ws.cell(row=pos["royalties"], column=idx).value = float(amount_royalties)
         amount_mc = bundle.frame_consumed_by_period.get(yyyymm)
         if amount_mc is not None and amount_mc != 0:
             ws.cell(row=pos["marcos_consumed"], column=idx).value = float(amount_mc)
@@ -650,7 +682,7 @@ def _fill_ltd_formulas(
         ws[f"{col}{pos['cogs']}"] = f"={col}{pos['manufacturing']}+{col}{pos['logistics']}+{col}{pos['payment_fees']}"
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
-        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['cogs']}"
+        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['cogs']}-{col}{pos['royalties']}"
         ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['shared_services']}"] = f"=SUM({col}{shared_service_rows[0]}:{col}{shared_service_rows[-1]})"
         ws[f"{col}{pos['administration']}"] = f"=SUM({col}{administration_rows[0]}:{col}{administration_rows[-1]})"

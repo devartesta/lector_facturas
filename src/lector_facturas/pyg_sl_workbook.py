@@ -1084,7 +1084,10 @@ def _fill_month_formulas(
         ws[f"{col}{pos['cogs']}"] = f"={col}{pos['manufacturing_header']}+{col}{pos['logistics_header']}+{col}{pos['royalties_header']}+{col}{pos['payment_fees_header']}"
         ws[f"{col}{pos['gross_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['manufacturing_header']}"
         ws[f"{col}{pos['gross_margin_pct']}"] = f'=IFERROR({col}{pos["gross_margin"]}/{col}{pos["product_sales"]},0)'
-        ws[f"{col}{pos['contributive_margin']}"] = f"={col}{pos['product_sales']}-{col}{pos['cogs']}"
+        ws[f"{col}{pos['contributive_margin']}"] = (
+            f"={col}{pos['product_sales']}-{col}{pos['manufacturing_header']}-{col}{pos['logistics_header']}"
+            f"-{col}{pos['royalties_eu']}-{col}{pos['payment_fees_header']}"
+        )
         ws[f"{col}{pos['contributive_margin_pct']}"] = f'=IFERROR({col}{pos["contributive_margin"]}/{col}{pos["product_sales"]},0)'
         ws[f"{col}{pos['marketing_meta']}"] = f"=SUM({col}{marketing_meta_detail_rows[0]}:{col}{marketing_meta_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_google']}"] = f"=SUM({col}{marketing_google_detail_rows[0]}:{col}{marketing_google_detail_rows[-1]})"

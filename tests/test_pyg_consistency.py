@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
 from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _map_expense_subcategory as map_inc_expense_subcategory
-from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle
+from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, _map_expense_subcategory as map_ltd_expense_subcategory
 from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow
 from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_simple_company_snapshot, _build_sl_snapshot
 
@@ -64,6 +64,42 @@ class PygConsistencyTests(unittest.TestCase):
         self.assertEqual(rows["royalties_uk"].values_eur[0], Decimal("3"))
         self.assertEqual(rows["royalties_us"].values_eur[0], Decimal("1"))
         self.assertEqual(rows["royalties"].values_eur[0], Decimal("10"))
+
+    def test_sl_snapshot_contributive_margin_uses_only_eu_royalties(self) -> None:
+        bundle = PygSlDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            shopify_rows=(),
+            marketplace_rows=(),
+            rappel_rows=(),
+            supplies_rows=(),
+            service_rows=(),
+            expense_rows=(
+                ExpenseRow("202601", "SL", "cogs", "manufacturing", "FAB", "", Decimal("20"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "cogs", "logistics", "GLS", "", Decimal("5"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "cogs", "royalties", "ROYALTIES", "", Decimal("10"), "EUR", "test"),
+            ),
+            payment_fee_rows=(
+                ExpenseRow("202601", "SL", "cogs", "payment_fees", "SHOPIFY", "", Decimal("2"), "EUR", "test"),
+            ),
+            provider_catalog_rows=(
+                ProviderCatalogRow("FAB", "FAB", "", "expenses/cogs/manufacturing", ""),
+                ProviderCatalogRow("GLS", "GLS", "", "expenses/cogs/logistics", ""),
+            ),
+            shopify_markets=("ES",),
+            royalties_by_scope={
+                "eu": {"202601": Decimal("6")},
+                "uk": {"202601": Decimal("3")},
+                "us": {"202601": Decimal("1")},
+            },
+        )
+
+        with patch("lector_facturas.pyg_snapshot.collect_pyg_sl_data", return_value=bundle):
+            snapshot = _build_sl_snapshot(months=["202601"], database_url="postgres://ignored", settings=None)
+
+        rows = {row.code: row for row in snapshot.rows}
+        self.assertEqual(rows["cogs"].values_eur[0], Decimal("37"))
+        self.assertEqual(rows["contributive_margin"].values_eur[0], Decimal("-33"))
 
     def test_sl_snapshot_administration_sums_all_first_level_suppliers_without_double_counting_nested_breakdown(self) -> None:
         bundle = PygSlDataBundle(
@@ -228,7 +264,7 @@ class PygConsistencyTests(unittest.TestCase):
             database_url="postgres://ignored",
             settings=None,
             collect_bundle=lambda **_: bundle,
-            expense_mapper=map_inc_expense_subcategory,
+            expense_mapper=map_ltd_expense_subcategory,
             sales_markets=("US",),
             manufacturing_lines=("JONDO",),
             logistics_lines=("TGI",),
@@ -246,6 +282,48 @@ class PygConsistencyTests(unittest.TestCase):
         self.assertEqual(rows["otros_ingresos_group"].label, "Uncategorized income")
         self.assertEqual(rows["otros_ingresos"].label, "Uncategorized income")
         self.assertEqual(rows["turnover"].values_eur[0], Decimal("11"))
+
+    def test_simple_company_snapshot_keeps_royalties_out_of_cogs_but_in_contributive_margin(self) -> None:
+        bundle = PygLtdDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            sales_rows=(
+                StageRow("202601", "LTD", "GB", "", Decimal("100"), "GBP", "test"),
+            ),
+            expense_rows=(
+                ExpenseRow("202601", "LTD", "cogs", "manufacturing", "JONDO", "", Decimal("20"), "GBP", "test"),
+                ExpenseRow("202601", "LTD", "cogs", "logistics", "PORTCLEARANCE", "", Decimal("5"), "GBP", "test"),
+            ),
+            payment_fee_rows=(),
+            provider_catalog_rows=(),
+            royalties_by_period={"202601": Decimal("7")},
+            royalties_eur_by_period={"202601": Decimal("8")},
+        )
+
+        snapshot = _build_simple_company_snapshot(
+            company="ltd",
+            reporting_currency="GBP",
+            months=["202601"],
+            database_url="postgres://ignored",
+            settings=None,
+            collect_bundle=lambda **_: bundle,
+            expense_mapper=map_ltd_expense_subcategory,
+            sales_markets=("GB",),
+            manufacturing_lines=("JONDO",),
+            logistics_lines=("PORTCLEARANCE",),
+            payment_fee_lines=("SHOPIFY",),
+            shared_service_lines=("SHAREDSERVICESSL",),
+            administration_lines=("YOURACCOUNTSTAXES",),
+            technology_lines=("REVER",),
+            file_name="pyg_ltd_2026.xlsx",
+        )
+
+        rows = {row.code: row for row in snapshot.rows}
+        self.assertEqual(rows["royalties"].style_key, "info")
+        self.assertEqual(rows["royalties"].values_base[0], Decimal("7"))
+        self.assertEqual(rows["royalties"].values_eur[0], Decimal("8"))
+        self.assertEqual(rows["cogs"].values_base[0], Decimal("25"))
+        self.assertEqual(rows["contributive_margin"].values_base[0], Decimal("68"))
 
     def test_consolidated_workbook_turnover_formula_does_not_double_count_product_sales_components(self) -> None:
         bundle = ConsolidatedPygBundle(year=2026, generated_at=datetime(2026, 4, 4, 12, 0, 0))

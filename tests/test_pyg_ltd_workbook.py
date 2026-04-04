@@ -8,6 +8,14 @@ from openpyxl import load_workbook
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, ProviderCatalogRow, build_pyg_ltd_workbook
 
 
+def _find_row(ws, label: str) -> int:
+    for row in range(1, ws.max_row + 1):
+        value = ws[f"A{row}"].value
+        if isinstance(value, str) and value.replace("\u00A0", " ").strip() == label.strip():
+            return row
+    raise AssertionError(f"Label not found: {label}")
+
+
 def test_build_pyg_ltd_workbook_creates_expected_sheets_and_formulas(tmp_path: Path) -> None:
     bundle = PygLtdDataBundle(
         year=2026,
@@ -15,6 +23,7 @@ def test_build_pyg_ltd_workbook_creates_expected_sheets_and_formulas(tmp_path: P
         sales_rows=(),
         expense_rows=(),
         payment_fee_rows=(),
+        royalties_by_period={"202601": 12.34},
         provider_catalog_rows=(
             ProviderCatalogRow("PROCO", "PROCO", "PROCO", "expenses/cogs/manufacturing-logistics", ""),
             ProviderCatalogRow("JONDO", "JONDO", "JONDO", "expenses/cogs/manufacturing-logistics", ""),
@@ -43,4 +52,12 @@ def test_build_pyg_ltd_workbook_creates_expected_sheets_and_formulas(tmp_path: P
     assert ws["D14"].value == "=SUMIFS('g-expenses-ltd'!$K:$K,'g-expenses-ltd'!$A:$A,D$1,'g-expenses-ltd'!$D:$D,\"manufacturing\",'g-expenses-ltd'!$E:$E,TRIM($A14))"
     assert "% Manufacturing / sales" in str(ws["A18"].value)
     assert ws["D18"].value == '=IFERROR(D13/D5,0)'
-    assert ws["A28"].value == "GROSS MARGIN (SALES-MANUFACTURING)"
+    royalties_row = _find_row(ws, "    Royalties")
+    cogs_row = _find_row(ws, "  COGS")
+    manufacturing_row = _find_row(ws, "    Manufacturing")
+    logistics_row = _find_row(ws, "    Logistics")
+    payment_fees_row = _find_row(ws, "    Payment fees")
+    contributive_margin_row = _find_row(ws, "Contributive margin (product sales-COGS)")
+    assert ws[f"D{royalties_row}"].value == 12.34
+    assert ws[f"D{cogs_row}"].value == f"=D{manufacturing_row}+D{logistics_row}+D{payment_fees_row}"
+    assert ws[f"D{contributive_margin_row}"].value == f"=D5-D{cogs_row}-D{royalties_row}"
