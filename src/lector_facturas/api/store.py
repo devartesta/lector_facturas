@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import copy
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -8,6 +9,7 @@ import json
 import ntpath
 from pathlib import Path
 import uuid
+from decimal import Decimal
 
 from lector_facturas.payment_fees import (
     PaymentFeeSummaryRow,
@@ -68,6 +70,11 @@ DOCUMENTS_COLUMN_DEFINITIONS = (
     ("payment_method",   "TEXT NOT NULL DEFAULT ''"),         # bank_transfer | card | direct_debit | paypal
     ("payment_amount",   "NUMERIC(14,2) NULL"),
     ("payment_due_date", "DATE NULL"),
+    ("accounting_category", "TEXT NOT NULL DEFAULT ''"),
+    ("accounting_subcategory", "TEXT NOT NULL DEFAULT ''"),
+    ("accounting_detail", "TEXT NOT NULL DEFAULT ''"),
+    ("periodified_parent_id", "UUID NULL"),
+    ("is_periodified_root", "BOOLEAN NOT NULL DEFAULT FALSE"),
 )
 
 SUPPLIERS_COLUMN_DEFINITIONS = (
@@ -122,6 +129,51 @@ class IngestionQueueItem:
     heuristic_reason: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+@dataclass
+class ManualParsedDocument:
+    invoice_number: str
+    invoice_date: date
+    issuer_company_name: str
+    billed_company_name: str
+    supplier_name: str
+    billing_period_start: date | None
+    billing_period_end: date | None
+    vat_percent: Decimal | None
+    gross_amount: Decimal | None
+    vat_amount: Decimal | None
+    net_amount: Decimal | None
+    currency_code: str
+    parser_name: str = "manual"
+    parser_confidence: Decimal | None = None
+    extracted_raw: dict[str, Any] | None = None
+    period_yyyymm: str = ""
+    division_invoice: str = ""
+    document_type: str = "invoice"
+    payment_due_date: date | None = None
+
+
+@dataclass(frozen=True)
+class ProvisionRecord:
+    id: str
+    company_code: str
+    supplier_code: str
+    supplier_name: str
+    invoice_date_expected: date | None
+    period_yyyymm: str
+    currency_code: str
+    gross_amount: Decimal | None
+    net_amount: Decimal | None
+    vat_amount: Decimal | None
+    accounting_category: str
+    accounting_subcategory: str
+    accounting_detail: str
+    notes: str
+    status: str
+    matched_document_id: str
+    adjustment_amount: Decimal | None
+    adjustment_currency: str
 
 
 class ReviewStore:
@@ -597,6 +649,55 @@ class ReviewStore:
             conn.execute(f"DELETE FROM {SCHEMA_NAME}.documents WHERE id = %s", (document_id,))
             conn.commit()
         return {"id": str(row[0]), "drive_file_id": str(row[1] or "")}
+
+    def build_manual_parsed_document(
+        self,
+        *,
+        company_code: str,
+        supplier_code: str,
+        invoice_number: str,
+        invoice_date: date,
+        period_yyyymm: str,
+        billing_period_start: date | None,
+        billing_period_end: date | None,
+        currency_code: str,
+        gross_amount: Decimal | None,
+        net_amount: Decimal | None,
+        vat_amount: Decimal | None,
+        vat_percent: Decimal | None,
+        document_type: str,
+        division_invoice: str,
+        source_subject: str = "",
+    ) -> ManualParsedDocument:
+        supplier_name = supplier_code
+        if self.database_url:
+            with self._connect() as conn:
+                row = conn.execute(
+                    f"SELECT supplier_name FROM {SCHEMA_NAME}.suppliers WHERE company_code = %s AND supplier_code = %s",
+                    (company_code, supplier_code),
+                ).fetchone()
+            if row and row[0]:
+                supplier_name = str(row[0])
+        return ManualParsedDocument(
+            invoice_number=invoice_number,
+            invoice_date=invoice_date,
+            issuer_company_name=supplier_name,
+            billed_company_name=self._company_name(company_code),
+            supplier_name=supplier_name,
+            billing_period_start=billing_period_start,
+            billing_period_end=billing_period_end,
+            vat_percent=vat_percent,
+            gross_amount=gross_amount,
+            vat_amount=vat_amount,
+            net_amount=net_amount,
+            currency_code=currency_code,
+            parser_name="manual",
+            parser_confidence=Decimal("1"),
+            extracted_raw={"source_subject": source_subject},
+            period_yyyymm=period_yyyymm,
+            division_invoice=division_invoice,
+            document_type=document_type,
+        )
 
     def document_exists_exact(self, *, email_message_id: str, original_filename: str) -> bool:
         if not self.database_url:
@@ -1172,6 +1273,9 @@ class ReviewStore:
             conn.execute(self._otros_ingresos_table_sql())
             conn.execute(self._artist_royalties_documents_table_sql())
             conn.execute(self._artist_royalties_monthly_summary_table_sql())
+            conn.execute(self._provisions_table_sql())
+            conn.execute(self._provision_matches_table_sql())
+            conn.execute(self._provision_adjustments_table_sql())
             conn.execute(self._expected_invoices_table_sql())
             conn.execute(self._expected_invoice_runs_table_sql())
             conn.execute(self._mail_sync_state_table_sql())
@@ -1216,6 +1320,9 @@ class ReviewStore:
             conn.execute(self._artist_royalties_documents_unique_index_sql())
             conn.execute(self._artist_royalties_documents_period_index_sql())
             conn.execute(self._artist_royalties_summary_unique_index_sql())
+            conn.execute(self._provisions_period_index_sql())
+            conn.execute(self._provision_matches_unique_index_sql())
+            conn.execute(self._documents_periodified_parent_index_sql())
             self._seed_suppliers(conn)
             if self._count_rows(conn, f"{SCHEMA_NAME}.review_items") == 0:
                 if self._legacy_review_items_exists(conn):
@@ -2600,7 +2707,63 @@ class ReviewStore:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 source_sender TEXT NOT NULL DEFAULT '',
                 source_subject TEXT NOT NULL DEFAULT '',
-                period_yyyymm TEXT NOT NULL DEFAULT ''
+                period_yyyymm TEXT NOT NULL DEFAULT '',
+                accounting_category TEXT NOT NULL DEFAULT '',
+                accounting_subcategory TEXT NOT NULL DEFAULT '',
+                accounting_detail TEXT NOT NULL DEFAULT '',
+                periodified_parent_id UUID NULL REFERENCES {SCHEMA_NAME}.documents(id) ON DELETE SET NULL,
+                is_periodified_root BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """
+
+    def _provisions_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.provisions (
+                id UUID PRIMARY KEY,
+                company_code TEXT NOT NULL,
+                supplier_code TEXT NOT NULL DEFAULT '',
+                invoice_date_expected DATE NULL,
+                period_yyyymm TEXT NOT NULL,
+                currency_code TEXT NOT NULL DEFAULT 'EUR',
+                gross_amount NUMERIC(14,2) NULL,
+                net_amount NUMERIC(14,2) NULL,
+                vat_amount NUMERIC(14,2) NULL,
+                accounting_category TEXT NOT NULL DEFAULT '',
+                accounting_subcategory TEXT NOT NULL DEFAULT '',
+                accounting_detail TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                matched_document_id UUID NULL REFERENCES {SCHEMA_NAME}.documents(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """
+
+    def _provision_matches_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.provision_matches (
+                id UUID PRIMARY KEY,
+                provision_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.provisions(id) ON DELETE CASCADE,
+                document_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.documents(id) ON DELETE CASCADE,
+                matched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """
+
+    def _provision_adjustments_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.provision_adjustments (
+                id UUID PRIMARY KEY,
+                provision_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.provisions(id) ON DELETE CASCADE,
+                document_id UUID NOT NULL REFERENCES {SCHEMA_NAME}.documents(id) ON DELETE CASCADE,
+                company_code TEXT NOT NULL,
+                period_yyyymm TEXT NOT NULL,
+                amount NUMERIC(14,2) NOT NULL,
+                currency_code TEXT NOT NULL DEFAULT 'EUR',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """
 
@@ -2963,6 +3126,24 @@ class ReviewStore:
         return f"""
             CREATE INDEX IF NOT EXISTS invoices_documents_company_period_idx
             ON {SCHEMA_NAME}.documents (company_code, period_yyyymm)
+        """
+
+    def _documents_periodified_parent_index_sql(self) -> str:
+        return f"""
+            CREATE INDEX IF NOT EXISTS invoices_documents_periodified_parent_idx
+            ON {SCHEMA_NAME}.documents (periodified_parent_id)
+        """
+
+    def _provisions_period_index_sql(self) -> str:
+        return f"""
+            CREATE INDEX IF NOT EXISTS invoices_provisions_company_period_idx
+            ON {SCHEMA_NAME}.provisions (company_code, period_yyyymm, status)
+        """
+
+    def _provision_matches_unique_index_sql(self) -> str:
+        return f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS invoices_provision_matches_unique_idx
+            ON {SCHEMA_NAME}.provision_matches (provision_id, document_id)
         """
 
     def _shopify_payout_transactions_unique_index_sql(self) -> str:

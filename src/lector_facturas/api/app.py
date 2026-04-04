@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import uuid
 from functools import lru_cache
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from io import BytesIO
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -63,6 +64,17 @@ from lector_facturas.api.schemas import (
     BulkPaymentIn,
     SupplierPaymentSettingsIn,
     PaymentSettlementRunOut,
+    DocumentListItemOut,
+    DocumentDetailOut,
+    DocumentUpdateIn,
+    ManualDocumentCreateOut,
+    PeriodifyDocumentIn,
+    PeriodifyDocumentOut,
+    ProvisionCreateIn,
+    ProvisionOut,
+    ProvisionUpdateIn,
+    ProvisionMatchIn,
+    ProvisionAdjustmentOut,
 )
 from lector_facturas.gmail_sync import (
     INVOICE_FILE_EXTENSIONS,
@@ -74,6 +86,19 @@ from lector_facturas.gmail_sync import (
 from lector_facturas.api.store import ReviewStore
 from lector_facturas.drive_bootstrap import bootstrap_drive_structure
 from lector_facturas.google_drive import GoogleDriveClient
+from lector_facturas.finance_documents import (
+    create_manual_document,
+    create_provision,
+    delete_document as delete_finance_document,
+    get_document_detail,
+    get_provision,
+    list_documents,
+    list_provisions,
+    match_provision,
+    periodify_document,
+    update_document,
+    update_provision,
+)
 from lector_facturas.invoice_ingestion import (
     VALIDATION_ROOT_PARTS,
     ensure_drive_path,
@@ -960,20 +985,229 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Validation queue item not found") from exc
         return IngestionQueueItemOut(**item.__dict__)
 
+    @app.get("/documents", response_model=list[DocumentListItemOut])
+    def get_documents(
+        company_code: str | None = Query(default=None),
+        period_yyyymm: str | None = Query(default=None),
+        supplier_code: str | None = Query(default=None),
+        q: str | None = Query(default=None),
+        document_type: str | None = Query(default=None),
+        payment_status: str | None = Query(default=None),
+        accounting_category: str | None = Query(default=None),
+        accounting_subcategory: str | None = Query(default=None),
+        periodified: str | None = Query(default=None),
+    ) -> list[DocumentListItemOut]:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        items = list_documents(
+            database_url=database_url,
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            supplier_code=supplier_code,
+            query=q,
+            document_type=document_type,
+            payment_status=payment_status,
+            accounting_category=accounting_category,
+            accounting_subcategory=accounting_subcategory,
+            periodified=periodified,
+        )
+        return [DocumentListItemOut(**item) for item in items]
+
+    @app.get("/documents/{document_id}", response_model=DocumentDetailOut)
+    def get_document(document_id: str) -> DocumentDetailOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = get_document_detail(database_url=database_url, document_id=document_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return DocumentDetailOut(**item)
+
+    @app.patch("/documents/{document_id}", response_model=DocumentDetailOut)
+    def patch_document(
+        document_id: str,
+        body: DocumentUpdateIn,
+        settings: AppSettings = Depends(get_settings),
+    ) -> DocumentDetailOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = update_document(
+            database_url=database_url,
+            settings=settings,
+            document_id=document_id,
+            payload=body.model_dump(),
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return DocumentDetailOut(**item)
+
+    @app.post("/documents/manual", response_model=ManualDocumentCreateOut)
+    async def post_manual_document(
+        company_code: str = Form(...),
+        supplier_code: str = Form(...),
+        invoice_number: str = Form(...),
+        invoice_date: str = Form(...),
+        period_yyyymm: str = Form(...),
+        billing_period_start: str = Form(default=""),
+        billing_period_end: str = Form(default=""),
+        currency_code: str = Form(...),
+        gross_amount: str = Form(default=""),
+        net_amount: str = Form(default=""),
+        vat_amount: str = Form(default=""),
+        vat_percent: str = Form(default=""),
+        accounting_category: str = Form(default=""),
+        accounting_subcategory: str = Form(default=""),
+        accounting_detail: str = Form(default=""),
+        document_type: str = Form(default="invoice"),
+        payment_status: str = Form(default="pending"),
+        payment_date: str = Form(default=""),
+        payment_method: str = Form(default=""),
+        payment_amount: str = Form(default=""),
+        payment_due_date: str = Form(default=""),
+        review_notes: str = Form(default=""),
+        division_invoice: str = Form(default=""),
+        sender_email: str = Form(default=""),
+        source_subject: str = Form(default=""),
+        file: UploadFile = File(...),
+        settings: AppSettings = Depends(get_settings),
+    ) -> ManualDocumentCreateOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        content = await file.read()
+        payload = {
+            "company_code": company_code,
+            "supplier_code": supplier_code,
+            "invoice_number": invoice_number,
+            "invoice_date": date.fromisoformat(invoice_date),
+            "period_yyyymm": period_yyyymm,
+            "billing_period_start": date.fromisoformat(billing_period_start) if billing_period_start else None,
+            "billing_period_end": date.fromisoformat(billing_period_end) if billing_period_end else None,
+            "currency_code": currency_code,
+            "gross_amount": Decimal(gross_amount) if gross_amount else None,
+            "net_amount": Decimal(net_amount) if net_amount else None,
+            "vat_amount": Decimal(vat_amount) if vat_amount else None,
+            "vat_percent": Decimal(vat_percent) if vat_percent else None,
+            "accounting_category": accounting_category,
+            "accounting_subcategory": accounting_subcategory,
+            "accounting_detail": accounting_detail,
+            "document_type": document_type,
+            "payment_status": payment_status,
+            "payment_date": date.fromisoformat(payment_date) if payment_date else None,
+            "payment_method": payment_method,
+            "payment_amount": Decimal(payment_amount) if payment_amount else None,
+            "payment_due_date": date.fromisoformat(payment_due_date) if payment_due_date else None,
+            "review_notes": review_notes,
+            "division_invoice": division_invoice,
+            "sender_email": sender_email,
+            "source_subject": source_subject,
+            "source_channel": "manual_upload",
+        }
+        item = create_manual_document(
+            database_url=database_url,
+            settings=settings,
+            payload=payload,
+            pdf_bytes=content,
+            original_filename=file.filename or "document.pdf",
+        )
+        return ManualDocumentCreateOut(document=DocumentDetailOut(**item))
+
+    @app.post("/documents/{document_id}/periodify", response_model=PeriodifyDocumentOut)
+    def post_document_periodify(
+        document_id: str,
+        body: PeriodifyDocumentIn,
+        settings: AppSettings = Depends(get_settings),
+    ) -> PeriodifyDocumentOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = periodify_document(
+            database_url=database_url,
+            settings=settings,
+            document_id=document_id,
+            months=[month.model_dump() for month in body.months],
+        )
+        if not item:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return PeriodifyDocumentOut(**item)
+
     @app.delete("/documents/{document_id}")
     def delete_document(
         document_id: str,
         trash_drive_file: bool = Query(default=False),
-        store: ReviewStore = Depends(get_store),
         settings: AppSettings = Depends(get_settings),
     ) -> dict:
-        deleted = store.delete_document(document_id=document_id)
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        deleted = delete_finance_document(database_url=database_url, document_id=document_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Document not found")
         if trash_drive_file and deleted.get("drive_file_id") and settings.google_oauth_ready:
             drive_client = GoogleDriveClient(settings.to_drive_config())
             drive_client.trash_file(file_id=deleted["drive_file_id"])
         return {"deleted": True, "document_id": document_id, "drive_file_id": deleted.get("drive_file_id", "")}
+
+    @app.get("/provisions", response_model=list[ProvisionOut])
+    def get_provisions(
+        company_code: str | None = Query(default=None),
+        period_yyyymm: str | None = Query(default=None),
+        supplier_code: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        q: str | None = Query(default=None),
+    ) -> list[ProvisionOut]:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        items = list_provisions(
+            database_url=database_url,
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            supplier_code=supplier_code,
+            status=status,
+            query=q,
+        )
+        return [ProvisionOut(**item) for item in items]
+
+    @app.post("/provisions", response_model=ProvisionOut)
+    def post_provision(body: ProvisionCreateIn) -> ProvisionOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = create_provision(database_url=database_url, payload=body.model_dump())
+        return ProvisionOut(**item)
+
+    @app.get("/provisions/{provision_id}", response_model=ProvisionOut)
+    def get_single_provision(provision_id: str) -> ProvisionOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = get_provision(database_url=database_url, provision_id=provision_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Provision not found")
+        return ProvisionOut(**item)
+
+    @app.patch("/provisions/{provision_id}", response_model=ProvisionOut)
+    def patch_provision(provision_id: str, body: ProvisionUpdateIn) -> ProvisionOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = update_provision(database_url=database_url, provision_id=provision_id, payload=body.model_dump())
+        if not item:
+            raise HTTPException(status_code=404, detail="Provision not found")
+        return ProvisionOut(**item)
+
+    @app.post("/provisions/{provision_id}/match", response_model=ProvisionOut)
+    def post_provision_match(provision_id: str, body: ProvisionMatchIn) -> ProvisionOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        item = match_provision(database_url=database_url, provision_id=provision_id, document_id=body.document_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Provision or document not found")
+        return ProvisionOut(**item)
 
     # ------------------------------------------------------------------
     # Payment tracking endpoints
