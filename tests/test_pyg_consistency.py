@@ -256,7 +256,7 @@ class PygConsistencyTests(unittest.TestCase):
             workbook = load_workbook(output_path, data_only=False)
 
         ws = workbook["P&G-CONSOLIDADO"]
-        self.assertEqual(ws["D4"].value, "=D5+D8+D11")
+        self.assertEqual(ws["D4"].value, "=D5+D10+D11")
 
     def test_consolidated_workbook_aggregate_includes_frame_consumption_in_manufacturing(self) -> None:
         bundle = ConsolidatedPygBundle(
