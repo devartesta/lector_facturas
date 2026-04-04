@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Literal
 
@@ -133,6 +133,9 @@ def build_pyg_cell_detail(
         )
     else:
         items = _build_consolidated_items(row_code=row_code, selected_months=selected_months, database_url=database_url)
+
+    if company == "consolidado":
+        items = tuple(replace(item, amount_base=item.amount_eur) for item in items)
 
     if items == ():
         supported = _supports_detail(company=company, row_code=row_code)
