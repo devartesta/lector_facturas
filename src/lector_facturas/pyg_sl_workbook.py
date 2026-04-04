@@ -169,7 +169,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         ).fetchall()
         docs = conn.execute(
             """
-            SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date
+            SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date, parser_name
             FROM invoices.documents
             WHERE company_code = %(company)s
               AND status = 'classified'
@@ -285,7 +285,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", _normalize_shopify_market(shipping_country_code), -amount_net, currency, "finance.ventas_pyg"))
             continue
         shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.ventas_pyg"))
-    for row in docs:
+    for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])
         billed_company_name = str(row["billed_company_name"] or "")
@@ -1620,6 +1620,26 @@ def _provider_groups(rows: tuple[ProviderCatalogRow, ...]) -> dict[str, list[str
         elif row.destination_path == "expenses/opex/technology":
             groups["technology"].append(row.supplier_code)
     return groups
+
+
+def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    periodified_roots = {
+        invoice_number[: invoice_number.index("_PERIODIFICADA_")]
+        for row in rows
+        if (invoice_number := str(row["invoice_number"] or "").strip())
+        and "_PERIODIFICADA_" in invoice_number
+    }
+    if not periodified_roots:
+        return rows
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        invoice_number = str(row["invoice_number"] or "").strip()
+        parser_name = str(row.get("parser_name") or "").strip().lower()
+        if invoice_number in periodified_roots and parser_name != "manual_periodificada":
+            continue
+        filtered.append(row)
+    return filtered
 
 
 def _add_navigation_links(

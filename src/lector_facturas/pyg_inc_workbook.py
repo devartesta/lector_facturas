@@ -166,7 +166,8 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
                 currency_code,
                 net_amount,
                 invoice_number,
-                drive_url
+                drive_url,
+                parser_name
             FROM invoices.documents
             WHERE company_code = %(company)s
               AND status = 'classified'
@@ -237,7 +238,7 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
 
     supplier_map = {str(row["supplier_code"]): row for row in suppliers}
     expense_rows: list[ExpenseRow] = []
-    for row in docs:
+    for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"] or "").upper()
         subcategory = _map_expense_subcategory(
             supplier_code=supplier_code,
@@ -1000,6 +1001,25 @@ def _map_expense_subcategory(*, supplier_code: str, division_invoice: str, suppl
     return ""
 
 
+def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    periodified_roots = {
+        invoice_number[: invoice_number.index("_PERIODIFICADA_")]
+        for row in rows
+        if (invoice_number := str(row["invoice_number"] or "").strip())
+        and "_PERIODIFICADA_" in invoice_number
+    }
+    if not periodified_roots:
+        return rows
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        invoice_number = str(row["invoice_number"] or "").strip()
+        parser_name = str(row.get("parser_name") or "").strip().lower()
+        if invoice_number in periodified_roots and parser_name != "manual_periodificada":
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _decimal(value: Any) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value or 0))
-
