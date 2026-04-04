@@ -447,7 +447,7 @@ def _compute_values(
         children = [child for child in child_map.get(code, []) if row_kind_map.get(child) not in {"metric", "info"}]
         cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for child in children), Decimal("0")) for idx in range(len(months)))
     elif op == "sum_first_level_children":
-        children = [child for child in child_map.get(code, []) if child_map.get(child) and row_kind_map.get(child) not in {"metric", "info"}] or [child for child in child_map.get(code, []) if row_kind_map.get(child) not in {"metric", "info"}]
+        children = [child for child in child_map.get(code, []) if row_kind_map.get(child) not in {"metric", "info"}]
         cache[code] = tuple(sum((_compute_values(child, months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))[idx] for child in children), Decimal("0")) for idx in range(len(months)))
     elif op == "sum_codes":
         codes = formula[1]
@@ -682,7 +682,10 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
             (load("manufacturing", month, "sl") - load("manufacturing_bbvacnc", month, "sl")) + load("manufacturing", month, "ltd") + load("manufacturing", month, "inc"),
         )
         for key in ("logistics", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"):
-            _set_amount(base_maps, key, month, load(key, month, "sl") + load(key, month, "ltd") + load(key, month, "inc"))
+            sl_value = load(key, month, "sl")
+            if key == "administration":
+                sl_value -= load("administration_bbvacnc", month, "sl")
+            _set_amount(base_maps, key, month, sl_value + load(key, month, "ltd") + load(key, month, "inc"))
         _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
     eur_maps = {key: dict(values) for key, values in base_maps.items()}
 

@@ -13,7 +13,7 @@ from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
 from lector_facturas.pyg_inc_workbook import PygIncDataBundle
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle
-from lector_facturas.pyg_sl_workbook import ExpenseRow, PygSlDataBundle, StageRow
+from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow
 from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_sl_snapshot
 
 
@@ -65,6 +65,42 @@ class PygConsistencyTests(unittest.TestCase):
         self.assertEqual(rows["royalties_us"].values_eur[0], Decimal("1"))
         self.assertEqual(rows["royalties"].values_eur[0], Decimal("10"))
 
+    def test_sl_snapshot_administration_sums_all_first_level_suppliers_without_double_counting_nested_breakdown(self) -> None:
+        bundle = PygSlDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            shopify_rows=(),
+            marketplace_rows=(),
+            rappel_rows=(),
+            supplies_rows=(),
+            service_rows=(),
+            expense_rows=(
+                ExpenseRow("202601", "SL", "opex", "administration", "BBVACNC", "", Decimal("1644.62"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "opex", "administration", "CLARIS", "", Decimal("808.08"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "opex", "administration", "HANNUN", "office", Decimal("175.00"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "opex", "administration", "HANNUN", "services", Decimal("1504.92"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "opex", "administration", "NODA", "", Decimal("170.00"), "EUR", "test"),
+                ExpenseRow("202601", "SL", "opex", "administration", "TORRAS", "", Decimal("15.00"), "EUR", "test"),
+            ),
+            payment_fee_rows=(),
+            provider_catalog_rows=(
+                ProviderCatalogRow("BBVACNC", "BBVACNC", "", "expenses/opex/administration", ""),
+                ProviderCatalogRow("CLARIS", "CLARIS", "", "expenses/opex/administration", ""),
+                ProviderCatalogRow("HANNUN", "HANNUN", "", "expenses/opex/administration", ""),
+                ProviderCatalogRow("NODA", "NODA", "", "expenses/opex/administration", ""),
+                ProviderCatalogRow("TORRAS", "TORRAS", "", "expenses/opex/administration", ""),
+            ),
+            shopify_markets=("ES",),
+        )
+
+        with patch("lector_facturas.pyg_snapshot.collect_pyg_sl_data", return_value=bundle):
+            snapshot = _build_sl_snapshot(months=["202601"], database_url="postgres://ignored", settings=None)
+
+        rows = {row.code: row for row in snapshot.rows}
+        self.assertEqual(rows["administration_hannun"].values_eur[0], Decimal("1679.92"))
+        self.assertEqual(rows["administration_bbvacnc"].values_eur[0], Decimal("1644.62"))
+        self.assertEqual(rows["administration"].values_eur[0], Decimal("4317.62"))
+
     def test_consolidated_snapshot_uses_external_services_and_total_royalties(self) -> None:
         sl_snapshot = PygSnapshot(
             company="sl",
@@ -88,7 +124,8 @@ class PygConsistencyTests(unittest.TestCase):
                 _snapshot_row("payment_fees", "2", label="Payment fees"),
                 _snapshot_row("marketing", "4", label="Marketing"),
                 _snapshot_row("staff", "6", label="Staff"),
-                _snapshot_row("administration", "7", label="Administration"),
+                _snapshot_row("administration", "27", label="Administration"),
+                _snapshot_row("administration_bbvacnc", "20", label="BBVACNC administration"),
                 _snapshot_row("technology", "8", label="Technology"),
                 _snapshot_row("otros_gastos_group", "9", label="Otros gastos"),
                 _snapshot_row("diferencias_divisas_group", "1", label="Dif divisas"),
@@ -164,6 +201,7 @@ class PygConsistencyTests(unittest.TestCase):
         rows = {row.code: row for row in snapshot.rows}
         self.assertEqual(rows["services"].values_eur[0], Decimal("4"))
         self.assertEqual(rows["royalties"].values_eur[0], Decimal("10"))
+        self.assertEqual(rows["administration"].values_eur[0], Decimal("12"))
         self.assertEqual(rows["shopify"].values_eur[0], Decimal("170"))
         self.assertEqual(rows["product_sales"].values_eur[0], Decimal("177"))
         self.assertEqual(rows["turnover"].values_eur[0], Decimal("184"))
