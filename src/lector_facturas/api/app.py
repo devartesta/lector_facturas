@@ -30,6 +30,8 @@ from lector_facturas.api.schemas import (
     PaymentFeeSyncIn,
     PaymentFeeSyncOut,
     PaymentOrderTransactionOut,
+    PygCellDetailItemOut,
+    PygCellDetailOut,
     PygCompany,
     PygConsolidatedSyncIn,
     PygConsolidatedSyncOut,
@@ -83,6 +85,7 @@ from lector_facturas.invoice_ingestion import (
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
 from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
+from lector_facturas.pyg_cell_detail import build_pyg_cell_detail
 from lector_facturas.pyg_snapshot import build_pyg_snapshot, month_window
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
@@ -1613,6 +1616,65 @@ def create_app() -> FastAPI:
                     total_eur=float(row.total_eur),
                 )
                 for row in snapshot.rows
+            ],
+        )
+
+    @app.get("/integrations/pyg/{company}/cell-detail", response_model=PygCellDetailOut)
+    def get_pyg_cell_detail(
+        company: PygCompany,
+        row_code: str = Query(...),
+        period_kind: str = Query(...),
+        period_key: str = Query(...),
+        currency_mode: str = Query(default="base"),
+        year: int = Query(default=datetime.now().year),
+        mode: str = Query(default="year"),
+        start_yyyymm: str = Query(default=""),
+        settings: AppSettings = Depends(get_settings),
+    ) -> PygCellDetailOut:
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        months = month_window(year=year, start_yyyymm=start_yyyymm or None, mode=mode)
+        try:
+            detail = build_pyg_cell_detail(
+                company=company,
+                row_code=row_code,
+                period_kind=period_kind.lower(),
+                period_key=period_key,
+                currency_mode="eur" if currency_mode.lower() == "eur" else "base",
+                months=months,
+                database_url=database_url,
+                settings=settings,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return PygCellDetailOut(
+            company=detail.company,
+            row_code=detail.row_code,
+            row_label=detail.row_label,
+            period_kind=detail.period_kind,
+            period_key=detail.period_key,
+            currency=detail.currency,
+            cell_amount=float(detail.cell_amount),
+            supported=detail.supported,
+            is_reconciled=detail.is_reconciled,
+            message=detail.message,
+            items=[
+                PygCellDetailItemOut(
+                    company=item.company,
+                    period_yyyymm=item.period_yyyymm,
+                    label=item.label,
+                    invoice_number=item.invoice_number,
+                    amount_base=float(item.amount_base),
+                    amount_eur=float(item.amount_eur),
+                    currency=item.currency,
+                    source=item.source,
+                    drive_url=item.drive_url,
+                )
+                for item in detail.items
             ],
         )
 

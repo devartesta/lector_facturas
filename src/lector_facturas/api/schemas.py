@@ -353,6 +353,32 @@ class PygSnapshotOut(BaseModel):
     rows: list[PygSnapshotRowOut] = Field(default_factory=list)
 
 
+class PygCellDetailItemOut(BaseModel):
+    company: str
+    period_yyyymm: str
+    label: str
+    invoice_number: str = ""
+    amount_base: float
+    amount_eur: float
+    currency: str
+    source: str = ""
+    drive_url: str = ""
+
+
+class PygCellDetailOut(BaseModel):
+    company: PygCompany
+    row_code: str
+    row_label: str
+    period_kind: str
+    period_key: str
+    currency: str
+    cell_amount: float
+    supported: bool = False
+    is_reconciled: bool = False
+    message: str = ""
+    items: list[PygCellDetailItemOut] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Frame purchases / stock
 # ---------------------------------------------------------------------------
