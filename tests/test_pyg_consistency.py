@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 from openpyxl import load_workbook
 
-from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, build_pyg_consolidated_workbook
+from lector_facturas.fx_rates import EcbFxService
+from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
+from lector_facturas.pyg_inc_workbook import PygIncDataBundle
+from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle
 from lector_facturas.pyg_sl_workbook import ExpenseRow, PygSlDataBundle, StageRow
 from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_sl_snapshot
 
@@ -175,6 +178,35 @@ class PygConsistencyTests(unittest.TestCase):
 
         ws = workbook["P&G-CONSOLIDADO"]
         self.assertEqual(ws["D4"].value, "=D5+D8+D11")
+
+    def test_consolidated_workbook_aggregate_includes_frame_consumption_in_manufacturing(self) -> None:
+        bundle = ConsolidatedPygBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            ltd_bundle=PygLtdDataBundle(
+                year=2026,
+                generated_at=datetime(2026, 4, 4, 12, 0, 0),
+                sales_rows=(),
+                expense_rows=(),
+                payment_fee_rows=(),
+                provider_catalog_rows=(),
+                frame_consumed_by_period={"202601": Decimal("12.5")},
+            ),
+            inc_bundle=PygIncDataBundle(
+                year=2026,
+                generated_at=datetime(2026, 4, 4, 12, 0, 0),
+                sales_rows=(),
+                expense_rows=(),
+                payment_fee_rows=(),
+                provider_catalog_rows=(),
+                frame_consumed_by_period={"202601": Decimal("7.25")},
+            ),
+        )
+
+        _sl_rows, ltd_rows, inc_rows, _fx_rows = _aggregate_all(bundle, fx=EcbFxService())
+
+        self.assertIn(["202601", "manufacturing", 12.5], ltd_rows)
+        self.assertIn(["202601", "manufacturing", 7.25], inc_rows)
 
 
 if __name__ == "__main__":

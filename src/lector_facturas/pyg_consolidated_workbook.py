@@ -161,6 +161,8 @@ def _aggregate_all(
         for yyyymm, amt in b.diferencias_divisas_by_period.items():
             c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             ltd_amounts[(yyyymm, "diferencias_divisas")] += c.amount_reporting; fx_audit.append(a)
+        for yyyymm, amt in b.frame_consumed_by_period.items():
+            ltd_amounts[(yyyymm, "manufacturing")] += amt
 
     if bundle.inc_bundle:
         b = bundle.inc_bundle
@@ -182,6 +184,8 @@ def _aggregate_all(
         for yyyymm, amt in b.diferencias_divisas_by_period.items():
             c, a = fx.convert(amount=amt, source_currency="EUR", reporting_currency=RC, yyyymm=yyyymm)
             inc_amounts[(yyyymm, "diferencias_divisas")] += c.amount_reporting; fx_audit.append(a)
+        for yyyymm, amt in b.frame_consumed_by_period.items():
+            inc_amounts[(yyyymm, "manufacturing")] += amt
 
     # Collect EOM GBP/EUR and USD/EUR rates for all months
     year = bundle.year
