@@ -11,10 +11,10 @@ from openpyxl import load_workbook
 
 from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
-from lector_facturas.pyg_inc_workbook import PygIncDataBundle
+from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _map_expense_subcategory as map_inc_expense_subcategory
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle
 from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow
-from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_sl_snapshot
+from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_simple_company_snapshot, _build_sl_snapshot
 
 
 def _snapshot_row(code: str, amount: str, *, label: str | None = None) -> PygSnapshotRow:
@@ -245,6 +245,48 @@ class PygConsistencyTests(unittest.TestCase):
 
         self.assertIn(["202601", "manufacturing", 12.5], ltd_rows)
         self.assertIn(["202601", "manufacturing", 7.25], inc_rows)
+
+    def test_inc_snapshot_includes_delaware_in_administration(self) -> None:
+        bundle = PygIncDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            sales_rows=(),
+            expense_rows=(
+                ExpenseRow("202603", "INC", "opex", "administration", "CONTINUUM", "", Decimal("1000"), "USD", "test"),
+                ExpenseRow("202603", "INC", "opex", "administration", "DELAWARE", "", Decimal("99"), "USD", "test"),
+            ),
+            payment_fee_rows=(),
+            provider_catalog_rows=(
+                IncProviderCatalogRow("CONTINUUM", "CONTINUUM", "", "expenses/opex/administration", ""),
+                IncProviderCatalogRow("DELAWARE", "DELAWARE", "", "expenses/opex/administration", ""),
+            ),
+        )
+
+        with patch("lector_facturas.pyg_snapshot.collect_pyg_inc_data", return_value=bundle):
+            snapshot = _build_simple_company_snapshot(
+                company="inc",
+                reporting_currency="USD",
+                months=["202603"],
+                database_url="postgres://ignored",
+                settings=None,
+                collect_bundle=lambda **_: bundle,
+                expense_mapper=map_inc_expense_subcategory,
+                sales_markets=("US",),
+                manufacturing_lines=("JONDO", "TGI"),
+                logistics_lines=("TGI",),
+                payment_fee_lines=("SHOPIFY",),
+                shared_service_lines=("SHAREDSERVICESSL",),
+                administration_lines=("CONTINUUM", "DELAWARE", "HUSHED", "IPOSTAL", "QUICKBOOKS", "REGUS"),
+                technology_lines=("REVER",),
+                file_name="pyg_inc_2026.xlsx",
+            )
+
+        rows = {row.code: row for row in snapshot.rows}
+        self.assertEqual(rows["administration_delaware"].values_base[0], Decimal("99"))
+        self.assertEqual(
+            rows["administration"].values_eur[0],
+            rows["administration_continuum"].values_eur[0] + rows["administration_delaware"].values_eur[0],
+        )
 
 
 if __name__ == "__main__":
