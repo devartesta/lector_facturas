@@ -358,6 +358,7 @@ class PygCellDetailItemOut(BaseModel):
     period_yyyymm: str
     label: str
     invoice_number: str = ""
+    amount_local: float
     amount_base: float
     amount_eur: float
     currency: str

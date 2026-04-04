@@ -75,6 +75,7 @@ def test_sl_services_detail_keeps_all_service_rows() -> None:
     assert detail.supported is True
     assert detail.is_reconciled is True
     assert [item.label for item in detail.items] == ["HANNUN", "Ltd"]
+    assert [item.amount_local for item in detail.items] == [Decimal("4.00"), Decimal("10.00")]
     assert detail.cell_amount == Decimal("14.00")
 
 
@@ -156,10 +157,10 @@ def test_ltd_manufacturing_quarter_detail_includes_frame_consumption() -> None:
 
 def test_consolidated_administration_excludes_bbvacnc_items() -> None:
     snapshot = _snapshot("consolidado", (_snapshot_row("administration", ("8.00",), label="Administration"),))
-    bbva = PygCellDetailItem("SL", "202601", "BBVACNC", "INV-1", Decimal("5.00"), Decimal("5.00"), "EUR", "documents", "")
-    claris = PygCellDetailItem("SL", "202601", "CLARIS", "INV-2", Decimal("3.00"), Decimal("3.00"), "EUR", "documents", "")
-    ltd = PygCellDetailItem("LTD", "202601", "YOURACCOUNTSTAXES", "INV-3", Decimal("2.00"), Decimal("2.00"), "GBP", "documents", "")
-    inc = PygCellDetailItem("INC", "202601", "CONTINUUM", "INV-4", Decimal("3.00"), Decimal("3.00"), "USD", "documents", "")
+    bbva = PygCellDetailItem("SL", "202601", "BBVACNC", "INV-1", Decimal("5.00"), Decimal("5.00"), Decimal("5.00"), "EUR", "documents", "")
+    claris = PygCellDetailItem("SL", "202601", "CLARIS", "INV-2", Decimal("3.00"), Decimal("3.00"), Decimal("3.00"), "EUR", "documents", "")
+    ltd = PygCellDetailItem("LTD", "202601", "YOURACCOUNTSTAXES", "INV-3", Decimal("2.00"), Decimal("2.00"), Decimal("2.00"), "GBP", "documents", "")
+    inc = PygCellDetailItem("INC", "202601", "CONTINUUM", "INV-4", Decimal("3.00"), Decimal("3.00"), Decimal("3.00"), "USD", "documents", "")
 
     with (
         patch("lector_facturas.pyg_cell_detail.build_pyg_snapshot", return_value=snapshot),

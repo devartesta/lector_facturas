@@ -48,6 +48,7 @@ class PygCellDetailItem:
     period_yyyymm: str
     label: str
     invoice_number: str
+    amount_local: Decimal
     amount_base: Decimal
     amount_eur: Decimal
     currency: str
@@ -410,6 +411,7 @@ def _stage_item(*, company: str, row, reporting_currency: str, fx: EcbFxService)
         period_yyyymm=row.yyyymm,
         label=row.line_item,
         invoice_number=getattr(row, "invoice_number", "") or "",
+        amount_local=row.amount_net,
         amount_base=amount_base,
         amount_eur=amount_eur,
         currency=row.currency,
@@ -428,6 +430,7 @@ def _expense_item(*, company: str, row, reporting_currency: str, fx: EcbFxServic
         period_yyyymm=row.yyyymm,
         label=label,
         invoice_number=row.invoice_number or "",
+        amount_local=row.amount_net,
         amount_base=amount_base,
         amount_eur=amount_eur,
         currency=row.currency,
@@ -444,6 +447,7 @@ def _payment_fee_item(*, company: str, row, reporting_currency: str, fx: EcbFxSe
         period_yyyymm=row.yyyymm,
         label=row.supplier_code,
         invoice_number="",
+        amount_local=row.amount_net,
         amount_base=amount_base,
         amount_eur=amount_eur,
         currency=row.currency,
@@ -458,6 +462,7 @@ def _synthetic_item(*, company: str, period_yyyymm: str, label: str, amount_base
         period_yyyymm=period_yyyymm,
         label=label,
         invoice_number="",
+        amount_local=amount_base,
         amount_base=amount_base,
         amount_eur=amount_eur,
         currency=currency,

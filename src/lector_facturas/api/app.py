@@ -1668,6 +1668,7 @@ def create_app() -> FastAPI:
                     period_yyyymm=item.period_yyyymm,
                     label=item.label,
                     invoice_number=item.invoice_number,
+                    amount_local=float(item.amount_local),
                     amount_base=float(item.amount_base),
                     amount_eur=float(item.amount_eur),
                     currency=item.currency,
