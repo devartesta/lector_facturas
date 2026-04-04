@@ -639,9 +639,25 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
     sl = _build_sl_snapshot(months=months, database_url=database_url, settings=settings)
     ltd = _build_ltd_snapshot(months=months, database_url=database_url, settings=settings)
     inc = _build_inc_snapshot(months=months, database_url=database_url, settings=settings)
+    fx_service = EcbFxService()
     base_maps: dict[str, dict[str, Decimal]] = {}
     eur_maps: dict[str, dict[str, Decimal]] = {}
     source_rows = {"sl": _snapshot_row_map(sl), "ltd": _snapshot_row_map(ltd), "inc": _snapshot_row_map(inc)}
+    services_external_by_month: dict[str, Decimal] = {month: Decimal("0") for month in months}
+
+    for bundle in [collect_pyg_sl_data(year=year, database_url=database_url) for year in _years_for_months(months)]:
+        for row in bundle.service_rows:
+            if row.yyyymm not in months:
+                continue
+            if row.line_item in {"Ltd", "Inc"} or row.detail == "renting_cnc":
+                continue
+            services_external_by_month[row.yyyymm] += _to_currency(
+                fx_service,
+                row.amount_net,
+                row.currency,
+                CONSOLIDATED_REPORTING_CURRENCY,
+                row.yyyymm,
+            )
 
     def load(code: str, month: str, company_key: str) -> Decimal:
         row = source_rows[company_key].get(code)
@@ -655,7 +671,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _set_amount(base_maps, "shopify_ltd", month, load("product_sales", month, "ltd"))
         _set_amount(base_maps, "shopify_inc", month, load("product_sales", month, "inc"))
         _set_amount(base_maps, "marketplaces", month, load("marketplaces", month, "sl"))
-        _set_amount(base_maps, "services", month, load("services_external", month, "sl"))
+        _set_amount(base_maps, "services", month, services_external_by_month[month])
         _set_amount(base_maps, "rappels", month, load("rappels", month, "sl"))
         _set_amount(base_maps, "supplies", month, load("supplies", month, "sl"))
         _set_amount(base_maps, "otros_ingresos", month, load("otros_ingresos_group", month, "sl") + load("otros_ingresos_group", month, "ltd") + load("otros_ingresos_group", month, "inc"))

@@ -133,11 +133,28 @@ class PygConsistencyTests(unittest.TestCase):
                 _snapshot_row("diferencias_divisas_group", "1"),
             ),
         )
+        sl_bundle = PygSlDataBundle(
+            year=2026,
+            generated_at=datetime(2026, 4, 4, 12, 0, 0),
+            shopify_rows=(),
+            marketplace_rows=(),
+            rappel_rows=(),
+            supplies_rows=(),
+            service_rows=(
+                StageRow("202601", "SL", "HANNUN", "services", Decimal("4"), "EUR", "test"),
+                StageRow("202601", "SL", "HANNUN", "renting_cnc", Decimal("5"), "EUR", "test"),
+            ),
+            expense_rows=(),
+            payment_fee_rows=(),
+            provider_catalog_rows=(),
+            shopify_markets=("ES",),
+        )
 
         with (
             patch("lector_facturas.pyg_snapshot._build_sl_snapshot", return_value=sl_snapshot),
             patch("lector_facturas.pyg_snapshot._build_ltd_snapshot", return_value=ltd_snapshot),
             patch("lector_facturas.pyg_snapshot._build_inc_snapshot", return_value=inc_snapshot),
+            patch("lector_facturas.pyg_snapshot.collect_pyg_sl_data", return_value=sl_bundle),
         ):
             snapshot = _build_consolidated_snapshot(months=["202601"], database_url="postgres://ignored", settings=None)
 
