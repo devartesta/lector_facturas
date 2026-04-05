@@ -402,10 +402,10 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
         ["entity", COMPANY_CODE],
         ["year", bundle.year],
         ["generated_at_utc", generated_at_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")],
-        ["pct_staff_uk", 0.20],
-        ["pct_staff_us", 0.15],
-        ["pct_admin_uk", 0.20],
-        ["pct_admin_us", 0.15],
+        ["pct_staff_uk", 0.15],
+        ["pct_staff_us", 0.10],
+        ["pct_admin_uk", 0.15],
+        ["pct_admin_us", 0.10],
     ])
     _sheet(wb, "i-shopify-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], shopify_sheet_rows)
     _sheet(wb, "i-marketplaces-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], marketplace_sheet_rows)
@@ -414,6 +414,12 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
     _sheet(wb, "i-services-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], service_sheet_rows)
     _sheet(wb, "g-expenses-sl", ["yyyymm", "entity", "category", "subcategory", "supplier_code", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], expense_sheet_rows)
     _sheet(wb, "g-payment-fees-sl", ["yyyymm", "entity", "supplier_code", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source"], payment_fee_sheet_rows)
+    fx_rate_rows = _ensure_monthly_fx_rows(
+        fx_rate_rows,
+        year=bundle.year,
+        fx_service=fx_service,
+        currencies=("GBP", "USD"),
+    )
     _sheet(wb, "fx-rates", ["yyyymm", "rate_date", "currency_original", "reporting_currency", "reference_rate", "fx_rate", "source"], [[r.yyyymm, r.rate_date, r.currency_original, r.reporting_currency, float(r.reference_rate), float(r.fx_rate), r.source] for r in fx_rate_rows])
     _sheet(wb, "catalog-sl", ["supplier_code", "supplier_name", "current_folder", "destination_path", "notes"], [[r.supplier_code, r.supplier_name, r.current_folder, r.destination_path, r.notes] for r in bundle.provider_catalog_rows])
     # Royalties desglosados por scope (uk, us) para shared services
@@ -605,6 +611,32 @@ def _dedupe_fx_rows(rows: tuple[FxRateAuditRow, ...]) -> tuple[FxRateAuditRow, .
     unique: dict[tuple[str, str, str], FxRateAuditRow] = {}
     for row in rows:
         unique[(row.yyyymm, row.currency_original, row.reporting_currency)] = row
+    return tuple(sorted(unique.values(), key=lambda item: (item.yyyymm, item.currency_original, item.reporting_currency)))
+
+
+def _ensure_monthly_fx_rows(
+    rows: tuple[FxRateAuditRow, ...],
+    *,
+    year: int,
+    fx_service: EcbFxService,
+    currencies: tuple[str, ...],
+) -> tuple[FxRateAuditRow, ...]:
+    unique: dict[tuple[str, str, str], FxRateAuditRow] = {
+        (row.yyyymm, row.currency_original, row.reporting_currency): row
+        for row in rows
+    }
+    for yyyymm in month_keys(year):
+        for currency in currencies:
+            key = (yyyymm, currency, REPORTING_CURRENCY)
+            if key in unique:
+                continue
+            _, audit = fx_service.convert(
+                amount=Decimal("1"),
+                source_currency=currency,
+                reporting_currency=REPORTING_CURRENCY,
+                yyyymm=yyyymm,
+            )
+            unique[key] = audit
     return tuple(sorted(unique.values(), key=lambda item: (item.yyyymm, item.currency_original, item.reporting_currency)))
 
 
