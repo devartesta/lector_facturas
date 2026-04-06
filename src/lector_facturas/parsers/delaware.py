@@ -10,13 +10,13 @@ import re
 from pypdf import PdfReader
 
 
-COMPANY_NAME = "ARTESTA STORES (UK) LTD"
-ISSUER_COMPANY_NAME = "YOUR ACCOUNTS AND TAXES"
-SUPPLIER_CODE = "YOURACCOUNTSTAXES"
+COMPANY_NAME = "ARTESTA INC"
+ISSUER_COMPANY_NAME = "DELAWARE CORPORATE HEADQUARTERS LLC"
+SUPPLIER_CODE = "DELAWARE"
 
 
 @dataclass(frozen=True)
-class YourAccountsAndTaxesInvoice:
+class DelawareInvoice:
     supplier_code: str
     supplier_name: str
     issuer_company_name: str
@@ -33,7 +33,7 @@ class YourAccountsAndTaxesInvoice:
     net_amount: Decimal
     original_filename: str
     sender_email: str
-    parser_name: str = "youraccountstaxes"
+    parser_name: str = "delaware"
     parser_confidence: Decimal = Decimal("0.9980")
 
     @property
@@ -53,33 +53,22 @@ class YourAccountsAndTaxesInvoice:
         }
 
 
-def parse_youraccountstaxes_pdf(path: Path) -> YourAccountsAndTaxesInvoice:
+def parse_delaware_pdf(path: Path) -> DelawareInvoice:
     text = "\n".join((page.extract_text() or "") for page in PdfReader(str(path)).pages)
-    return parse_youraccountstaxes_text(text, original_filename=path.name)
+    return parse_delaware_text(text, original_filename=path.name)
 
 
-def parse_youraccountstaxes_text(text: str, *, original_filename: str) -> YourAccountsAndTaxesInvoice:
+def parse_delaware_text(text: str, *, original_filename: str) -> DelawareInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "")
     invoice_number = _extract(normalized, r"Invoice Number\s+([A-Z0-9-]+)")
-    invoice_date = datetime.strptime(_extract(normalized, r"Invoice Date\s+([0-9]{1,2} [A-Za-z]{3} [0-9]{4})"), "%d %b %Y").date()
-    year_match = re.search(r"year\s+ending\s+Dec\s+([0-9]{4})", normalized, flags=re.IGNORECASE)
-    billing_year = int(year_match.group(1)) if year_match else invoice_date.year
-    billing_period_start = date(billing_year, 1, 1)
-    billing_period_end = date(billing_year, 12, 31)
-    net_amount = _parse_decimal(_extract(normalized, r"Subtotal\s+([0-9,]+\.[0-9]{2})"))
-    vat_match = re.search(r"TOTAL\s+VAT\s+20%\s+([0-9,]+\.[0-9]{2})", normalized, flags=re.IGNORECASE | re.DOTALL)
-    if vat_match:
-        vat_amount = _parse_decimal(vat_match.group(1))
-        vat_percent = Decimal("20")
-    else:
-        zero_rated_match = re.search(r"TOTAL\s+ZERO\s+RATED\s+EC\s+SERVICES\s+([0-9,]+\.[0-9]{2})", normalized, flags=re.IGNORECASE | re.DOTALL)
-        if zero_rated_match:
-            vat_amount = _parse_decimal(zero_rated_match.group(1))
-            vat_percent = Decimal("0")
-        else:
-            raise ValueError("Could not extract Your Accounts and Taxes VAT amount.")
-    gross_amount = _parse_decimal(_extract(normalized, r"TOTAL GBP\s+([0-9,]+\.[0-9]{2})"))
-    return YourAccountsAndTaxesInvoice(
+    invoice_date = datetime.strptime(
+        _extract(normalized, r"Invoice Date\s+([A-Za-z]+ [0-9]{2}, [0-9]{4})"),
+        "%B %d, %Y",
+    ).date()
+    gross_amount = _parse_money(_extract(normalized, r"Total\s+\$([0-9,]+\.[0-9]{2})"))
+    billing_period_start = date(invoice_date.year, invoice_date.month, 1)
+    billing_period_end = date(invoice_date.year, invoice_date.month, calendar.monthrange(invoice_date.year, invoice_date.month)[1])
+    return DelawareInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
         issuer_company_name=ISSUER_COMPANY_NAME,
@@ -89,10 +78,10 @@ def parse_youraccountstaxes_text(text: str, *, original_filename: str) -> YourAc
         billing_period_start=billing_period_start,
         billing_period_end=billing_period_end,
         period_yyyymm=invoice_date.strftime("%Y%m"),
-        currency_code="GBP",
-        vat_percent=vat_percent,
-        net_amount=net_amount,
-        vat_amount=vat_amount,
+        currency_code="USD",
+        vat_percent=Decimal("0"),
+        net_amount=gross_amount,
+        vat_amount=Decimal("0"),
         gross_amount=gross_amount,
         original_filename=original_filename,
         sender_email="",
@@ -102,9 +91,9 @@ def parse_youraccountstaxes_text(text: str, *, original_filename: str) -> YourAc
 def _extract(text: str, pattern: str) -> str:
     match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
     if not match:
-        raise ValueError(f"Could not extract Your Accounts and Taxes field with pattern: {pattern}")
+        raise ValueError(f"Could not extract Delaware field with pattern: {pattern}")
     return match.group(1).strip()
 
 
-def _parse_decimal(raw: str) -> Decimal:
+def _parse_money(raw: str) -> Decimal:
     return Decimal(raw.replace(",", ""))

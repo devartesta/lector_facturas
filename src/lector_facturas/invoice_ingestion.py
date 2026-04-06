@@ -22,6 +22,7 @@ from lector_facturas.parsers.canva import parse_canva_pdf
 from lector_facturas.parsers.claris import parse_claris_pdf
 from lector_facturas.parsers.continuum import parse_continuum_pdf
 from lector_facturas.parsers.correos import parse_correos_pdf
+from lector_facturas.parsers.delaware import parse_delaware_pdf
 from lector_facturas.parsers.dct import parse_dct_pdf
 from lector_facturas.parsers.godaddy import parse_godaddy_pdf
 from lector_facturas.parsers.gls import parse_gls_ocr_text, parse_gls_pdf
@@ -127,6 +128,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("CONTINUUM", "continuum", parse_continuum_pdf, sender_contains=("continuum",), filename_contains=("continuum advisory", "from_continuum"), text_contains=("continuum advisory llc",)),
     ParserRule("CORREOSCAN", "correos", parse_correos_pdf, sender_contains=("correoscan",)),
     ParserRule("CORREOS", "correos", parse_correos_pdf, sender_contains=("correos",), filename_contains=("4004",), text_contains=("sociedad est. correos", "correos y tel")),
+    ParserRule("DELAWARE", "delaware", parse_delaware_pdf, text_contains=("delaware corporate headquarters llc", "pennsylvania renewal filing",)),
     ParserRule("DCT", "dct", parse_dct_pdf, sender_contains=("dct.de",), filename_contains=("re_26-",)),
     ParserRule("GODADDY", "godaddy", parse_godaddy_pdf, sender_contains=("godaddy",), filename_contains=("godaddy",), text_contains=("godaddy", "go daddy")),
     ParserRule("GLS", "gls", parse_gls_pdf, sender_contains=("rgtmensajeros.com",), filename_contains=("escaneo",), text_contains=("rgt logistica", "rgt mensajeros")),
@@ -134,6 +136,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("GOOGLEWORKSPACE", "googleworkspace", parse_googleworkspace_pdf, filename_contains=("gsuite", "google workspace", "googleworkspace"), sender_contains=("google",), text_contains=("google workspace", "google ireland limited")),
     ParserRule("GORGIAS", "gorgias", parse_gorgias_pdf, filename_contains=("gorgias", "invoice_inc-", "inc-12-"), sender_contains=("gorgias",), text_contains=("gorgias inc",)),
     ParserRule("QHANDS", "qhands", parse_qhands_pdf, filename_contains=("factura_2026-0012",), text_contains=("qhands design", "renting cnc")),
+    ParserRule("YOURACCOUNTSTAXES", "youraccountstaxes", parse_youraccountstaxes_pdf, sender_contains=("youraccountsntaxes",), filename_contains=("inv-",), text_contains=("your accounts and taxes", "tax invoice", "total gbp")),
     ParserRule("HANNUN", "hannun_invoice", parse_hannun_pdf, filename_contains=("vta26-", "factura_h", "factura 2025-"), sender_contains=("hannun",), text_contains=("hannun",)),
     ParserRule("HETZNER", "hetzner", parse_hetzner_pdf, filename_contains=("hetzner",), text_contains=("hetzner online",)),
     ParserRule(
@@ -169,7 +172,6 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("UPS", "ups", parse_ups_pdf, sender_contains=("ups.com",), subject_contains=("ups",), filename_contains=("rechnung",), text_contains=("united parcel service", "rechnungsnr.")),
     ParserRule("VITALY", "vitaly", parse_vitaly_pdf, sender_contains=("vitaly",), filename_contains=("ifc",), text_contains=("vitaly",)),
     ParserRule("YUMAAI", "yumaai", parse_yumaai_pdf, filename_contains=("oqxbyxmp",), sender_contains=("yumaai",), text_contains=("yuma",)),
-    ParserRule("YOURACCOUNTSTAXES", "youraccountstaxes", parse_youraccountstaxes_pdf, sender_contains=("youraccountsntaxes",), filename_contains=("inv-",)),
 )
 
 

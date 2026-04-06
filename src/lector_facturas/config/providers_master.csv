@@ -46,6 +46,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORES (UK) LTD","Shared Services","ARTESTA STORE, S.L.",SHAREDSERVICESSL,expenses/opex/shared-services,Intercompany,
 "ARTESTA STORES (UK) LTD","Your Accounts and Taxes",YOUR ACCOUNTS AND TAXES,YOURACCOUNTSTAXES,expenses/opex/administration,UK accountancy and tax services,
 "ARTESTA INC",Continuum,CONTINUUM ADVISORY LLC,CONTINUUM,expenses/opex/administration,,
+"ARTESTA INC",Delaware,DELAWARE CORPORATE HEADQUARTERS LLC,DELAWARE,expenses/opex/administration,US filing and registered office services,
 "ARTESTA INC",iPostal,IPOSTAL1,IPOSTAL,expenses/opex/administration,Virtual mailbox and mailing address service,support@ipostal1.com
 "ARTESTA INC",QuickBooks,INTUIT INC.,QUICKBOOKS,expenses/opex/administration,Accounting software subscription,quickbooks@notification.intuit.com
 "ARTESTA INC",regus,REGUS,REGUS,expenses/opex/administration,,
