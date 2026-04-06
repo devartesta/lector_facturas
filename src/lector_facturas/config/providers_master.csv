@@ -29,6 +29,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.","709. Rappels",HOME DESIGN LABS S.L.,LIVITUM,income/other_income/rappels,Rappel issued to Livitum,
 "ARTESTA STORE, S.L.",Artlink,ART LINK BALTIC OU,ARTLINK,expenses/cogs/manufacturing,Frame purchases and related freight are treated as manufacturing,
 "ARTESTA STORE, S.L.",REVER,REVER,REVER,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",SyncWith,SYNCWITH INC,SYNCWITH,expenses/opex/technology,Monthly subscription invoiced one month in arrears,
 "ARTESTA STORES (UK) LTD",REVER,REVER,REVER,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",Artistas,ARTIST ROYALTIES,ROYALTIES,expenses/cogs/royalties,Artist royalties received and issued by Artesta,
 "ARTESTA STORE, S.L.",Shopify,SHOPIFY,SHOPIFY,expenses/opex/technology,,

@@ -51,6 +51,7 @@ from lector_facturas.parsers.rever import parse_rever_pdf
 from lector_facturas.parsers.shared_services import parse_shared_services_pdf
 from lector_facturas.parsers.shopify import parse_shopify_pdf
 from lector_facturas.parsers.spring import parse_spring_pdf
+from lector_facturas.parsers.syncwith import parse_syncwith_pdf
 from lector_facturas.parsers.tgi import parse_tgi_pdf
 from lector_facturas.parsers.torras import parse_torras_pdf
 from lector_facturas.parsers.ups import parse_ups_pdf
@@ -165,6 +166,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("REVER", "rever", parse_rever_pdf, filename_contains=("rvr-", "suppliednote", "invoice-rvr"), sender_contains=("rever",)),
     ParserRule("SHAREDSERVICESSL", "shared_services", parse_shared_services_pdf, filename_contains=("factura_202",), subject_contains=("factura_202",)),
     ParserRule("SHOPIFY", "shopify", parse_shopify_pdf, sender_contains=("shopify",), filename_contains=("shopify", "artesta_"), text_contains=("shopify",)),
+    ParserRule("SYNCWITH", "syncwith", parse_syncwith_pdf, filename_contains=("invoice-tadgcdfs",), sender_contains=("syncwith",), text_contains=("syncwith inc", "hello@syncwith.com")),
     ParserRule("SPRINGGDS", "spring", parse_spring_pdf, filename_contains=("e260",), sender_contains=("spring",)),
     ParserRule("TGI", "tgi", parse_tgi_pdf, sender_contains=("tginc.com",), text_contains=("today's graphics inc", "tgi job")),
     ParserRule("TOASTY", "toasty", parse_toasty_pdf, sender_contains=("toasty",), text_contains=("toasty sas", "simon@toasty.family")),
