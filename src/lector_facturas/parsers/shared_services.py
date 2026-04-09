@@ -79,7 +79,8 @@ def parse_shared_services_pdf(path: Path) -> SharedServicesInvoice:
     line_items = _extract_line_items(normalized)
     billing_period_start, billing_period_end = _resolve_period(line_items, invoice_date)
     net_amount = _parse_eur(_extract(normalized, r"Total Base Imponible:\s*([0-9.,]+)\s*€"))
-    vat_amount = _parse_eur(_extract(normalized, r"Total IVA:\s*([0-9.,]+)\s*€"))
+    vat_match = re.search(r"Total IVA:\s*([0-9.,]+)\s*€", normalized, flags=re.IGNORECASE)
+    vat_amount = _parse_eur(vat_match.group(1)) if vat_match else Decimal("0")
     gross_amount = _parse_eur(_extract(normalized, r"TOTAL:\s*([0-9.,]+)\s*€"))
     return SharedServicesInvoice(
         supplier_code=SUPPLIER_CODE,
