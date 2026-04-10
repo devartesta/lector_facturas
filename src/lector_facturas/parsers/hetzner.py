@@ -61,9 +61,10 @@ def parse_hetzner_text(text: str, *, original_filename: str) -> HetznerInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "")
     invoice_number = _extract(normalized, r"Invoice no\.\:\s*([0-9]+)")
     invoice_date = _parse_date(_extract(normalized, r"Invoice date:\s*([0-9]{2}/[0-9]{2}/[0-9]{4})"))
-    period_code = _extract(normalized, r"Storage\s+\(([0-9]{2}/[0-9]{4})\)")
-    month = int(period_code.split("/")[0])
-    year = int(period_code.split("/")[1])
+    # Hetzner labels the underlying storage usage with the previous month, but
+    # Artesta books these invoices in the invoice month for PyG consistency.
+    month = invoice_date.month
+    year = invoice_date.year
     billing_period_start = date(year, month, 1)
     billing_period_end = date(year, month, calendar.monthrange(year, month)[1])
     total_rows = re.findall(r"Total €\s*([0-9.]+)\s*€\s*([0-9.]+)\s*€\s*([0-9.]+)", normalized)

@@ -24,7 +24,7 @@ class HetznerParserTests(unittest.TestCase):
         parsed = parse_hetzner_text(SAMPLE, original_filename="hetzner.pdf")
         self.assertEqual(parsed.invoice_number, "084000638408")
         self.assertEqual(parsed.invoice_date.isoformat(), "2026-01-16")
-        self.assertEqual(parsed.period_yyyymm, "202512")
+        self.assertEqual(parsed.period_yyyymm, "202601")
         self.assertEqual(parsed.net_amount, Decimal("10.90"))
         self.assertEqual(parsed.vat_amount, Decimal("2.29"))
         self.assertEqual(parsed.gross_amount, Decimal("13.19"))
