@@ -36,6 +36,7 @@ from lector_facturas.parsers.hushed import parse_hushed_invoice_pdf, RECEIPT_FIL
 from lector_facturas.parsers.ipostal import parse_ipostal_pdf, parse_ipostal_text
 from lector_facturas.parsers.jondo import parse_jondo_pdf
 from lector_facturas.parsers.konvoai import parse_konvoai_pdf
+from lector_facturas.parsers.lizenzero import parse_lizenzero_pdf
 from lector_facturas.parsers.masmovil import parse_masmovil_pdf
 from lector_facturas.parsers.marketing_ads import parse_google_ads_pdf, parse_meta_ads_pdf
 from lector_facturas.parsers.microsoft import parse_microsoft_pdf
@@ -154,6 +155,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("IPOSTAL", "ipostal", parse_ipostal_pdf, sender_contains=("ipostal",), filename_contains=("ipostal",), text_contains=("ipostal1", "factura para artesta inc", "identificaciones de correo propias")),
     ParserRule("JONDO", "jondo", parse_jondo_pdf, filename_regexes=(r"^as-\d+\.pdf$",), text_contains=("order invoice", "jondo uk", "po number: as-")),
     ParserRule("KONVOAI", "konvoai", parse_konvoai_pdf, filename_contains=("b5f7df3c",), sender_contains=("konvoai",), text_contains=("konvo ai",)),
+    ParserRule("LIZENZERO", "lizenzero", parse_lizenzero_pdf, sender_contains=("lizenzero",), text_contains=("lizenzero", "interzero recycling alliance", "verpackungslizenz")),
     ParserRule("LIVITUM", "rappel", parse_rappel_pdf, filename_contains=("factura_a_",), text_contains=("home design labs", "rappel 2025")),
     ParserRule("MASMOVIL", "masmovil", parse_masmovil_pdf, sender_contains=("masmovil",), subject_contains=("masmovil",), text_contains=("xfera moviles", "masmovil negocios")),
     ParserRule("METAADS", "meta_ads", parse_meta_ads_pdf, sender_contains=("meta", "facebook"), text_contains=("meta platforms ireland", "facebook")),

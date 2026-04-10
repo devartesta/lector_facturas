@@ -18,6 +18,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.",HETZNER,HETZNER ONLINE GMBH,HETZNER,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",HANNUN,HANNUN,HANNUN,expenses/opex/administration,Bidirectional HANNUN relationship; incoming expense invoices and outgoing customer invoices,
 "ARTESTA STORE, S.L.",konvo,KONVO AI,KONVOAI,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Lizenzero,INTERZERO RECYCLING ALLIANCE GMBH,LIZENZERO,expenses/opex/administration,Packaging license,
 "ARTESTA STORE, S.L.","mas movil","XFERA MOVILES, S.A.U.",MASMOVIL,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",Meta,META PLATFORMS IRELAND LIMITED,METAADS,expenses/opex/marketing,,
 "ARTESTA STORE, S.L.",MICROSOFT,MICROSOFT IBERICA S.R.L.,MICROSOFT,expenses/opex/technology,,
