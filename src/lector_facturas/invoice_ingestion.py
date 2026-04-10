@@ -15,6 +15,7 @@ from pypdf import PdfReader
 from lector_facturas.google_drive import GoogleDriveClient
 from lector_facturas.gmail_sync import GmailAttachmentStub, GmailMessageStub, classify_invoice_attachment
 from lector_facturas.parsers.adobe import parse_adobe_pdf
+from lector_facturas.parsers.adeplus import parse_adeplus_pdf
 from lector_facturas.parsers.apphoto import parse_apphoto_pdf
 from lector_facturas.parsers.artesta_income import parse_qhands_pdf, parse_rappel_pdf
 from lector_facturas.parsers.artlink import parse_artlink_pdf
@@ -107,6 +108,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("APPHOTOES", "apphoto", parse_apphoto_pdf, sender_contains=("apphoto.es",), filename_regexes=(r"^\d{4}-1-\d+\.pdf$",)),
     ParserRule("APPHOTOCAN", "apphoto", parse_apphoto_pdf, sender_contains=("apphoto.net",), filename_regexes=(r"^fra\.\d+\.pdf$",)),
     ParserRule("ADOBE", "adobe", parse_adobe_pdf, filename_contains=("iee",), sender_contains=("adobe",), text_contains=("adobe",)),
+    ParserRule("ADEPLUS", "adeplus", parse_adeplus_pdf, filename_contains=("factura-",), text_contains=("adeplus consultores", "servicios integrales en proteccion de datos", "servicios integrales en protección de datos")),
     ParserRule(
         "ARTLINK",
         "artlink",

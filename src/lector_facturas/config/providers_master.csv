@@ -1,5 +1,6 @@
 company,current_folder,provider_name,supplier_code,destination_path,notes,sender_emails
 "ARTESTA STORE, S.L.",ADOBE,ADOBE SYSTEMS SOFTWARE IRELAND LTD,ADOBE,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",Adeplus,"ADEPLUS CONSULTORES, S.L.U.",ADEPLUS,expenses/opex/administration,Data protection services,
 "ARTESTA STORE, S.L.","AP Photo","A P PHOTO INDUSTRIES, S.L.",APPHOTOES,expenses/cogs/manufacturing,,apphoto@apphoto.es
 "ARTESTA STORE, S.L.","AP Photo","A P PHOTO CANARIAS, S.L.",APPHOTOCAN,expenses/cogs/manufacturing,IGIC 7%,info@apphoto.net
 "ARTESTA STORE, S.L.",canva,CANVA PTY. LTD.,CANVA,expenses/opex/technology,,
