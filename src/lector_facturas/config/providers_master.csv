@@ -5,6 +5,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.",canva,CANVA PTY. LTD.,CANVA,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",chatgpt,OPENAI,OPENAI,expenses/opex/technology,Groups ChatGPT and API,
 "ARTESTA STORE, S.L.",CLARIS,"CLARIS GESTIO I DOCUMENTACIO, S.L.",CLARIS,expenses/opex/administration,,
+"ARTESTA STORE, S.L.",Contasimple,"CEGID SMB, S.A.U",CONTASIMPLE,expenses/opex/administration,Accounting software subscription,
 "ARTESTA STORE, S.L.",Correos,CORREOS,CORREOS,expenses/cogs/logistics,Peninsula/Baleares 21% IVA,
 "ARTESTA STORE, S.L.",Correos,CORREOS CANARIAS,CORREOSCAN,expenses/cogs/logistics,Canarias 7% IGIC,
 "ARTESTA STORE, S.L.",DCT,DCT GMBH,DCT,expenses/cogs/manufacturing,,

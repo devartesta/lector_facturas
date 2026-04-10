@@ -20,6 +20,7 @@ from lector_facturas.parsers.artesta_income import parse_qhands_pdf, parse_rappe
 from lector_facturas.parsers.artlink import parse_artlink_pdf
 from lector_facturas.parsers.canva import parse_canva_pdf
 from lector_facturas.parsers.claris import parse_claris_pdf
+from lector_facturas.parsers.contasimple import parse_contasimple_pdf
 from lector_facturas.parsers.continuum import parse_continuum_pdf
 from lector_facturas.parsers.correos import parse_correos_pdf
 from lector_facturas.parsers.delaware import parse_delaware_pdf
@@ -126,6 +127,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ),
     ParserRule("CHOOSE", "choose", parse_choose_pdf, sender_contains=("appchoose",), text_contains=("choose sas", "choose campaign")),
     ParserRule("CLARIS", "claris", parse_claris_pdf, filename_contains=("facturaf",), sender_contains=("claris",), text_contains=("claris gestio",)),
+    ParserRule("CONTASIMPLE", "contasimple", parse_contasimple_pdf, filename_contains=("factura_es-",), text_contains=("cegid smb", "contasimple", "plan ultimate")),
     ParserRule("CONTINUUM", "continuum", parse_continuum_pdf, sender_contains=("continuum",), filename_contains=("continuum advisory", "from_continuum"), text_contains=("continuum advisory llc",)),
     ParserRule("CORREOSCAN", "correos", parse_correos_pdf, sender_contains=("correoscan",)),
     ParserRule("CORREOS", "correos", parse_correos_pdf, sender_contains=("correos",), filename_contains=("4004",), text_contains=("sociedad est. correos", "correos y tel")),
