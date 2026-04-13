@@ -9,7 +9,9 @@ Steps (in order):
   6. sales-reports
   7. pyg
 
-On failure of any step, sends an email alert and continues with the next step.
+On failure of any step, logs the error and continues with the next step.
+Email alerts are disabled by default here because a single transient HTTP 500
+should not be treated as a worker outage.
 
 Environment variables:
   API_BASE_URL          Base URL of the lector-facturas API  (required)
@@ -31,8 +33,6 @@ REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
-
-from lector_facturas.review_notifications import send_worker_failure_alert  # noqa: E402
 
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
@@ -105,6 +105,7 @@ def main() -> None:
     bearer_token = os.environ.get("API_SECRET_KEY", "").strip()
     mailbox = os.environ.get("EMAIL_REVIEW_MAILBOX", "andrea@artestastore.com")
     sync_name = os.environ.get("EMAIL_DOWNLOAD_SYNC_NAME", "revision-correo-principal")
+    alerts_enabled = os.environ.get("HOURLY_FAILURE_ALERTS_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 
     now = datetime.now(tz=TIMEZONE)
     mes_yyyymm = now.strftime("%Y%m")
@@ -162,11 +163,14 @@ def main() -> None:
         else:
             print(f"[hourly] <<< {step_name} ERROR ({elapsed:.1f}s): {detail}", flush=True)
             failures.append(step_name)
-            send_worker_failure_alert(
-                worker_name=f"hourly/{step_name}",
-                consecutive_failures=1,
-                last_error=detail[:500],
-            )
+            if alerts_enabled:
+                from lector_facturas.review_notifications import send_worker_failure_alert  # noqa: PLC0415,E402
+
+                send_worker_failure_alert(
+                    worker_name=f"hourly/{step_name}",
+                    consecutive_failures=1,
+                    last_error=detail[:500],
+                )
 
     finished_at = datetime.now(tz=TIMEZONE)
     total = (finished_at - started_at).total_seconds()

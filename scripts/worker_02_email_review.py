@@ -27,7 +27,7 @@ def compute_next_run(*, now: datetime, interval_minutes: int) -> datetime:
 def main() -> None:
     run_url = os.environ.get(
         "EMAIL_REVIEW_RUN_URL",
-        "https://lector-facturas-api-dev.up.railway.app/jobs/email-download/run",
+        "https://lector-facturas-api-dev.up.railway.app/jobs/email-review/run",
     )
     mailbox = os.environ.get("EMAIL_REVIEW_MAILBOX", "andrea@artestastore.com")
     sync_name = os.environ.get("EMAIL_REVIEW_SYNC_NAME", "revision-correo-principal")
