@@ -316,6 +316,15 @@ def parse_with_rule(
                 raise ValueError("QuickBooks OCR requires Google Drive client.")
             ocr_text = drive_client.ocr_pdf_to_text(name=original_filename, content=content)
         return parse_quickbooks_text(ocr_text, original_filename=original_filename)
+    if rule.supplier_code == "TGI":
+        ocr_text = pdf_text
+        if not ocr_text.strip():
+            if drive_client is None:
+                raise ValueError("TGI OCR requires Google Drive client.")
+            ocr_text = drive_client.ocr_pdf_to_text(name=original_filename, content=content)
+        from lector_facturas.parsers.tgi import parse_tgi_text  # noqa: PLC0415
+
+        return parse_tgi_text(ocr_text, original_filename=original_filename)
 
     if rule.supplier_code == "HUSHED":
         # Extract receipt number from original filename e.g. "Receipt-2260-8475.pdf"

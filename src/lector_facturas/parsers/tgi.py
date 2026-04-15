@@ -91,25 +91,49 @@ def parse_tgi_text(text: str, *, original_filename: str) -> TgiInvoice:
 
 def _extract_invoice_number(text: str) -> str:
     match = re.search(r"Invoice\s+Invoice Date.*?\n(\d{6})\n", text, flags=re.DOTALL)
-    if not match:
-        raise ValueError("Could not extract TGI invoice number.")
-    return match.group(1)
+    if match:
+        return match.group(1)
+    match = re.search(r"INVOICE\s+([0-9]{6})\s+Invoice\s+#", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1)
+    match = re.search(r"Invoice\s+#\s*([0-9]{6})", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = re.search(r"Invoice Number\s*:\s*([0-9]{6})", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    raise ValueError("Could not extract TGI invoice number.")
 
 
 def _extract_invoice_date(text: str) -> date:
     match = re.search(r"\n(\d{1,2}/\d{1,2}/\d{2})\nNet", text)
-    if not match:
-        raise ValueError("Could not extract TGI invoice date.")
-    return datetime.strptime(match.group(1), "%m/%d/%y").date()
+    if match:
+        return datetime.strptime(match.group(1), "%m/%d/%y").date()
+    match = re.search(r"Invoice Date\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2})", text, flags=re.IGNORECASE)
+    if match:
+        return datetime.strptime(match.group(1), "%m/%d/%y").date()
+    match = re.search(r"Invoice Date\s*:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2})", text, flags=re.IGNORECASE)
+    if match:
+        return datetime.strptime(match.group(1), "%m/%d/%y").date()
+    raise ValueError("Could not extract TGI invoice date.")
 
 
 def _extract_line_description_and_amount(text: str) -> tuple[str, Decimal]:
     match = re.search(r"\$([\d,]+\.\d{2})([A-Za-z].*?)1\s+Artesta,Inc", text, flags=re.DOTALL)
-    if not match:
-        raise ValueError("Could not extract TGI description and amount.")
-    amount = _parse_decimal(match.group(1))
-    description = " ".join(match.group(2).split())
-    return description, amount
+    if match:
+        amount = _parse_decimal(match.group(1))
+        description = " ".join(match.group(2).split())
+        return description, amount
+    match = re.search(
+        r"Quantity\s+Description\s+Amount\s+1\s+(.+?)\s+\$([\d,]+\.\d{2})\s+Subtotal",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        description = " ".join(match.group(1).split())
+        amount = _parse_decimal(match.group(2))
+        return description, amount
+    raise ValueError("Could not extract TGI description and amount.")
 
 
 def _extract_period_range(description: str, invoice_date: date) -> tuple[date, date]:
@@ -138,7 +162,7 @@ def _extract_period_range(description: str, invoice_date: date) -> tuple[date, d
 
 def _extract_division(description: str) -> str:
     lowered = description.lower()
-    if "shipping" in lowered:
+    if "shipping" in lowered or "freight" in lowered:
         return "logistics"
     if "production" in lowered:
         return "manufacturing"
