@@ -982,7 +982,8 @@ def create_app() -> FastAPI:
     def _to_payment_out(row: dict) -> DocumentPaymentOut:
         from datetime import date as _date
         today = _date.today()
-        status = row.get("payment_status", "pending")
+        supplier_code = str(row.get("supplier_code", "")).upper()
+        status = "paid" if supplier_code == "JONDO" else row.get("payment_status", "pending")
         due = row.get("payment_due_date")
         is_overdue = bool(due and due < today and status not in ("paid",))
         is_settled = bool(status == "direct_debit" and due and due <= today)
@@ -999,9 +1000,9 @@ def create_app() -> FastAPI:
             currency_code=str(row.get("currency_code", "")),
             drive_url=str(row.get("drive_url", "")),
             payment_status=status,
-            payment_date=row.get("payment_date"),
-            payment_method=str(row.get("payment_method", "")),
-            payment_amount=row.get("payment_amount"),
+            payment_date=row.get("payment_date") or (due if supplier_code == "JONDO" else None),
+            payment_method=str(row.get("payment_method", "")) or ("auto_jondo" if supplier_code == "JONDO" else ""),
+            payment_amount=row.get("payment_amount") or (row.get("gross_amount") if supplier_code == "JONDO" else None),
             payment_due_date=due,
             is_overdue=is_overdue,
             is_settled=is_settled,
@@ -1048,6 +1049,7 @@ def create_app() -> FastAPI:
         company_code: str | None = Query(default=None),
         period_yyyymm: str | None = Query(default=None),
         payment_status: str | None = Query(default=None),
+        supplier_code: list[str] | None = Query(default=None),
         overdue_only: bool = Query(default=False),
         store: ReviewStore = Depends(get_store),
     ) -> list[DocumentPaymentOut]:
@@ -1055,6 +1057,7 @@ def create_app() -> FastAPI:
             company_code=company_code,
             period_yyyymm=period_yyyymm,
             payment_status=payment_status,
+            supplier_codes=supplier_code,
             overdue_only=overdue_only,
         )
         return [_to_payment_out(r) for r in rows]
@@ -1064,6 +1067,7 @@ def create_app() -> FastAPI:
         company_code: str | None = Query(default=None),
         period_yyyymm: str | None = Query(default=None),
         payment_status: str | None = Query(default=None),
+        supplier_code: list[str] | None = Query(default=None),
         overdue_only: bool = Query(default=False),
         store: ReviewStore = Depends(get_store),
     ) -> StreamingResponse:
@@ -1072,6 +1076,7 @@ def create_app() -> FastAPI:
             company_code=company_code,
             period_yyyymm=period_yyyymm,
             payment_status=payment_status,
+            supplier_codes=supplier_code,
             overdue_only=overdue_only,
         )
         buf = build_payment_report(rows)

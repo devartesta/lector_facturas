@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import date
+from decimal import Decimal
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -155,3 +157,61 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(summary_payload[0]["company_code"], "SL")
         self.assertEqual(summary_payload[0]["market_code"], "SL-EUR")
         self.assertEqual(summary_payload[0]["payout_count"], 1)
+
+    def test_payment_status_accepts_multiselect_supplier_filter(self) -> None:
+        from lector_facturas.api.app import get_store
+
+        class StubStore:
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def list_documents_for_payment_report(self, **kwargs):
+                self.calls.append(kwargs)
+                return []
+
+        stub_store = StubStore()
+        self.client.app.dependency_overrides[get_store] = lambda: stub_store
+
+        response = self.client.get("/documents/payment-status?supplier_code=JONDO&supplier_code=TGI")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        self.assertEqual(stub_store.calls[0]["supplier_codes"], ["JONDO", "TGI"])
+
+    def test_payment_status_for_jondo_is_normalized_as_paid(self) -> None:
+        from lector_facturas.api.app import get_store
+
+        class StubStore:
+            def list_documents_for_payment_report(self, **kwargs):
+                return [{
+                    "id": "doc-1",
+                    "company_code": "SL",
+                    "supplier_code": "JONDO",
+                    "invoice_number": "INV-1",
+                    "invoice_date": date(2026, 4, 1),
+                    "period_yyyymm": "202604",
+                    "gross_amount": Decimal("120.00"),
+                    "net_amount": Decimal("100.00"),
+                    "currency_code": "EUR",
+                    "drive_url": "https://example.test/invoice",
+                    "payment_status": "pending",
+                    "payment_date": None,
+                    "payment_method": "",
+                    "payment_amount": None,
+                    "payment_due_date": date(2026, 4, 30),
+                    "is_direct_debit": False,
+                    "document_type": "invoice",
+                }]
+
+        self.client.app.dependency_overrides[get_store] = lambda: StubStore()
+
+        response = self.client.get("/documents/payment-status?supplier_code=JONDO")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["supplier_code"], "JONDO")
+        self.assertEqual(payload[0]["payment_status"], "paid")
+        self.assertEqual(payload[0]["payment_method"], "auto_jondo")
+        self.assertEqual(payload[0]["payment_amount"], "120.00")
+        self.assertEqual(payload[0]["payment_date"], "2026-04-30")

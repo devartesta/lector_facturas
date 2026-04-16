@@ -2355,6 +2355,7 @@ class ReviewStore:
         company_code: str | None = None,
         period_yyyymm: str | None = None,
         payment_status: str | None = None,
+        supplier_codes: list[str] | None = None,
         overdue_only: bool = False,
     ) -> list[dict]:
         """Return documents with payment tracking fields, optionally filtered."""
@@ -2382,6 +2383,12 @@ class ReviewStore:
         if payment_status:
             query += " AND d.payment_status = %s"
             params.append(payment_status)
+        if supplier_codes:
+            normalized_codes = [code.upper() for code in supplier_codes if code]
+            if normalized_codes:
+                placeholders = ",".join(["%s"] * len(normalized_codes))
+                query += f" AND d.supplier_code IN ({placeholders})"
+                params.extend(normalized_codes)
         if overdue_only:
             query += " AND d.payment_due_date < CURRENT_DATE AND d.payment_status NOT IN ('paid')"
         query += " ORDER BY d.period_yyyymm, d.company_code, d.supplier_code, d.invoice_number"
