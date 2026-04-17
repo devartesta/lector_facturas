@@ -215,3 +215,76 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["payment_method"], "auto_jondo")
         self.assertEqual(payload[0]["payment_amount"], "120.00")
         self.assertEqual(payload[0]["payment_date"], "2026-04-30")
+
+    def test_payment_report_rows_are_grouped_by_supplier_and_invoice_number(self) -> None:
+        store = ReviewStore(storage_path=Path(self.tmp.name) / "review_items_grouped.json")
+
+        rows = [
+            {
+                "id": "doc-1",
+                "company_code": "SL",
+                "supplier_code": "JONDO",
+                "invoice_number": "AS-100",
+                "invoice_date": date(2026, 4, 1),
+                "period_yyyymm": "202604",
+                "gross_amount": Decimal("10.00"),
+                "net_amount": Decimal("8.00"),
+                "currency_code": "EUR",
+                "drive_url": "https://example.test/1",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": date(2026, 4, 30),
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+            {
+                "id": "doc-2",
+                "company_code": "SL",
+                "supplier_code": "JONDO",
+                "invoice_number": "AS-100",
+                "invoice_date": date(2026, 4, 2),
+                "period_yyyymm": "202604",
+                "gross_amount": Decimal("15.50"),
+                "net_amount": Decimal("12.40"),
+                "currency_code": "EUR",
+                "drive_url": "",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": date(2026, 5, 2),
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+            {
+                "id": "doc-3",
+                "company_code": "SL",
+                "supplier_code": "TGI",
+                "invoice_number": "AS-100",
+                "invoice_date": date(2026, 4, 2),
+                "period_yyyymm": "202604",
+                "gross_amount": Decimal("99.00"),
+                "net_amount": Decimal("80.00"),
+                "currency_code": "EUR",
+                "drive_url": "",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": date(2026, 5, 2),
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+        ]
+
+        grouped = store._aggregate_payment_report_rows(rows)
+
+        self.assertEqual(len(grouped), 2)
+        jondo_row = next(row for row in grouped if row["supplier_code"] == "JONDO")
+        self.assertEqual(jondo_row["gross_amount"], Decimal("25.50"))
+        self.assertEqual(jondo_row["net_amount"], Decimal("20.40"))
+        self.assertEqual(jondo_row["invoice_date"], date(2026, 4, 1))
+        self.assertEqual(jondo_row["payment_due_date"], date(2026, 5, 2))
+        self.assertEqual(jondo_row["drive_url"], "https://example.test/1")

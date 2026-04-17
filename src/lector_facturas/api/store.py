@@ -2394,7 +2394,7 @@ class ReviewStore:
         query += " ORDER BY d.period_yyyymm, d.company_code, d.supplier_code, d.invoice_number"
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
-        return [
+        raw_rows = [
             {
                 "id": str(row[0]),
                 "company_code": str(row[1] or ""),
@@ -2416,6 +2416,99 @@ class ReviewStore:
             }
             for row in rows
         ]
+        return self._aggregate_payment_report_rows(raw_rows)
+
+    def _aggregate_payment_report_rows(self, rows: list[dict]) -> list[dict]:
+        """Collapse duplicate invoice rows for the payment report.
+
+        Rows are grouped by company + supplier + invoice number + currency + document type.
+        Monetary amounts are summed; non-monetary fields are preserved from the first row
+        unless a sensible merged value can be derived.
+        """
+        if not rows:
+            return []
+
+        grouped: dict[tuple[str, str, str, str, str], dict] = {}
+        for row in rows:
+            key = (
+                str(row.get("company_code", "")),
+                str(row.get("supplier_code", "")),
+                str(row.get("invoice_number", "")),
+                str(row.get("currency_code", "")),
+                str(row.get("document_type", "invoice")),
+            )
+            existing = grouped.get(key)
+            if existing is None:
+                grouped[key] = dict(row)
+                continue
+
+            existing["gross_amount"] = self._sum_decimal_values(existing.get("gross_amount"), row.get("gross_amount"))
+            existing["net_amount"] = self._sum_decimal_values(existing.get("net_amount"), row.get("net_amount"))
+            existing["payment_amount"] = self._sum_decimal_values(existing.get("payment_amount"), row.get("payment_amount"))
+            existing["invoice_date"] = self._min_defined_date(existing.get("invoice_date"), row.get("invoice_date"))
+            existing["payment_due_date"] = self._max_defined_date(existing.get("payment_due_date"), row.get("payment_due_date"))
+            existing["payment_date"] = self._max_defined_date(existing.get("payment_date"), row.get("payment_date"))
+            existing["drive_url"] = str(existing.get("drive_url") or row.get("drive_url") or "")
+            existing["is_direct_debit"] = bool(existing.get("is_direct_debit")) or bool(row.get("is_direct_debit"))
+            existing["payment_method"] = self._merge_payment_method(
+                str(existing.get("payment_method", "")),
+                str(row.get("payment_method", "")),
+            )
+            existing["payment_status"] = self._merge_payment_status(
+                str(existing.get("payment_status", "pending")),
+                str(row.get("payment_status", "pending")),
+            )
+
+        return list(grouped.values())
+
+    @staticmethod
+    def _sum_decimal_values(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return left + right
+
+    @staticmethod
+    def _min_defined_date(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return min(left, right)
+
+    @staticmethod
+    def _max_defined_date(left, right):
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return max(left, right)
+
+    @staticmethod
+    def _merge_payment_method(left: str, right: str) -> str:
+        left = left or ""
+        right = right or ""
+        if not left:
+            return right
+        if not right or left == right:
+            return left
+        return left
+
+    @staticmethod
+    def _merge_payment_status(left: str, right: str) -> str:
+        statuses = {left or "pending", right or "pending"}
+        if statuses == {"paid"}:
+            return "paid"
+        if statuses == {"direct_debit"}:
+            return "direct_debit"
+        if "partial" in statuses:
+            return "partial"
+        if "paid" in statuses and ("pending" in statuses or "direct_debit" in statuses):
+            return "partial"
+        if "pending" in statuses:
+            return "pending"
+        return left or right or "pending"
 
     def update_supplier_payment_settings(
         self,
