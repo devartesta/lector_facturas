@@ -7,7 +7,8 @@ Steps (in order):
   4. stock-detail/Proco
   5. stock-detail/TGI
   6. sales-reports
-  7. pyg
+  7. payment-fee-detail
+  8. pyg
 
 On failure of any step, logs the error and continues with the next step.
 Email alerts are disabled by default here because a single transient HTTP 500
@@ -83,7 +84,7 @@ def _summarise(step_name: str, body: str) -> str:
     if step_name.startswith("stock-detail/"):
         return f"  {data.get('drive_file_name', '')}"
 
-    if step_name.startswith("sales-reports") or step_name == "pyg":
+    if step_name.startswith("sales-reports") or step_name.startswith("payment-fee-detail") or step_name == "pyg":
         results = data.get("results", [])
         lines = []
         for r in results:
@@ -136,6 +137,7 @@ def main() -> None:
         ("stock-detail/Proco", f"{api_base}/supply/frame-stock-detail/sync?fabricante=Proco&mes_yyyymm={mes_yyyymm}", None),
         ("stock-detail/TGI",   f"{api_base}/supply/frame-stock-detail/sync?fabricante=TGI&mes_yyyymm={mes_yyyymm}", None),
         ("sales-reports",      f"{api_base}/jobs/sales-reports/run?period_yyyymm={mes_yyyymm}", None),
+        ("payment-fee-detail", f"{api_base}/jobs/payment-fee-detail/run?period_yyyymm={mes_yyyymm}", None),
         ("pyg",                f"{api_base}/jobs/pyg/run", None),
     ]
 
@@ -145,6 +147,7 @@ def main() -> None:
             (f"stock-detail/Proco [{prev_yyyymm}]", f"{api_base}/supply/frame-stock-detail/sync?fabricante=Proco&mes_yyyymm={prev_yyyymm}", None),
             (f"stock-detail/TGI [{prev_yyyymm}]",   f"{api_base}/supply/frame-stock-detail/sync?fabricante=TGI&mes_yyyymm={prev_yyyymm}", None),
             (f"sales-reports [{prev_yyyymm}]",       f"{api_base}/jobs/sales-reports/run?period_yyyymm={prev_yyyymm}", None),
+            (f"payment-fee-detail [{prev_yyyymm}]", f"{api_base}/jobs/payment-fee-detail/run?period_yyyymm={prev_yyyymm}", None),
         ]
 
     started_at = datetime.now(tz=TIMEZONE)

@@ -6,6 +6,7 @@ from decimal import Decimal
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -75,10 +76,14 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(payload["email_sent"])
 
     def test_google_drive_status_reports_missing_config_cleanly(self) -> None:
+        from lector_facturas.api.app import get_settings
+
+        self.client.app.dependency_overrides[get_settings] = lambda: AppSettings()
         response = self.client.get("/integrations/google-drive/status")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["drive_ready"])
+        self.client.app.dependency_overrides.pop(get_settings, None)
 
     def test_google_drive_bootstrap_requires_oauth_config(self) -> None:
         from lector_facturas.api.app import get_settings
@@ -373,3 +378,25 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(jondo_row["invoice_date"], date(2026, 4, 1))
         self.assertEqual(jondo_row["payment_due_date"], date(2026, 5, 2))
         self.assertEqual(jondo_row["drive_url"], "https://example.test/1")
+
+    def test_payment_fee_detail_job_runs_for_all_companies(self) -> None:
+        Result = type("Result", (), {})
+
+        def _fake_sync(*, settings, company_code, period_yyyymm):
+            result = Result()
+            result.company_code = company_code
+            result.period_yyyymm = period_yyyymm
+            result.drive_file_name = f"payment_fees_{company_code.lower()}_{period_yyyymm}.xlsx"
+            return result
+
+        with patch("lector_facturas.api.app.sync_payment_fee_detail_to_drive", side_effect=_fake_sync):
+            response = self.client.post("/jobs/payment-fee-detail/run?period_yyyymm=202603")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["period_yyyymm"], "202603")
+        self.assertEqual(
+            [item["step"] for item in payload["results"]],
+            ["payment_fee_detail/SL", "payment_fee_detail/LTD", "payment_fee_detail/INC"],
+        )
+        self.assertTrue(all(item["status"] == "ok" for item in payload["results"]))

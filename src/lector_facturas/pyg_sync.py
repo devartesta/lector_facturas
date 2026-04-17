@@ -3,11 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from lector_facturas.api.store import ReviewStore
 from lector_facturas.pyg_consolidated_workbook import build_pyg_consolidated_workbook, collect_pyg_consolidated_data, default_output_path as default_output_path_consolidated
 from lector_facturas.google_drive import GoogleDriveClient
 from lector_facturas.pyg_inc_workbook import build_pyg_inc_workbook, collect_pyg_inc_data, default_output_path as default_output_path_inc
 from lector_facturas.pyg_ltd_workbook import build_pyg_ltd_workbook, collect_pyg_ltd_data, default_output_path as default_output_path_ltd
 from lector_facturas.pyg_sl_workbook import build_pyg_sl_workbook, collect_pyg_sl_data, default_output_path
+from lector_facturas.payment_fee_detail_workbook import build_payment_fee_detail_workbook, collect_payment_fee_detail, default_output_path as default_payment_fee_output_path
 from lector_facturas.settings import AppSettings
 from lector_facturas.stock_detail_workbook import StockDetailBundle, collect_stock_detail, build_stock_detail_bytes
 from lector_facturas.payment_reconciliation import build_reconciliation
@@ -59,6 +61,18 @@ class PygConsolidatedSyncResult:
     replaced_file_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PaymentFeeDetailSyncResult:
+    company_code: str
+    period_yyyymm: str
+    drive_folder_id: str
+    drive_file_id: str
+    drive_file_name: str
+    drive_file_url: str
+    local_output_path: str
+    replaced_file_ids: tuple[str, ...]
+
+
 def sync_pyg_sl_to_drive(
     *,
     settings: AppSettings,
@@ -74,6 +88,7 @@ def sync_pyg_sl_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("SL",))
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path(root, year)
@@ -118,6 +133,7 @@ def sync_pyg_inc_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("INC",))
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_inc(root, year)
@@ -162,6 +178,7 @@ def sync_pyg_ltd_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("LTD",))
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_ltd(root, year)
@@ -206,6 +223,7 @@ def sync_pyg_consolidated_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("SL", "LTD", "INC"))
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_consolidated(root, year)
@@ -226,6 +244,79 @@ def sync_pyg_consolidated_to_drive(
     )
     return PygConsolidatedSyncResult(
         year=year,
+        drive_folder_id=target_folder_id,
+        drive_file_id=str(created["id"]),
+        drive_file_name=str(created["name"]),
+        drive_file_url=str(created.get("webViewLink", "")),
+        local_output_path=str(output_path),
+        replaced_file_ids=tuple(str(item["id"]) for item in existing),
+    )
+
+
+_PAYMENT_FEE_FOLDER_PATH = ["expenses", "cogs", "payment_fees"]
+
+
+def sync_payment_fee_detail_to_drive(
+    *,
+    settings: AppSettings,
+    company_code: str,
+    period_yyyymm: str,
+    drive_folder_id: str | None = None,
+    file_name: str | None = None,
+    output_root: Path | None = None,
+) -> PaymentFeeDetailSyncResult:
+    if not settings.google_oauth_ready:
+        raise RuntimeError("Google OAuth is not configured.")
+    if not settings.drive_root_folder_id and not drive_folder_id:
+        raise RuntimeError("Google Drive root folder is not configured.")
+
+    database_url = _database_url()
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
+    normalized_company = company_code.upper()
+    entity_name = _COMPANY_ENTITY.get(normalized_company)
+    if not entity_name:
+        raise ValueError(
+            f"Unknown company_code '{company_code}'. Expected one of: {list(_COMPANY_ENTITY)}"
+        )
+
+    _rebuild_payment_fee_summaries(database_url=database_url, company_codes=(normalized_company,))
+
+    root = output_root or Path(__file__).resolve().parents[2]
+    output_path = default_payment_fee_output_path(root, normalized_company, period_yyyymm)
+    bundle = collect_payment_fee_detail(
+        company_code=normalized_company,
+        period_yyyymm=period_yyyymm,
+        database_url=database_url,
+    )
+    build_payment_fee_detail_workbook(bundle, output_path)
+
+    client = GoogleDriveClient(settings.to_drive_config())
+
+    if drive_folder_id:
+        target_folder_id = drive_folder_id
+    else:
+        year = period_yyyymm[:4]
+        folder_id = settings.drive_root_folder_id
+        for part in [entity_name, year, period_yyyymm] + _PAYMENT_FEE_FOLDER_PATH:
+            folder_id = str(client.ensure_folder(name=part, parent_id=folder_id)["id"])
+        target_folder_id = folder_id
+
+    target_name = file_name or f"payment_fees_{normalized_company.lower()}_{period_yyyymm}.xlsx"
+    existing = client.list_files(parent_id=target_folder_id, name=target_name)
+    for item in existing:
+        client.trash_file(file_id=str(item["id"]))
+    created = client.upload_file(
+        name=target_name,
+        parent_id=target_folder_id,
+        content=output_path.read_bytes(),
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    return PaymentFeeDetailSyncResult(
+        company_code=normalized_company,
+        period_yyyymm=period_yyyymm,
         drive_folder_id=target_folder_id,
         drive_file_id=str(created["id"]),
         drive_file_name=str(created["name"]),
@@ -606,3 +697,9 @@ def _database_url() -> str:
     import os
 
     return os.environ.get("DATABASE_URL", "").strip()
+
+
+def _rebuild_payment_fee_summaries(*, database_url: str, company_codes: tuple[str, ...]) -> None:
+    store = ReviewStore(database_url=database_url)
+    for company_code in company_codes:
+        store.rebuild_payment_fee_monthly_summary(company_code=company_code.upper())

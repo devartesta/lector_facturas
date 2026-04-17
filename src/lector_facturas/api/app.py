@@ -27,6 +27,9 @@ from lector_facturas.api.schemas import (
     MailSyncRunOut,
     MailSyncStateOut,
     PaymentFeeSummaryOut,
+    PaymentFeeDetailRunOut,
+    PaymentFeeDetailSyncIn,
+    PaymentFeeDetailSyncOut,
     PaymentFeeSyncIn,
     PaymentFeeSyncOut,
     PaymentOrderTransactionOut,
@@ -84,7 +87,7 @@ from lector_facturas.invoice_ingestion import (
     process_validation_drive_file,
 )
 from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, ShopifyPaymentsClient
-from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
+from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_fee_detail_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
 from lector_facturas.pyg_cell_detail import build_pyg_cell_detail
 from lector_facturas.pyg_snapshot import build_pyg_snapshot, month_window
 from lector_facturas.review_notifications import (
@@ -922,16 +925,17 @@ def create_app() -> FastAPI:
 
     @app.post("/jobs/pyg/run", response_model=PygRunOut)
     def run_pyg(
+        year: int | None = None,
         settings: AppSettings = Depends(get_settings),
     ) -> PygRunOut:
         """Regenerate all PYGs (SL, LTD, INC, Consolidated) for the current year."""
         from datetime import datetime as _dt
-        year = _dt.now().year
+        target_year = year or _dt.now().year
         tasks = [
-            ("PYG SL",          lambda: sync_pyg_sl_to_drive(settings=settings, year=year)),
-            ("PYG LTD",         lambda: sync_pyg_ltd_to_drive(settings=settings, year=year)),
-            ("PYG INC",         lambda: sync_pyg_inc_to_drive(settings=settings, year=year)),
-            ("PYG Consolidated",lambda: sync_pyg_consolidated_to_drive(settings=settings, year=year)),
+            ("PYG SL",          lambda: sync_pyg_sl_to_drive(settings=settings, year=target_year)),
+            ("PYG LTD",         lambda: sync_pyg_ltd_to_drive(settings=settings, year=target_year)),
+            ("PYG INC",         lambda: sync_pyg_inc_to_drive(settings=settings, year=target_year)),
+            ("PYG Consolidated",lambda: sync_pyg_consolidated_to_drive(settings=settings, year=target_year)),
         ]
         results: list[HourlyStepResult] = []
         for name, fn in tasks:
@@ -940,7 +944,30 @@ def create_app() -> FastAPI:
                 results.append(HourlyStepResult(step=name, status="ok", detail=str(getattr(result, "drive_file_name", result))))
             except Exception as exc:
                 results.append(HourlyStepResult(step=name, status="error", detail=str(exc)))
-        return PygRunOut(year=year, results=results)
+        return PygRunOut(year=target_year, results=results)
+
+    @app.post("/jobs/payment-fee-detail/run", response_model=PaymentFeeDetailRunOut)
+    def run_payment_fee_detail(
+        period_yyyymm: str | None = None,
+        settings: AppSettings = Depends(get_settings),
+    ) -> PaymentFeeDetailRunOut:
+        """Regenerate payment fee detail reports for SL, LTD and INC."""
+        from datetime import datetime as _dt
+
+        period = period_yyyymm or _dt.now().strftime("%Y%m")
+        companies = ["SL", "LTD", "INC"]
+        results: list[HourlyStepResult] = []
+        for company in companies:
+            try:
+                result = sync_payment_fee_detail_to_drive(
+                    settings=settings,
+                    company_code=company,
+                    period_yyyymm=period,
+                )
+                results.append(HourlyStepResult(step=f"payment_fee_detail/{company}", status="ok", detail=result.drive_file_name))
+            except Exception as exc:
+                results.append(HourlyStepResult(step=f"payment_fee_detail/{company}", status="error", detail=str(exc)))
+        return PaymentFeeDetailRunOut(period_yyyymm=period, results=results)
 
     @app.get("/validation/queue", response_model=list[IngestionQueueItemOut])
     def list_validation_queue(
@@ -1469,6 +1496,34 @@ def create_app() -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return [PaymentFeeSyncOut(**result.__dict__) for result in results]
+
+    @app.post("/expenses/payment-fee-detail/sync", response_model=PaymentFeeDetailSyncOut)
+    def sync_payment_fee_detail(
+        payload: PaymentFeeDetailSyncIn,
+        settings: AppSettings = Depends(get_settings),
+    ) -> PaymentFeeDetailSyncOut:
+        try:
+            result = sync_payment_fee_detail_to_drive(
+                settings=settings,
+                company_code=payload.company_code,
+                period_yyyymm=payload.period_yyyymm,
+                drive_folder_id=payload.drive_folder_id or None,
+                file_name=payload.file_name or None,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return PaymentFeeDetailSyncOut(
+            company_code=result.company_code,
+            period_yyyymm=result.period_yyyymm,
+            drive_folder_id=result.drive_folder_id,
+            drive_file_id=result.drive_file_id,
+            drive_file_name=result.drive_file_name,
+            drive_file_url=result.drive_file_url,
+            local_output_path=result.local_output_path,
+            replaced_file_ids=list(result.replaced_file_ids),
+        )
 
     @app.post("/integrations/pyg/sl/sync", response_model=PygSlSyncOut)
     def sync_pyg_sl(

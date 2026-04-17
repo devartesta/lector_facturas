@@ -218,6 +218,24 @@ class PaymentFeeSyncOut(BaseModel):
     date_to: str
 
 
+class PaymentFeeDetailSyncIn(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    drive_folder_id: str = ""
+    file_name: str = ""
+
+
+class PaymentFeeDetailSyncOut(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    drive_folder_id: str
+    drive_file_id: str
+    drive_file_name: str
+    drive_file_url: str = ""
+    local_output_path: str
+    replaced_file_ids: list[str] = Field(default_factory=list)
+
+
 class PaymentOrderTransactionOut(BaseModel):
     id: str
     platform: PaymentPlatform
@@ -493,6 +511,11 @@ class SalesReportsRunOut(BaseModel):
 
 class PygRunOut(BaseModel):
     year: int
+    results: list[HourlyStepResult]
+
+
+class PaymentFeeDetailRunOut(BaseModel):
+    period_yyyymm: str
     results: list[HourlyStepResult]
 
 
