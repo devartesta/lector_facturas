@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -16,7 +18,7 @@ from lector_facturas.payment_fees import (
     SHOPIFY_PLATFORM,
     PaymentFeeSummaryRow,
     PaymentOrderTransaction,
-    summary_period_yyyymm,
+    parse_datetime,
 )
 
 
@@ -27,6 +29,7 @@ _BOLD = Font(bold=True)
 _THIN = Side(style="thin", color="D9D9D9")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _MONEY_FMT = '#,##0.00;[Red](#,##0.00);-'
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 _COMPANY_LABELS = {
     "SL": "Artesta Store, S.L",
@@ -52,12 +55,6 @@ def default_output_path(root: Path, company_code: str, period_yyyymm: str) -> Pa
 def collect_payment_fee_detail(*, company_code: str, period_yyyymm: str, database_url: str | None) -> PaymentFeeDetailBundle:
     store = ReviewStore(database_url=database_url) if database_url else ReviewStore()
     normalized_company = company_code.upper()
-    summaries = tuple(
-        store.list_payment_fee_monthly_summary(
-            company_code=normalized_company,
-            period_yyyymm=period_yyyymm,
-        )
-    )
     transactions = tuple(
         tx for tx in store.list_payment_order_transactions(
             company_code=normalized_company,
@@ -65,15 +62,17 @@ def collect_payment_fee_detail(*, company_code: str, period_yyyymm: str, databas
         )
         if _transaction_period(tx) == period_yyyymm
     )
+    summaries = _summaries_from_transactions(transactions)
     shopify_raw_rows = tuple(
         row for row in store.list_shopify_payout_transactions()
         if str(row.get("company_code", "")).upper() == normalized_company
-        and _shopify_raw_period(row) == period_yyyymm
+        and _transaction_month(str(row.get("transaction_date", "") or "")) == period_yyyymm
+        and str(row.get("type", "")).lower() != "transfer"
     )
     paypal_raw_rows = tuple(
         row for row in store.list_paypal_transactions_raw()
         if str(row.get("company_code", "")).upper() == normalized_company
-        and _paypal_raw_period(row) == period_yyyymm
+        and _transaction_month(str(row.get("transaction_date", "") or "")) == period_yyyymm
     )
     return PaymentFeeDetailBundle(
         company_code=normalized_company,
@@ -167,7 +166,9 @@ def _build_summary_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
         if col in {4, 5}:
             cell.alignment = Alignment(horizontal="center")
 
-    _set_widths(ws, [14, 14, 12, 12, 10, 14, 16, 18, 14, 14])
+    payout_start_row = totals_row + 3
+    _build_shopify_payout_timing_section(ws, bundle, payout_start_row)
+    _set_widths(ws, [18, 14, 12, 14, 12, 14, 16, 18, 14, 14])
 
 
 def _build_transaction_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
@@ -230,7 +231,7 @@ def _build_shopify_raw_sheet(ws, rows: tuple[dict, ...]) -> None:
     for row_idx, row in enumerate(rows, start=2):
         values = [
             row.get("transaction_date", ""),
-            row.get("type", ""),
+            _display_shopify_type(row),
             row.get("order_name", ""),
             row.get("payout_date", ""),
             row.get("payout_id", ""),
@@ -300,23 +301,121 @@ def _set_widths(ws, widths: list[int]) -> None:
 
 
 def _transaction_period(tx: PaymentOrderTransaction) -> str:
-    return summary_period_yyyymm(tx) if tx.platform == SHOPIFY_PLATFORM else tx.period_yyyymm
+    if tx.platform == SHOPIFY_PLATFORM:
+        return _transaction_month(tx.transaction_date)
+    return tx.period_yyyymm
 
 
-def _shopify_raw_period(row: dict) -> str:
-    payout_date = str(row.get("payout_date", "") or "")
-    if payout_date:
-        return payout_date[:7].replace("-", "")
-    transaction_date = str(row.get("transaction_date", "") or "")
-    return transaction_date[:7].replace("-", "")
-
-
-def _paypal_raw_period(row: dict) -> str:
-    transaction_date = str(row.get("transaction_date", "") or "")
-    return transaction_date[:7].replace("-", "")
+def _transaction_month(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    return parse_datetime(value).astimezone(_MADRID_TZ).strftime("%Y%m")
 
 
 def _to_decimal(value) -> Decimal | None:
     if value in ("", None):
         return None
     return Decimal(str(value))
+
+
+def _summaries_from_transactions(transactions: tuple[PaymentOrderTransaction, ...]) -> tuple[PaymentFeeSummaryRow, ...]:
+    grouped: dict[tuple[str, str, str, str], list[PaymentOrderTransaction]] = defaultdict(list)
+    for tx in transactions:
+        grouped[(tx.company_code, tx.platform, tx.market_code, tx.currency_code)].append(tx)
+
+    rows: list[PaymentFeeSummaryRow] = []
+    for (company_code, platform, market_code, currency_code), items in sorted(grouped.items()):
+        order_names = {tx.order_name for tx in items if tx.order_name}
+        payout_ids = {tx.external_payout_id for tx in items if tx.external_payout_id}
+        fee_amount = sum((tx.fee_amount for tx in items), Decimal("0.00"))
+        chargeback_amount = sum((tx.chargeback_amount for tx in items), Decimal("0.00"))
+        chargeback_fee_amount = sum((tx.chargeback_fee_amount for tx in items), Decimal("0.00"))
+        gross_amount = sum((tx.gross_amount for tx in items), Decimal("0.00"))
+        net_amount = sum((tx.net_amount for tx in items), Decimal("0.00"))
+        rows.append(
+            PaymentFeeSummaryRow(
+                company_code=company_code,
+                period_yyyymm=items[0].period_yyyymm,
+                platform=platform,
+                market_code=market_code,
+                currency_code=currency_code,
+                orders_count=len(order_names),
+                transactions_count=len(items),
+                gross_amount=gross_amount,
+                fee_amount=fee_amount,
+                chargeback_amount=chargeback_amount,
+                chargeback_fee_amount=chargeback_fee_amount,
+                total_cost_amount=fee_amount + chargeback_fee_amount,
+                net_amount=net_amount,
+                payout_count=len(payout_ids),
+            )
+        )
+    return tuple(rows)
+
+
+def _build_shopify_payout_timing_section(ws, bundle: PaymentFeeDetailBundle, start_row: int) -> None:
+    ws.cell(row=start_row, column=1, value="Shopify Payout Timing").font = _BOLD
+    ws.cell(row=start_row + 1, column=1, value="Only Shopify transactions with transaction date in the selected period.")
+
+    headers = ["Payout month", "Transactions", "Fee amount", "Net amount"]
+    header_row = start_row + 3
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col, value=header)
+        cell.fill = _HEADER_FILL
+        cell.font = _WHITE_BOLD
+        cell.border = _BORDER
+        cell.alignment = Alignment(horizontal="center")
+
+    grouped: dict[str, dict[str, Decimal | int]] = defaultdict(
+        lambda: {"transactions": 0, "fee_amount": Decimal("0.00"), "net_amount": Decimal("0.00")}
+    )
+    for row in bundle.shopify_raw_rows:
+        payout_label = _payout_label(str(row.get("payout_date", "") or ""))
+        grouped[payout_label]["transactions"] += 1
+        grouped[payout_label]["fee_amount"] += _to_decimal(row.get("fee")) or Decimal("0.00")
+        grouped[payout_label]["net_amount"] += _to_decimal(row.get("net")) or Decimal("0.00")
+
+    ordered_labels = sorted(grouped.keys(), key=_payout_label_sort_key)
+    for idx, label in enumerate(ordered_labels, start=header_row + 1):
+        values = [
+            label,
+            grouped[label]["transactions"],
+            grouped[label]["fee_amount"],
+            grouped[label]["net_amount"],
+        ]
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=idx, column=col, value=value)
+            cell.border = _BORDER
+            if col >= 3:
+                cell.number_format = _MONEY_FMT
+
+    totals_row = header_row + 1 + len(ordered_labels)
+    ws.cell(row=totals_row, column=1, value="TOTAL").font = _BOLD
+    for col in range(1, len(headers) + 1):
+        cell = ws.cell(row=totals_row, column=col)
+        cell.fill = _SECTION_FILL
+        cell.border = _BORDER
+    if ordered_labels:
+        ws.cell(row=totals_row, column=2, value=f"=SUM(B{header_row + 1}:B{totals_row - 1})")
+        ws.cell(row=totals_row, column=3, value=f"=SUM(C{header_row + 1}:C{totals_row - 1})").number_format = _MONEY_FMT
+        ws.cell(row=totals_row, column=4, value=f"=SUM(D{header_row + 1}:D{totals_row - 1})").number_format = _MONEY_FMT
+
+
+def _payout_label(value: str) -> str:
+    if not value.strip():
+        return "No payout"
+    return _transaction_month(value)
+
+
+def _payout_label_sort_key(label: str) -> tuple[int, str]:
+    if label == "No payout":
+        return (1, label)
+    return (0, label)
+
+
+def _display_shopify_type(row: dict) -> str:
+    value = str(row.get("type", "")).lower()
+    if value == "dispute_withdrawal":
+        return "chargeback"
+    return value

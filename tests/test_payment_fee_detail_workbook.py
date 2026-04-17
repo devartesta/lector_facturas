@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import load_workbook
 
-from lector_facturas.payment_fee_detail_workbook import PaymentFeeDetailBundle, build_payment_fee_detail_workbook
+from lector_facturas.payment_fee_detail_workbook import PaymentFeeDetailBundle, build_payment_fee_detail_workbook, collect_payment_fee_detail
 from lector_facturas.payment_fees import PaymentFeeSummaryRow, PaymentOrderTransaction
 
 
@@ -97,7 +98,23 @@ def test_build_payment_fee_detail_workbook_creates_summary_and_detail_sheets(tmp
     assert ws_summary["A7"].value == "TOTAL"
     assert ws_summary["F6"].value == Decimal("5.00")
     assert ws_summary["I6"].value == Decimal("20.00")
+    assert ws_summary["A10"].value == "Shopify Payout Timing"
+    assert ws_summary["A13"].value == "Payout month"
     ws_detail = workbook["Detail"]
     assert ws_detail["A2"].value == "SHOPIFY"
     assert ws_detail["C2"].value == "AS-1001"
     assert ws_detail["N2"].value == Decimal("20.00")
+
+
+def test_collect_payment_fee_detail_uses_transaction_month_for_shopify_raw() -> None:
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if not database_url:
+        return
+
+    bundle = collect_payment_fee_detail(company_code="SL", period_yyyymm="202603", database_url=database_url)
+
+    assert bundle.shopify_raw_rows
+    fee_sum = sum((Decimal(str(row.get("fee") or "0")) for row in bundle.shopify_raw_rows), Decimal("0.00"))
+    assert fee_sum == Decimal("2910.29")
+    payout_months = {str(row.get("payout_date", ""))[:7] for row in bundle.shopify_raw_rows if row.get("payout_date")}
+    assert "2026-04" in payout_months
