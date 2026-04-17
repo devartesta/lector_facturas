@@ -1035,10 +1035,10 @@ class ReviewStore:
         for summary in summaries:
             if summary.platform == "shopify":
                 fee_amount = shopify_fee_map.get((summary.period_yyyymm, summary.market_code, summary.currency_code), summary.fee_amount)
-                total_cost_amount = fee_amount + summary.chargeback_amount + summary.chargeback_fee_amount
+                total_cost_amount = fee_amount + summary.chargeback_fee_amount
             elif summary.platform == "paypal":
                 fee_amount = paypal_fee_map.get((summary.period_yyyymm, summary.market_code, summary.currency_code), summary.fee_amount)
-                total_cost_amount = fee_amount - summary.chargeback_amount - summary.chargeback_fee_amount
+                total_cost_amount = fee_amount - summary.chargeback_fee_amount
             else:
                 updated.append(summary)
                 continue

@@ -367,9 +367,44 @@ class PaymentFeesTests(unittest.TestCase):
         self.assertEqual(str(shopify_summary.fee_amount), "3.20")
         self.assertEqual(str(shopify_summary.chargeback_amount), "10.00")
         self.assertEqual(str(shopify_summary.chargeback_fee_amount), "5.00")
-        self.assertEqual(str(shopify_summary.total_cost_amount), "18.20")
+        self.assertEqual(str(shopify_summary.total_cost_amount), "8.20")
         self.assertEqual(str(paypal_summary.fee_amount), "-2.60")
         self.assertEqual(str(paypal_summary.total_cost_amount), "-2.60")
+
+    def test_summary_excludes_chargeback_principal_from_total_cost_amount(self) -> None:
+        summary = self.store.rebuild_payment_fee_monthly_summary
+        rows = [
+            PaymentOrderTransaction(
+                id="cb-test-1",
+                platform=SHOPIFY_PLATFORM,
+                company_code="SL",
+                market_code="SL-EUR",
+                currency_code="EUR",
+                order_id="ord-cb-1",
+                order_name="#CB1",
+                external_transaction_id="cb-1",
+                external_payout_id="payout-cb-1",
+                transaction_date="2026-03-10T09:00:00Z",
+                payout_date="2026-03-11T00:00:00Z",
+                transaction_type="chargeback",
+                status="lost",
+                gross_amount="0",
+                fee_amount="0",
+                net_amount="-45.00",
+                chargeback_amount="30.00",
+                chargeback_fee_amount="15.00",
+                is_chargeback=True,
+                raw_payload={},
+            ),
+        ]
+        self.store.upsert_payment_order_transactions(rows)
+        self.store.rebuild_payment_fee_monthly_summary(company_code="SL", platform=SHOPIFY_PLATFORM)
+
+        summary_rows = self.store.list_payment_fee_monthly_summary(platform=SHOPIFY_PLATFORM, period_yyyymm="202603")
+        self.assertEqual(len(summary_rows), 1)
+        self.assertEqual(str(summary_rows[0].chargeback_amount), "30.00")
+        self.assertEqual(str(summary_rows[0].chargeback_fee_amount), "15.00")
+        self.assertEqual(str(summary_rows[0].total_cost_amount), "15.00")
 
     def test_shopify_summary_uses_payout_month_instead_of_transaction_month(self) -> None:
         shopify_tx = PaymentOrderTransaction(

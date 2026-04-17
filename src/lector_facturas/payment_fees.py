@@ -362,7 +362,6 @@ def summarize_payment_transactions(transactions: list[PaymentOrderTransaction]) 
         total_cost_amount = (
             bucket["fee_amount"]
             + bucket["chargeback_fee_amount"]
-            + bucket["chargeback_amount"]
         )
         summary_rows.append(
             PaymentFeeSummaryRow(
