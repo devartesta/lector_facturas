@@ -55,6 +55,12 @@ def default_output_path(root: Path, company_code: str, period_yyyymm: str) -> Pa
 def collect_payment_fee_detail(*, company_code: str, period_yyyymm: str, database_url: str | None) -> PaymentFeeDetailBundle:
     store = ReviewStore(database_url=database_url) if database_url else ReviewStore()
     normalized_company = company_code.upper()
+    summaries = tuple(
+        store.list_payment_fee_monthly_summary(
+            company_code=normalized_company,
+            period_yyyymm=period_yyyymm,
+        )
+    )
     transactions = tuple(
         tx for tx in store.list_payment_order_transactions(
             company_code=normalized_company,
@@ -62,7 +68,6 @@ def collect_payment_fee_detail(*, company_code: str, period_yyyymm: str, databas
         )
         if _transaction_period(tx) == period_yyyymm
     )
-    summaries = _summaries_from_transactions(transactions)
     shopify_raw_rows = tuple(
         row for row in store.list_shopify_payout_transactions()
         if str(row.get("company_code", "")).upper() == normalized_company
@@ -138,10 +143,10 @@ def _build_summary_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
             summary.currency_code,
             summary.transactions_count,
             summary.payout_count,
-            summary.fee_amount,
-            summary.chargeback_fee_amount,
+            abs(summary.fee_amount),
+            abs(summary.chargeback_fee_amount),
             summary.chargeback_amount,
-            summary.total_cost_amount,
+            abs(summary.total_cost_amount),
             summary.net_amount,
         ]
         for col, value in enumerate(values, start=1):
@@ -154,12 +159,20 @@ def _build_summary_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
     ws.cell(row=totals_row, column=1, value="TOTAL").font = _BOLD
     ws.cell(row=totals_row, column=1).fill = _SECTION_FILL
     ws.cell(row=totals_row, column=1).border = _BORDER
+    totals = {
+        4: sum((summary.transactions_count for summary in bundle.summaries), 0),
+        5: sum((summary.payout_count for summary in bundle.summaries), 0),
+        6: sum((abs(summary.fee_amount) for summary in bundle.summaries), Decimal("0.00")),
+        7: sum((abs(summary.chargeback_fee_amount) for summary in bundle.summaries), Decimal("0.00")),
+        8: sum((summary.chargeback_amount for summary in bundle.summaries), Decimal("0.00")),
+        9: sum((abs(summary.total_cost_amount) for summary in bundle.summaries), Decimal("0.00")),
+        10: sum((summary.net_amount for summary in bundle.summaries), Decimal("0.00")),
+    }
     for col in range(2, len(headers) + 1):
         cell = ws.cell(row=totals_row, column=col)
-        if col in {4, 5, 6, 7, 8, 9, 10}:
-            col_letter = get_column_letter(col)
-            cell.value = f"=SUM({col_letter}{start_row + 1}:{col_letter}{totals_row - 1})"
-            if col >= 6:
+        if col in totals:
+            cell.value = totals[col]
+            if col >= 6 and isinstance(totals[col], Decimal):
                 cell.number_format = _MONEY_FMT
         cell.fill = _SECTION_FILL
         cell.border = _BORDER
@@ -317,43 +330,6 @@ def _to_decimal(value) -> Decimal | None:
     if value in ("", None):
         return None
     return Decimal(str(value))
-
-
-def _summaries_from_transactions(transactions: tuple[PaymentOrderTransaction, ...]) -> tuple[PaymentFeeSummaryRow, ...]:
-    grouped: dict[tuple[str, str, str, str], list[PaymentOrderTransaction]] = defaultdict(list)
-    for tx in transactions:
-        grouped[(tx.company_code, tx.platform, tx.market_code, tx.currency_code)].append(tx)
-
-    rows: list[PaymentFeeSummaryRow] = []
-    for (company_code, platform, market_code, currency_code), items in sorted(grouped.items()):
-        order_names = {tx.order_name for tx in items if tx.order_name}
-        payout_ids = {tx.external_payout_id for tx in items if tx.external_payout_id}
-        fee_amount = sum((tx.fee_amount for tx in items), Decimal("0.00"))
-        chargeback_amount = sum((tx.chargeback_amount for tx in items), Decimal("0.00"))
-        chargeback_fee_amount = sum((tx.chargeback_fee_amount for tx in items), Decimal("0.00"))
-        gross_amount = sum((tx.gross_amount for tx in items), Decimal("0.00"))
-        net_amount = sum((tx.net_amount for tx in items), Decimal("0.00"))
-        rows.append(
-            PaymentFeeSummaryRow(
-                company_code=company_code,
-                period_yyyymm=items[0].period_yyyymm,
-                platform=platform,
-                market_code=market_code,
-                currency_code=currency_code,
-                orders_count=len(order_names),
-                transactions_count=len(items),
-                gross_amount=gross_amount,
-                fee_amount=fee_amount,
-                chargeback_amount=chargeback_amount,
-                chargeback_fee_amount=chargeback_fee_amount,
-                total_cost_amount=fee_amount + chargeback_fee_amount,
-                net_amount=net_amount,
-                payout_count=len(payout_ids),
-            )
-        )
-    return tuple(rows)
-
-
 def _build_shopify_payout_timing_section(ws, bundle: PaymentFeeDetailBundle, start_row: int) -> None:
     ws.cell(row=start_row, column=1, value="Shopify Payout Timing").font = _BOLD
     ws.cell(row=start_row + 1, column=1, value="Only Shopify transactions with transaction date in the selected period.")
