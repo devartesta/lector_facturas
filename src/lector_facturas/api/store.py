@@ -2380,17 +2380,12 @@ class ReviewStore:
         if period_yyyymm:
             query += " AND d.period_yyyymm = %s"
             params.append(period_yyyymm)
-        if payment_status:
-            query += " AND d.payment_status = %s"
-            params.append(payment_status)
         if supplier_codes:
             normalized_codes = [code.upper() for code in supplier_codes if code]
             if normalized_codes:
                 placeholders = ",".join(["%s"] * len(normalized_codes))
                 query += f" AND d.supplier_code IN ({placeholders})"
                 params.extend(normalized_codes)
-        if overdue_only:
-            query += " AND d.payment_due_date < CURRENT_DATE AND d.payment_status NOT IN ('paid')"
         query += " ORDER BY d.period_yyyymm, d.company_code, d.supplier_code, d.invoice_number"
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
@@ -2416,7 +2411,18 @@ class ReviewStore:
             }
             for row in rows
         ]
-        return self._aggregate_payment_report_rows(raw_rows)
+        aggregated_rows = self._aggregate_payment_report_rows(raw_rows)
+        if payment_status:
+            aggregated_rows = [
+                row for row in aggregated_rows
+                if self._effective_payment_status(row) == payment_status
+            ]
+        if overdue_only:
+            aggregated_rows = [
+                row for row in aggregated_rows
+                if self._is_effectively_overdue(row)
+            ]
+        return aggregated_rows
 
     def _aggregate_payment_report_rows(self, rows: list[dict]) -> list[dict]:
         """Collapse duplicate invoice rows for the payment report.
@@ -2509,6 +2515,20 @@ class ReviewStore:
         if "pending" in statuses:
             return "pending"
         return left or right or "pending"
+
+    @staticmethod
+    def _effective_payment_status(row: dict) -> str:
+        supplier_code = str(row.get("supplier_code", "")).upper()
+        if supplier_code == "JONDO":
+            return "paid"
+        return str(row.get("payment_status", "pending") or "pending")
+
+    @classmethod
+    def _is_effectively_overdue(cls, row: dict) -> bool:
+        due = row.get("payment_due_date")
+        if due is None:
+            return False
+        return due < date.today() and cls._effective_payment_status(row) != "paid"
 
     def update_supplier_payment_settings(
         self,

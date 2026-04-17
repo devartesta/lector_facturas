@@ -216,6 +216,91 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload[0]["payment_amount"], "120.00")
         self.assertEqual(payload[0]["payment_date"], "2026-04-30")
 
+    def test_pending_filter_excludes_rows_that_render_as_paid(self) -> None:
+        store = ReviewStore(storage_path=Path(self.tmp.name) / "review_items_pending_filter.json")
+
+        rows = [
+            {
+                "id": "doc-jondo",
+                "company_code": "SL",
+                "supplier_code": "JONDO",
+                "invoice_number": "AS-94763",
+                "invoice_date": date(2026, 1, 4),
+                "period_yyyymm": "202601",
+                "gross_amount": Decimal("52.87"),
+                "net_amount": Decimal("43.69"),
+                "currency_code": "USD",
+                "drive_url": "https://example.test/jondo",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": None,
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+            {
+                "id": "doc-yat",
+                "company_code": "LTD",
+                "supplier_code": "YOURACCOUNTSTAXES",
+                "invoice_number": "INV-0639",
+                "invoice_date": date(2025, 12, 11),
+                "period_yyyymm": "202512",
+                "gross_amount": Decimal("1020.00"),
+                "net_amount": Decimal("900.00"),
+                "currency_code": "GBP",
+                "drive_url": "https://example.test/yat",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": None,
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+        ]
+
+        filtered = [
+            row for row in store._aggregate_payment_report_rows(rows)
+            if store._effective_payment_status(row) == "pending"
+        ]
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["supplier_code"], "YOURACCOUNTSTAXES")
+
+    def test_paid_filter_includes_jondo_effective_paid_rows(self) -> None:
+        store = ReviewStore(storage_path=Path(self.tmp.name) / "review_items_paid_filter.json")
+
+        rows = [
+            {
+                "id": "doc-jondo",
+                "company_code": "SL",
+                "supplier_code": "JONDO",
+                "invoice_number": "AS-94763",
+                "invoice_date": date(2026, 1, 4),
+                "period_yyyymm": "202601",
+                "gross_amount": Decimal("52.87"),
+                "net_amount": Decimal("43.69"),
+                "currency_code": "USD",
+                "drive_url": "https://example.test/jondo",
+                "payment_status": "pending",
+                "payment_date": None,
+                "payment_method": "",
+                "payment_amount": None,
+                "payment_due_date": None,
+                "is_direct_debit": False,
+                "document_type": "invoice",
+            },
+        ]
+
+        filtered = [
+            row for row in store._aggregate_payment_report_rows(rows)
+            if store._effective_payment_status(row) == "paid"
+        ]
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["supplier_code"], "JONDO")
+
     def test_payment_report_rows_are_grouped_by_supplier_and_invoice_number(self) -> None:
         store = ReviewStore(storage_path=Path(self.tmp.name) / "review_items_grouped.json")
 
