@@ -106,7 +106,7 @@ def parse_ups_text(text: str, *, original_filename: str) -> UpsInvoice:
         invoice_date=invoice_date,
         billing_period_start=billing_period_start,
         billing_period_end=billing_period_end,
-        period_yyyymm=_period_with_most_days(billing_period_start, billing_period_end),
+        period_yyyymm=invoice_date.strftime("%Y%m"),
         currency_code="EUR",
         vat_percent=Decimal("0.00"),
         net_amount=gross_amount,

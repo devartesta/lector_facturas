@@ -81,7 +81,7 @@ class UpsParserTests(unittest.TestCase):
         self.assertEqual(parsed.invoice_date.isoformat(), "2026-01-05")
         self.assertEqual(parsed.billing_period_start.isoformat(), "2025-12-23")
         self.assertEqual(parsed.billing_period_end.isoformat(), "2026-01-03")
-        self.assertEqual(parsed.period_yyyymm, "202512")
+        self.assertEqual(parsed.period_yyyymm, "202601")
         self.assertEqual(parsed.gross_amount, Decimal("57.25"))
         self.assertEqual(parsed.sender_email, "rechnungswesen@ups.com")
 
