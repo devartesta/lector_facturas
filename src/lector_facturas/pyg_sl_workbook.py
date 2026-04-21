@@ -118,6 +118,10 @@ class PygSlDataBundle:
     royalties_by_scope: dict[str, dict[str, Decimal]] = field(default_factory=dict)
 
 
+def _normalize_company_name(value: str) -> str:
+    return "".join(ch for ch in (value or "").upper() if ch.isalnum())
+
+
 def default_output_path(root: Path, year: int) -> Path:
     return root / "output" / "spreadsheet" / f"pyg_sl_{year}.xlsx"
 
@@ -290,7 +294,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])
         billed_company_name = str(row["billed_company_name"] or "")
-        is_outgoing = billed_company_name.upper() != COMPANY_NAME
+        is_outgoing = _normalize_company_name(billed_company_name) != _normalize_company_name(COMPANY_NAME)
         yyyymm = str(row["period_yyyymm"])
         currency = str(row["currency_code"] or "EUR")
         division_invoice = str(row["division_invoice"] or "")

@@ -11,9 +11,9 @@ from openpyxl import load_workbook
 
 from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
-from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _map_expense_subcategory as map_inc_expense_subcategory
+from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _document_cost_amount as inc_document_cost_amount, _map_expense_subcategory as map_inc_expense_subcategory
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, _map_expense_subcategory as map_ltd_expense_subcategory
-from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow
+from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow, _normalize_company_name
 from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_simple_company_snapshot, _build_sl_snapshot
 
 
@@ -33,6 +33,14 @@ def _snapshot_row(code: str, amount: str, *, label: str | None = None) -> PygSna
 
 
 class PygConsistencyTests(unittest.TestCase):
+    def test_sl_company_name_normalization_treats_punctuation_variants_as_same_company(self) -> None:
+        self.assertEqual(_normalize_company_name("ARTESTA STORE, S.L."), _normalize_company_name("ARTESTA STORE S.L."))
+
+    def test_inc_jondo_uses_gross_amount_as_cost(self) -> None:
+        row = {"gross_amount": Decimal("52.87"), "net_amount": Decimal("44.06")}
+        self.assertEqual(inc_document_cost_amount(row, supplier_code="JONDO"), Decimal("52.87"))
+        self.assertEqual(inc_document_cost_amount(row, supplier_code="TGI"), Decimal("44.06"))
+
     def test_sl_snapshot_royalties_use_total_without_double_counting_scope_breakdown(self) -> None:
         bundle = PygSlDataBundle(
             year=2026,
