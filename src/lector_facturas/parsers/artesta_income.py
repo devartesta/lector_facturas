@@ -63,7 +63,6 @@ def parse_qhands_text(text: str, *, original_filename: str) -> ArtestaIncomeInvo
         supplier_code="QHANDS",
         billed_company_name="QHANDS DESIGN SL.",
         division_invoice="renting_cnc",
-        period_override="202602",
     )
 
 

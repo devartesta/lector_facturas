@@ -141,7 +141,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("GOOGLEADS", "google_ads", parse_google_ads_pdf, sender_contains=("collections@google.com",), text_contains=("google ads", "id de cuenta")),
     ParserRule("GOOGLEWORKSPACE", "googleworkspace", parse_googleworkspace_pdf, filename_contains=("gsuite", "google workspace", "googleworkspace"), sender_contains=("google",), text_contains=("google workspace", "google ireland limited")),
     ParserRule("GORGIAS", "gorgias", parse_gorgias_pdf, filename_contains=("gorgias", "invoice_inc-", "inc-12-"), sender_contains=("gorgias",), text_contains=("gorgias inc",)),
-    ParserRule("QHANDS", "qhands", parse_qhands_pdf, filename_contains=("factura_2026-0012",), text_contains=("qhands design", "renting cnc")),
+    ParserRule("QHANDS", "qhands", parse_qhands_pdf, filename_contains=("factura_2026-",), text_contains=("qhands design", "renting cnc")),
     ParserRule("YOURACCOUNTSTAXES", "youraccountstaxes", parse_youraccountstaxes_pdf, sender_contains=("youraccountsntaxes",), filename_contains=("inv-",), text_contains=("your accounts and taxes", "tax invoice", "total gbp")),
     ParserRule("HANNUN", "hannun_invoice", parse_hannun_pdf, filename_contains=("vta26-", "factura_h", "factura 2025-"), sender_contains=("hannun",), text_contains=("hannun",)),
     ParserRule("HETZNER", "hetzner", parse_hetzner_pdf, filename_contains=("hetzner",), text_contains=("hetzner online",)),

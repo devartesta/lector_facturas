@@ -22,6 +22,20 @@ QHANDS_SAMPLE = dedent(
     """
 )
 
+QHANDS_MARCH_SAMPLE = dedent(
+    """
+    Artesta Store, S.L.
+    31/03/2026
+    FACTURA
+    NÃºmero de factura: 2026-0020
+    Qhands design SL.
+    Renting CNC 1 1.800,00 â‚¬ 1.800,00 â‚¬ 21% 378,00 â‚¬
+    Total Base Imponible: 1.800,00 â‚¬
+    Total IVA: 378,00 â‚¬
+    TOTAL: 2.178,00 â‚¬
+    """
+)
+
 RAPPEL_SAMPLE = dedent(
     """
     Artesta Store, S.L.
@@ -67,6 +81,13 @@ class ArtestaIncomeParserTests(unittest.TestCase):
         self.assertEqual(parsed.supplier_code, "QHANDS")
         self.assertEqual(parsed.division_invoice, "renting_cnc")
         self.assertEqual(parsed.net_amount, Decimal("1661.16"))
+        self.assertEqual(parsed.period_yyyymm, "202602")
+
+    def test_parse_qhands_uses_invoice_month_for_period(self) -> None:
+        parsed = parse_qhands_text(QHANDS_MARCH_SAMPLE, original_filename="Factura_2026-0020.pdf")
+        self.assertEqual(parsed.invoice_number, "2026-0020")
+        self.assertEqual(parsed.period_yyyymm, "202603")
+        self.assertEqual(parsed.gross_amount, Decimal("2178.00"))
 
     def test_parse_rappel(self) -> None:
         parsed = parse_rappel_text(RAPPEL_SAMPLE, original_filename="Factura_A_2026-0006.pdf")
