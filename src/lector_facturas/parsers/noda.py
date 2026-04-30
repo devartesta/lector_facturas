@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 import re
+import unicodedata
 
 from pypdf import PdfReader
 
@@ -75,13 +76,15 @@ def parse_noda_pdf(path: Path) -> NodaInvoice:
 
 def parse_noda_text(text: str, *, original_filename: str) -> NodaInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "")
-    invoice_number = _extract_invoice_number(normalized)
-    invoice_date = _extract_invoice_date(normalized)
-    billing_period_start, billing_period_end = _extract_billing_period(normalized)
-    net_amount = _extract_amount(normalized, r"HONORARIOS\s+([0-9.,]+)\s*€")
+    matchable = _normalize_match_text(normalized)
+    invoice_number = _extract_invoice_number(matchable)
+    invoice_date = _extract_invoice_date(matchable)
+    billing_period_start, billing_period_end = _extract_billing_period(matchable)
+    euro = r"(?:â‚¬|€)"
+    net_amount = _extract_amount(normalized, rf"HONORARIOS\s+([0-9.,]+)\s*{euro}")
     vat_percent = _extract_amount(normalized, r"\+\s*([0-9.,]+)\s*%\s*I\.G\.I\.C\.")
-    vat_amount = _extract_amount(normalized, r"\+\s*[0-9.,]+\s*%\s*I\.G\.I\.C\.\s+([0-9.,]+)\s*€")
-    gross_amount = _extract_amount(normalized, r"TOTAL\s+([0-9.,]+)\s*€")
+    vat_amount = _extract_amount(normalized, rf"\+\s*[0-9.,]+\s*%\s*I\.G\.I\.C\.\s+([0-9.,]+)\s*{euro}")
+    gross_amount = _extract_amount(normalized, rf"TOTAL\s+([0-9.,]+)\s*{euro}")
     return NodaInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -103,24 +106,25 @@ def parse_noda_text(text: str, *, original_filename: str) -> NodaInvoice:
 
 
 def _extract_invoice_number(text: str) -> str:
-    match = re.search(r"F A C T U R A\s+N[º°]\s*([0-9 ]+/[0-9]+)", text)
+    match = re.search(r"f a c t u r a\s+n\S*\s*([0-9 ]+/[0-9]+)", text, flags=re.IGNORECASE)
     if not match:
         raise ValueError("Could not extract Noda invoice number.")
     return match.group(1).replace(" ", "")
 
 
 def _extract_invoice_date(text: str) -> date:
-    match = re.search(r"En Santa Cruz de Tenerife a,\s*([0-9]{1,2}) de ([A-Za-záéíóú]+) de 2\.0?26", text, flags=re.IGNORECASE)
+    match = re.search(r"en santa cruz de tenerife a,\s*([0-9]{1,2}) de ([a-z]+) de 2\.0?([0-9]{2})", text, flags=re.IGNORECASE)
     if not match:
         raise ValueError("Could not extract Noda invoice date.")
     day = int(match.group(1))
     month = SPANISH_MONTHS[match.group(2).strip().lower()]
-    return date(2026, month, day)
+    year = 2000 + int(match.group(3))
+    return date(year, month, day)
 
 
 def _extract_billing_period(text: str) -> tuple[date, date]:
     match = re.search(
-        r"per[ií]odo trimestral de\s+([A-Za-záéíóú]+)\s+a\s+([A-Za-záéíóú]+)\s+de\s+2\.0?25",
+        r"periodo trimestral de\s+([a-z]+)\s+a\s+([a-z]+)\s+de\s+2\.0?([0-9]{2})",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -128,7 +132,8 @@ def _extract_billing_period(text: str) -> tuple[date, date]:
         raise ValueError("Could not extract Noda billing period.")
     start_month = SPANISH_MONTHS[match.group(1).strip().lower()]
     end_month = SPANISH_MONTHS[match.group(2).strip().lower()]
-    return date(2025, start_month, 1), _month_end(2025, end_month)
+    year = 2000 + int(match.group(3))
+    return date(year, start_month, 1), _month_end(year, end_month)
 
 
 def _month_end(year: int, month: int) -> date:
@@ -143,3 +148,8 @@ def _extract_amount(text: str, pattern: str) -> Decimal:
     if not match:
         raise ValueError(f"Could not extract Noda amount with pattern: {pattern}")
     return Decimal(match.group(1).replace(".", "").replace(",", "."))
+
+
+def _normalize_match_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
