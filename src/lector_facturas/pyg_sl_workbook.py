@@ -28,6 +28,7 @@ REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
 MONTH_NAMES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 DEFAULT_SHOPIFY_MARKETS = ["ES", "FR", "DE", "IT", "AT", "BE", "NL", "PT", "PL", "SE", "DK", "CZ", "XX"]
+SHOPIFY_CURRENCY_MARKETS = {"PLN": "PL", "SEK": "SE", "DKK": "DK", "CZK": "CZ"}
 DEFAULT_SERVICE_LINES = ["HANNUN", "QHANDS", "Ltd", "Inc"]
 DEFAULT_PAYMENT_FEE_LINES = ["SHOPIFY", "PAYPAL"]
 DEFAULT_MARKETING_REGIONS = ["EU", "UK", "US"]
@@ -297,6 +298,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         shipping_country_code = str(row["shipping_country_code"] or "").upper()
         currency = str(row["payment_currency"] or "EUR")
         amount_net = _decimal(row["amount_net"])
+        shopify_market = _normalize_shopify_market(shipping_country_code, currency)
         if shipping_country_code in {"GB", "US"}:
             continue
         if int(row["is_hannun_tag"] or 0) == 1:
@@ -304,9 +306,9 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             # not from ventas_pyg, to keep the PyG aligned with booked revenue.
             continue
         if int(row["is_rever_tag"] or 0) == 1:
-            supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", _normalize_shopify_market(shipping_country_code), -amount_net, currency, "finance.ventas_pyg"))
+            supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", shopify_market, -amount_net, currency, "finance.ventas_pyg"))
             continue
-        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.ventas_pyg"))
+        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, shopify_market, shopify_market, amount_net, currency, "finance.ventas_pyg"))
     for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])
@@ -1788,9 +1790,12 @@ def _add_navigation_links(
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
 
-def _normalize_shopify_market(value: Any) -> str:
+def _normalize_shopify_market(value: Any, currency: Any = None) -> str:
     country_code = str(value or "").upper()
-    return country_code if country_code in set(DEFAULT_SHOPIFY_MARKETS[:-1]) else "XX"
+    if country_code in set(DEFAULT_SHOPIFY_MARKETS[:-1]):
+        return country_code
+    currency_code = str(currency or "").upper()
+    return SHOPIFY_CURRENCY_MARKETS.get(currency_code, "XX")
 
 
 def _display_label(value: str, *, level: int) -> str:
