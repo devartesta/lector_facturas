@@ -152,74 +152,69 @@ def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
     return tuple(ordered + extras) if "XX" not in seen else tuple(ordered[:-1] + extras + ["XX"])
 
 
-def _collect_choose_toasty_adjustments(*, conn: Any, year: int) -> dict[tuple[str, str, str, int, int, int], Decimal]:
+def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, Any]]:
     table_rows = conn.execute(
         """
         SELECT tablename
         FROM pg_tables
-        WHERE schemaname = 'shopify'
+        WHERE schemaname = 'finance'
           AND tablename ~ %(pattern)s
           AND tablename LIKE %(prefix)s
         ORDER BY tablename
         """,
-        {"pattern": r"^ventas_[0-9]{6}$", "prefix": f"ventas_{year}%"},
+        {"pattern": r"^informe_vat_gestorias_detalle_[0-9]{6}$", "prefix": f"informe_vat_gestorias_detalle_{year}%"},
     ).fetchall()
     table_names = [str(row["tablename"]) for row in table_rows]
     if not table_names:
-        return {}
+        return conn.execute(
+            """
+            SELECT
+                order_month_yyyymm,
+                COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
+                payment_currency,
+                SUM(shown_net_presentment) AS amount_net
+            FROM finance.informe_vat_gestorias_detalle
+            WHERE order_month_yyyymm LIKE %(period)s
+              AND COALESCE(is_hannun_tag, 0) = 0
+            GROUP BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
+            ORDER BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
+            """,
+            {"period": f"{year}%"},
+        ).fetchall()
 
     union_sql = "\nUNION ALL\n".join(
         f"""
         SELECT
-          order_month_yyyymm,
-          COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
-          payment_currency,
-          COALESCE(is_rever_tag, 0) AS is_rever_tag,
-          COALESCE(is_hannun_tag, 0) AS is_hannun_tag,
-          COALESCE(is_mirakl_tag, 0) AS is_mirakl_tag,
-          shown_net_presentment AS amount_net
-        FROM shopify.{table_name}
-        WHERE COALESCE(is_choose_tag, 0) = 1
-           OR COALESCE(is_toasty_tag, 0) = 1
+            d.order_month_yyyymm,
+            COALESCE(d.shipping_country_code, 'XX') AS shipping_country_code,
+            d.payment_currency,
+            d.shown_net_presentment AS amount_net
+        FROM finance.{table_name} d
+        LEFT JOIN shopify.ventas_{table_name[-6:]} v
+          ON d.order_name = v.order_name
+         AND d.payment_currency = v.payment_currency
+        WHERE COALESCE(d.is_hannun_tag, 0) = 0
+          AND COALESCE(v.is_choose_tag, 0) = 0
+          AND COALESCE(v.is_toasty_tag, 0) = 0
         """
         for table_name in table_names
     )
 
-    rows = conn.execute(
+    return conn.execute(
         f"""
-        WITH tagged AS (
+        WITH sales_rows AS (
             {union_sql}
         )
         SELECT
-          order_month_yyyymm,
-          shipping_country_code,
-          payment_currency,
-          is_rever_tag,
-          is_hannun_tag,
-          is_mirakl_tag,
-          SUM(amount_net) AS amount_net
-        FROM tagged
-        GROUP BY
-          order_month_yyyymm,
-          shipping_country_code,
-          payment_currency,
-          is_rever_tag,
-          is_hannun_tag,
-          is_mirakl_tag
+            order_month_yyyymm,
+            shipping_country_code,
+            payment_currency,
+            SUM(amount_net) AS amount_net
+        FROM sales_rows
+        GROUP BY order_month_yyyymm, shipping_country_code, payment_currency
+        ORDER BY order_month_yyyymm, shipping_country_code, payment_currency
         """
     ).fetchall()
-
-    return {
-        (
-            str(row["order_month_yyyymm"]),
-            str(row["shipping_country_code"] or "XX").upper(),
-            str(row["payment_currency"] or "EUR"),
-            int(row["is_rever_tag"] or 0),
-            int(row["is_hannun_tag"] or 0),
-            int(row["is_mirakl_tag"] or 0),
-        ): _decimal(row["amount_net"])
-        for row in rows
-    }
 
 
 def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBundle:
@@ -248,24 +243,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """,
             {"period": f"{year}%"},
         ).fetchall()
-        sales = conn.execute(
-            """
-            SELECT
-                order_month_yyyymm,
-                shipping_country_code,
-                payment_currency,
-                COALESCE(is_rever_tag, 0) AS is_rever_tag,
-                COALESCE(is_hannun_tag, 0) AS is_hannun_tag,
-                COALESCE(is_mirakl_tag, 0) AS is_mirakl_tag,
-                SUM(net) AS amount_net
-            FROM finance.ventas_pyg
-            WHERE order_month_yyyymm LIKE %(period)s
-            GROUP BY order_month_yyyymm, shipping_country_code, payment_currency, COALESCE(is_rever_tag, 0), COALESCE(is_hannun_tag, 0), COALESCE(is_mirakl_tag, 0)
-            ORDER BY order_month_yyyymm, shipping_country_code, payment_currency
-            """,
-            {"period": f"{year}%"},
-        ).fetchall()
-        choose_toasty_adjustments = _collect_choose_toasty_adjustments(conn=conn, year=year)
+        sales = _collect_sl_shopify_sales_rows(conn=conn, year=year)
         docs = conn.execute(
             """
             SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date, parser_name
@@ -393,27 +371,12 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         yyyymm = str(row["order_month_yyyymm"])
         shipping_country_code = str(row["shipping_country_code"] or "").upper()
         currency = str(row["payment_currency"] or "EUR")
-        adjustment_key = (
-            yyyymm,
-            shipping_country_code or "XX",
-            currency,
-            int(row["is_rever_tag"] or 0),
-            int(row["is_hannun_tag"] or 0),
-            int(row["is_mirakl_tag"] or 0),
-        )
-        amount_net = _decimal(row["amount_net"]) - choose_toasty_adjustments.get(adjustment_key, Decimal("0"))
+        amount_net = _decimal(row["amount_net"])
         if amount_net == Decimal("0"):
             continue
         if shipping_country_code in {"GB", "US"}:
             continue
-        if int(row["is_hannun_tag"] or 0) == 1:
-            # HANNUN marketplace revenue comes from outgoing income invoices in invoices.documents,
-            # not from ventas_pyg, to keep the PyG aligned with booked revenue.
-            continue
-        if int(row["is_rever_tag"] or 0) == 1:
-            supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", _normalize_shopify_market(shipping_country_code), -amount_net, currency, "finance.ventas_pyg"))
-            continue
-        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.ventas_pyg"))
+        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.informe_vat_gestorias_detalle"))
     for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])

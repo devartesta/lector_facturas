@@ -239,6 +239,8 @@ class ReconciliationReport:
     shopify_payment_total:    Decimal = field(default_factory=lambda: Decimal("0"))
     paypal_accounting_total:  Decimal = field(default_factory=lambda: Decimal("0"))
     paypal_payment_total:     Decimal = field(default_factory=lambda: Decimal("0"))
+    gift_card_accounting_total: Decimal = field(default_factory=lambda: Decimal("0"))
+    gift_card_payment_total:    Decimal = field(default_factory=lambda: Decimal("0"))
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +729,33 @@ def build_reconciliation(
             """,
         ).fetchall()
 
+        # -- Gift-card-only orders for the period.
+        # These orders are valid sales that appear in gestoría, but they do not
+        # settle via Shopify Payments / PayPal / manual transfer. We surface them
+        # as a dedicated summary channel so the reconciliation grand total matches
+        # the sales workbook without misclassifying them as bank transfers.
+        gift_card_only_rows = conn.execute(
+            f"""
+            WITH {preferred_detail_cte}
+            SELECT
+                d.order_name,
+                SUM(d.shown_gross_presentment) AS total
+            FROM preferred_detail_rows d
+            WHERE d.shown_gross_presentment <> 0
+              AND COALESCE(d.is_hannun_tag, 0) = 0
+              AND d.payment_gateway_names @> '["gift_card"]'::jsonb
+              AND NOT (
+                    d.payment_gateway_names @> '["shopify_payments"]'::jsonb
+                 OR d.payment_gateway_names @> '["paypal"]'::jsonb
+                 OR d.payment_gateway_names @> '["manual"]'::jsonb
+                 OR d.payment_gateway_names = '[]'::jsonb
+                 OR d.payment_gateway_names @> '[""]'::jsonb
+              )
+            GROUP BY d.order_name
+            """,
+            (period_yyyymm, currency, currency, period_yyyymm, currency),
+        ).fetchall()
+
         # -- Chargeback inventory: last 12 months, both channels --
         shopify_cb_rows = conn.execute(
             """
@@ -1191,6 +1220,12 @@ def build_reconciliation(
     paypal_payment_total = sum(
         (_qdec(_dec(v["importe_pago"])) or _D0 for v in paypal_pay.values()), _D0
     ).quantize(Decimal("0.01"))
+    gift_card_accounting_total = sum(
+        (_qdec(r["total"]) or _D0 for r in gift_card_only_rows), _D0
+    ).quantize(Decimal("0.01"))
+    # Gift-card-only orders are fully settled against gift card balance, so for
+    # the summary bridge we treat the redeemed amount as collected by that channel.
+    gift_card_payment_total = gift_card_accounting_total
 
     return ReconciliationReport(
         period_yyyymm=period_yyyymm,
@@ -1204,4 +1239,6 @@ def build_reconciliation(
         shopify_payment_total=shopify_payment_total,
         paypal_accounting_total=paypal_accounting_total,
         paypal_payment_total=paypal_payment_total,
+        gift_card_accounting_total=gift_card_accounting_total,
+        gift_card_payment_total=gift_card_payment_total,
     )

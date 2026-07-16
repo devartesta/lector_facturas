@@ -180,16 +180,18 @@ def _add_summary_sheet(
 ) -> None:
     ws = wb.create_sheet("Summary")
 
-    # Columns: A=label, B=count, C=Shopify, D=PayPal, E=Bank Transfer, F=Total, G=notas
+    # Columns: A=label, B=count, C=Shopify, D=PayPal, E=Gift Cards,
+    # F=Bank Transfer, G=Total, H=notes
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 10
     ws.column_dimensions["C"].width = 18
     ws.column_dimensions["D"].width = 16
-    ws.column_dimensions["E"].width = 16
+    ws.column_dimensions["E"].width = 14
     ws.column_dimensions["F"].width = 16
-    ws.column_dimensions["G"].width = 40
-    LAST_COL = "G"
-    NCOLS    = 7
+    ws.column_dimensions["G"].width = 16
+    ws.column_dimensions["H"].width = 40
+    LAST_COL = "H"
+    NCOLS    = 8
 
     def _sh(r: int, h: int = ROW_H) -> None:
         ws.row_dimensions[r].height = h
@@ -233,7 +235,7 @@ def _add_summary_sheet(
     _sh(row, 22)
     ws.merge_cells(f"A{row}:{LAST_COL}{row}")
     _cell(row, 1,
-          "Accounting vs payment channel comparison (Shopify Payments, PayPal and Bank Transfer). "
+          "Accounting vs payment channel comparison (Shopify Payments, PayPal, Gift Cards and Bank Transfer). "
           "Bank Transfer: accounting = manual orders for the period; collected = orders marked 'Yes' in the Bank Transfer tab. "
           "Differences (Shopify / PayPal) are classified by gift card, chargeback and other.",
           font=ITALIC_GREY, align=LEFT_WRAP, border=None)
@@ -262,7 +264,7 @@ def _add_summary_sheet(
     # can reference them with intra-sheet formulas.
     _sh(row)
     for col, hdr in enumerate(
-        ["", "# orders", "Shopify Payments", "PayPal", "Bank Transfer", "Total", ""], 1
+        ["", "# orders", "Shopify Payments", "PayPal", "Gift Cards", "Bank Transfer", "Total", ""], 1
     ):
         _cell(row, col, hdr, font=BOLD, fill=COL_HDR_FILL, align=CENTER)
     row += 1
@@ -273,9 +275,10 @@ def _add_summary_sheet(
     _cell(row, 2, None, align=CENTER)
     _cell(row, 3, "='Shopify Payments'!E3", align=RIGHT, fmt=MONEY_FMT)
     _cell(row, 4, "=PayPal!E3",             align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 5, float(b2b_acct) if b2b_acct else None, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 6, f"=C{row}+D{row}+E{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 7, "Net accounting sales (including refunds). Bank Transfer = manual orders for the period.",
+    _cell(row, 5, float(report.gift_card_accounting_total) if report.gift_card_accounting_total else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, float(b2b_acct) if b2b_acct else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, f"=C{row}+D{row}+E{row}+F{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 8, "Net accounting sales (including refunds). Gift Cards = orders paid entirely with gift card. Bank Transfer = manual orders for the period.",
           font=ITALIC_GREY, align=LEFT_WRAP)
     row += 1
 
@@ -285,9 +288,10 @@ def _add_summary_sheet(
     _cell(row, 2, None, align=CENTER)
     _cell(row, 3, "='Shopify Payments'!F3", align=RIGHT, fmt=MONEY_FMT)
     _cell(row, 4, "=PayPal!F3",             align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 5, float(b2b_paid) if b2b_paid else None, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 6, f"=C{row}+D{row}+E{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 7, "Shopify/PayPal: settled by the channel. Bank Transfer: orders marked 'Yes' in the tab.",
+    _cell(row, 5, float(report.gift_card_payment_total) if report.gift_card_payment_total else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, float(b2b_paid) if b2b_paid else None, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, f"=C{row}+D{row}+E{row}+F{row}", font=BOLD, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 8, "Shopify/PayPal: settled by the channel. Gift Cards: redeemed against stored balance. Bank Transfer: orders marked 'Yes' in the tab.",
           font=ITALIC_GREY, align=LEFT_WRAP)
     row += 1
 
@@ -296,9 +300,10 @@ def _add_summary_sheet(
     _cell(row, 2, None, fill=WARN_FILL, align=CENTER)
     _cell(row, 3, f"=C{row_coll}-C{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
     _cell(row, 4, f"=D{row_coll}-D{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 5, float(b2b_diff) if b2b_diff else None, font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 6, f"=F{row_coll}-F{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
-    _cell(row, 7, "Positive = collected more than accounted; negative = pending or unreconciled.",
+    _cell(row, 5, f"=E{row_coll}-E{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 6, float(b2b_diff) if b2b_diff else None, font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 7, f"=G{row_coll}-G{row_acct}", font=BOLD, fill=WARN_FILL, align=RIGHT, fmt=MONEY_FMT)
+    _cell(row, 8, "Positive = collected more than accounted; negative = pending or unreconciled.",
           font=ITALIC_GREY, fill=WARN_FILL, align=LEFT_WRAP)
     row += 1
 
