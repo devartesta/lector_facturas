@@ -153,6 +153,34 @@ def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
 
 
 def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, Any]]:
+    amount_currency_sql = """
+        COALESCE(NULLIF(j.raw_json ->> 'currency', ''), d.payment_currency)
+    """
+    shop_presentment_net_sql = """
+        (
+            COALESCE((j.raw_json -> 'current_total_price_set' -> 'presentment_money' ->> 'amount')::numeric, 0)
+            - COALESCE((j.raw_json -> 'current_total_tax_set' -> 'presentment_money' ->> 'amount')::numeric, 0)
+        )
+    """
+    shop_eur_net_sql = """
+        (
+            COALESCE((j.raw_json -> 'current_total_price_set' -> 'shop_money' ->> 'amount')::numeric, 0)
+            - COALESCE((j.raw_json -> 'current_total_tax_set' -> 'shop_money' ->> 'amount')::numeric, 0)
+        )
+    """
+    amount_net_sql = f"""
+        CASE
+            WHEN {shop_presentment_net_sql} <> 0
+             AND {shop_eur_net_sql} <> 0
+            THEN ROUND(
+                d.shown_net_presentment
+                * {shop_eur_net_sql}
+                / NULLIF({shop_presentment_net_sql}, 0),
+                2
+            )
+            ELSE d.shown_net_presentment
+        END
+    """
     table_rows = conn.execute(
         """
         SELECT tablename
@@ -167,17 +195,19 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
     table_names = [str(row["tablename"]) for row in table_rows]
     if not table_names:
         return conn.execute(
-            """
+            f"""
             SELECT
-                order_month_yyyymm,
-                COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
-                payment_currency,
-                SUM(shown_net_presentment) AS amount_net
-            FROM finance.informe_vat_gestorias_detalle
-            WHERE order_month_yyyymm LIKE %(period)s
-              AND COALESCE(is_hannun_tag, 0) = 0
-            GROUP BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
-            ORDER BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
+                d.order_month_yyyymm,
+                COALESCE(d.shipping_country_code, 'XX') AS shipping_country_code,
+                {amount_currency_sql} AS payment_currency,
+                SUM({amount_net_sql}) AS amount_net
+            FROM finance.informe_vat_gestorias_detalle d
+            LEFT JOIN shopify.json_orders j
+              ON j.raw_json ->> 'name' = d.order_name
+            WHERE d.order_month_yyyymm LIKE %(period)s
+              AND COALESCE(d.is_hannun_tag, 0) = 0
+            GROUP BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'), {amount_currency_sql}
+            ORDER BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'), {amount_currency_sql}
             """,
             {"period": f"{year}%"},
         ).fetchall()
@@ -187,12 +217,14 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         SELECT
             d.order_month_yyyymm,
             COALESCE(d.shipping_country_code, 'XX') AS shipping_country_code,
-            d.payment_currency,
-            d.shown_net_presentment AS amount_net
+            {amount_currency_sql} AS payment_currency,
+            {amount_net_sql} AS amount_net
         FROM finance.{table_name} d
         LEFT JOIN shopify.ventas_{table_name[-6:]} v
           ON d.order_name = v.order_name
          AND d.payment_currency = v.payment_currency
+        LEFT JOIN shopify.json_orders j
+          ON j.raw_json ->> 'name' = d.order_name
         WHERE COALESCE(d.is_hannun_tag, 0) = 0
           AND COALESCE(v.is_choose_tag, 0) = 0
           AND COALESCE(v.is_toasty_tag, 0) = 0
