@@ -27,7 +27,7 @@ COMPANY_NAME = "ARTESTA STORE, S.L."
 REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
 MONTH_NAMES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-DEFAULT_SHOPIFY_MARKETS = ["ES", "FR", "DE", "IT", "AT", "BE", "NL", "PT", "XX"]
+DEFAULT_SHOPIFY_MARKETS = ["ES", "FR", "DE", "IT", "AT", "BE", "NL", "PT", "PL", "SE", "DK", "CZ", "XX"]
 DEFAULT_SERVICE_LINES = ["HANNUN", "QHANDS", "Ltd", "Inc"]
 DEFAULT_PAYMENT_FEE_LINES = ["SHOPIFY", "PAYPAL"]
 DEFAULT_MARKETING_REGIONS = ["EU", "UK", "US"]
@@ -195,6 +195,22 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
                 "year_end": f"{year + 1}-01-01T00:00:00+00:00",
             },
         ).fetchall()
+        artlink_stock_refs = conn.execute(
+            """
+            SELECT invoice_number, net_amount AS amount_net
+            FROM invoices.documents
+            WHERE company_code = 'LTD'
+              AND supplier_code = 'ARTLINK'
+              AND status = 'classified'
+              AND period_yyyymm LIKE %(period)s
+              AND (
+                COALESCE(review_notes, '') ILIKE '%%stock purchase%%'
+                OR COALESCE(review_notes, '') ILIKE '%%stock cost%%'
+                OR LOWER(COALESCE(extracted_raw->>'manual_override_stock_purchase', '')) IN ('true', '1')
+              )
+            """,
+            {"period": f"{year}%"},
+        ).fetchall()
         suppliers = conn.execute(
             """
             SELECT supplier_code, supplier_name, current_folder, destination_path, notes
@@ -269,6 +285,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             {"company": COMPANY_CODE, "period": f"{year}%"},
         ).fetchall()
     supplier_map = {str(row["supplier_code"]): row for row in suppliers}
+    excluded_sl_artlink_refs = _artlink_stock_reference_keys(artlink_stock_refs)
     shopify_rows: list[StageRow] = []
     marketplace_rows: list[StageRow] = []
     rappel_rows: list[StageRow] = []
@@ -327,6 +344,13 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             continue
         if supplier_code == "REVER" and (document_type == "supplied_note" or division_invoice == "suplidos"):
             supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", "suplidos", -amount_net, currency, "documents", invoice_number, drive_url))
+            continue
+        if _should_exclude_sl_artlink_document(
+            supplier_code=supplier_code,
+            invoice_number=invoice_number,
+            amount_net=amount_net,
+            excluded_refs=excluded_sl_artlink_refs,
+        ):
             continue
         supplier_meta = supplier_map.get(supplier_code)
         if supplier_meta and str(supplier_meta["destination_path"]).startswith("expenses/"):
@@ -1660,6 +1684,30 @@ def _provider_groups(rows: tuple[ProviderCatalogRow, ...]) -> dict[str, list[str
         elif row.destination_path == "expenses/opex/technology":
             groups["technology"].append(row.supplier_code)
     return groups
+
+
+def _artlink_stock_reference_keys(rows: list[dict[str, Any]]) -> set[tuple[str, Decimal]]:
+    refs: set[tuple[str, Decimal]] = set()
+    for row in rows:
+        invoice_number = str(row["invoice_number"] or "").strip()
+        if not invoice_number:
+            continue
+        refs.add((invoice_number, _decimal(row["amount_net"])))
+    return refs
+
+
+def _should_exclude_sl_artlink_document(
+    *,
+    supplier_code: str,
+    invoice_number: str,
+    amount_net: Decimal,
+    excluded_refs: set[tuple[str, Decimal]],
+) -> bool:
+    if supplier_code != "ARTLINK":
+        return False
+    if not invoice_number:
+        return False
+    return (invoice_number.strip(), amount_net) in excluded_refs
 
 
 def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
