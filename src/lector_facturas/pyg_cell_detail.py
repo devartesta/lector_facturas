@@ -31,6 +31,7 @@ from lector_facturas.pyg_ltd_workbook import (
 from lector_facturas.pyg_ltd_workbook import _map_expense_subcategory as map_ltd_expense_subcategory
 from lector_facturas.pyg_sl_workbook import (
     ADMINISTRATION_DETAIL_LINES,
+    DEFAULT_MARKETPLACE_CODES,
     DEFAULT_PAYMENT_FEE_LINES as SL_DEFAULT_PAYMENT_FEE_LINES,
     REPORTING_CURRENCY as SL_REPORTING_CURRENCY,
     collect_pyg_sl_data,
@@ -170,12 +171,26 @@ def _build_sl_items(*, row_code: str, selected_months: tuple[str, ...], database
     items: list[PygCellDetailItem] = []
 
     for bundle in bundles:
+        for row in bundle.marketplace_rows:
+            if row.yyyymm not in selected_months:
+                continue
+            if row_code == "marketplaces":
+                items.append(_stage_item(company="sl", row=row, reporting_currency=SL_REPORTING_CURRENCY, fx=fx))
+            elif row_code.startswith("marketplace_") and row.line_item.lower() == row_code.removeprefix("marketplace_"):
+                items.append(_stage_item(company="sl", row=row, reporting_currency=SL_REPORTING_CURRENCY, fx=fx))
+
         for row in bundle.service_rows:
             if row.yyyymm not in selected_months:
                 continue
             if row_code == "services":
                 items.append(_stage_item(company="sl", row=row, reporting_currency=SL_REPORTING_CURRENCY, fx=fx))
             elif row_code.startswith("service_") and row.line_item.lower() == row_code.removeprefix("service_"):
+                items.append(_stage_item(company="sl", row=row, reporting_currency=SL_REPORTING_CURRENCY, fx=fx))
+
+        for row in bundle.supplies_rows:
+            if row.yyyymm not in selected_months:
+                continue
+            if row_code in {"supplies", "supplies_rever"}:
                 items.append(_stage_item(company="sl", row=row, reporting_currency=SL_REPORTING_CURRENCY, fx=fx))
 
         for row in bundle.expense_rows:
@@ -248,7 +263,7 @@ def _build_simple_company_items(
             if row_code == "payment_fees" or row_code == f"payment_fee_{row.supplier_code.lower()}":
                 items.append(_payment_fee_item(company=company, row=row, reporting_currency=reporting_currency, fx=fx))
 
-        if row_code == "marcos_consumed":
+        if row_code in {"manufacturing", "marcos_consumed"}:
             for month in selected_months:
                 amount_base = bundle.frame_consumed_by_period.get(month)
                 if amount_base:
@@ -272,6 +287,12 @@ def _build_simple_company_items(
 def _build_consolidated_items(*, row_code: str, selected_months: tuple[str, ...], database_url: str) -> tuple[PygCellDetailItem, ...]:
     items: list[PygCellDetailItem] = []
 
+    if row_code == "marketplaces" or row_code in {f"marketplace_{code.lower()}" for code in DEFAULT_MARKETPLACE_CODES}:
+        return _build_sl_items(row_code=row_code, selected_months=selected_months, database_url=database_url)
+
+    if row_code in {"supplies", "supplies_rever"}:
+        return _build_sl_items(row_code=row_code, selected_months=selected_months, database_url=database_url)
+
     if row_code == "services":
         fx = EcbFxService()
         bundles = [collect_pyg_sl_data(year=year, database_url=database_url) for year in sorted({int(month[:4]) for month in selected_months})]
@@ -279,7 +300,7 @@ def _build_consolidated_items(*, row_code: str, selected_months: tuple[str, ...]
             for row in bundle.service_rows:
                 if row.yyyymm not in selected_months:
                     continue
-                if row.line_item in {"Ltd", "Inc"} or row.detail == "renting_cnc":
+                if row.line_item in {"Ltd", "Inc"} or row.detail in {"renting_cnc", "renting_coche"}:
                     continue
                 items.append(_stage_item(company="sl", row=row, reporting_currency="EUR", fx=fx))
         return tuple(items)
@@ -367,10 +388,16 @@ def _matches_simple_expense_row(*, row_code: str, supplier_code: str, detail: st
 
 def _supports_detail(*, company: PygCompany, row_code: str) -> bool:
     if company == "consolidado":
-        return row_code in {"services", "manufacturing", "logistics", "royalties", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"}
+        return (
+            row_code in {"marketplaces", "supplies", "supplies_rever", "services", "manufacturing", "logistics", "royalties", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"}
+            or row_code in {f"marketplace_{code.lower()}" for code in DEFAULT_MARKETPLACE_CODES}
+        )
     if company == "sl":
         return (
-            row_code == "services"
+            row_code == "marketplaces"
+            or row_code in {f"marketplace_{code.lower()}" for code in DEFAULT_MARKETPLACE_CODES}
+            or row_code in {"supplies", "supplies_rever"}
+            or row_code == "services"
             or row_code.startswith("service_")
             or row_code in {"manufacturing", "logistics", "royalties", "royalties_total", "payment_fees", "marketing", "marketing_metaads", "marketing_googleads", "staff", "administration", "technology", "otros_gastos_group", "otros_gastos", "diferencias_divisas_group", "diferencias_divisas"}
             or row_code.startswith(("manufacturing_", "logistics_", "payment_fee_", "marketing_metaads_", "marketing_googleads_", "staff_", "administration_", "technology_"))

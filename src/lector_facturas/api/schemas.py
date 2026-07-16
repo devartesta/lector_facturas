@@ -567,3 +567,78 @@ class SupplierPaymentSettingsIn(BaseModel):
 
 class PaymentSettlementRunOut(BaseModel):
     settled_count: int
+
+
+class BankIncomeRunIn(BaseModel):
+    period_yyyymm: str
+
+
+class BankIncomeRunOut(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    statement_dir: str
+    files_processed: int
+    transactions_imported: int
+    validated_count: int
+    suggested_count: int
+    pending_review_count: int
+    conflict_count: int
+    ignored_count: int
+    review_count: int
+
+
+class BankIncomeTransactionOut(BaseModel):
+    id: str
+    company_code: str
+    period_yyyymm: str
+    bank_name: str
+    account_label: str
+    booking_date: date | None = None
+    value_date: date | None = None
+    amount: Decimal
+    balance: Decimal | None = None
+    currency: str
+    direction: str
+    concept: str = ""
+    detail: str = ""
+    classification: str = ""
+    status: str = ""
+    reason_code: str = ""
+    match_type: str = ""
+    target_ids: list[str] = Field(default_factory=list)
+    confidence: int = 0
+    outside_period: bool = False
+    notes: str = ""
+    is_excluded: bool = False
+    exclusion_reason: str = ""
+    source: str = ""
+
+
+class BankIncomeReviewOut(BaseModel):
+    id: str
+    company_code: str
+    period_yyyymm: str
+    bank_transaction_id: str = ""
+    review_type: str
+    status: str
+    reason_code: str
+    target_ids: list[str] = Field(default_factory=list)
+    notes: str = ""
+    source: str = ""
+
+
+class BankIncomeManualMatchIn(BaseModel):
+    bank_transaction_id: str
+    status: str = "validated"
+    reason_code: str = "manual_confirmed"
+    match_type: str
+    target_ids: list[str] = Field(default_factory=list)
+    confidence: int = 100
+    outside_period: bool = False
+    notes: str = ""
+    is_excluded: bool = False
+    exclusion_reason: str = ""
+
+
+class BankIncomeRejectIn(BaseModel):
+    notes: str = ""

@@ -1102,12 +1102,19 @@ class PaymentFeeService:
         self.shopify_client = shopify_client
         self.paypal_client = paypal_client
 
-    def sync(self, *, date_from: str, date_to: str, platform: str | None = None) -> list[PaymentFeeSyncResult]:
+    def sync(
+        self,
+        *,
+        date_from: str,
+        date_to: str,
+        platform: str | None = None,
+        enrich_paypal_with_shopify_orders: bool = True,
+    ) -> list[PaymentFeeSyncResult]:
         requested = [platform] if platform else [SHOPIFY_PLATFORM, PAYPAL_PLATFORM]
         results: list[PaymentFeeSyncResult] = []
         paypal_order_mapping = (
             self.shopify_client.build_paypal_order_mapping(date_from=date_from, date_to=date_to)
-            if self.shopify_client is not None and PAYPAL_PLATFORM in requested
+            if enrich_paypal_with_shopify_orders and self.shopify_client is not None and PAYPAL_PLATFORM in requested
             else {}
         )
         for item in requested:

@@ -11,7 +11,7 @@ from pypdf import PdfReader
 
 
 COMPANY_NAME = "ARTESTA STORE, S.L."
-ISSUER_COMPANY_NAME = "CLARÍS GESTIÓ I DOCUMENTACIÓ, S.L."
+ISSUER_COMPANY_NAME = "CLARIS GESTIO I DOCUMENTACIO, S.L."
 SUPPLIER_CODE = "CLARIS"
 SPANISH_MONTHS = {
     "enero": 1,
@@ -48,12 +48,15 @@ class ClarisInvoice:
     net_amount: Decimal
     original_filename: str
     sender_email: str
+    withholding_percent: Decimal | None = None
+    withholding_amount: Decimal | None = None
+    payable_amount: Decimal | None = None
     parser_name: str = "claris"
     parser_confidence: Decimal = Decimal("0.9980")
 
     @property
     def extracted_raw(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "issuer_company_name": self.issuer_company_name,
             "billed_company_name": self.billed_company_name,
             "billing_period_start": self.billing_period_start.isoformat(),
@@ -66,6 +69,13 @@ class ClarisInvoice:
             "net_amount": format(self.net_amount, "f"),
             "sender_email": self.sender_email,
         }
+        if self.withholding_percent is not None:
+            payload["withholding_percent"] = format(self.withholding_percent, "f")
+        if self.withholding_amount is not None:
+            payload["withholding_amount"] = format(self.withholding_amount, "f")
+        if self.payable_amount is not None:
+            payload["payable_amount"] = format(self.payable_amount, "f")
+        return payload
 
 
 def parse_claris_pdf(path: Path) -> ClarisInvoice:
@@ -78,10 +88,23 @@ def parse_claris_text(text: str, *, original_filename: str) -> ClarisInvoice:
     invoice_number = _extract_invoice_number(normalized)
     invoice_date = _extract_invoice_date(normalized)
     billing_period_start, billing_period_end = _extract_billing_period(normalized, invoice_date)
-    net_amount = _extract_amount(normalized, r"ASESORAMIENTO FISCAL CONTABLE\s+Correspondiente al mes de [a-záéíóú]+\s+([0-9.,]+)\s*€")
-    vat_percent = _extract_amount(normalized, r"I\.V\.A\s+([0-9.,]+)\s*%")
-    vat_amount = _extract_amount(normalized, r"I\.V\.A [0-9.,]+ % S/ [0-9.,]+ €\s+([0-9.,]+)\s*€")
-    gross_amount = _extract_amount(normalized, r"TOTAL (?:HONORARIOS|A PAGAR)\s+([0-9.,]+)\s*€")
+    special_totals = _extract_special_invoice_totals(normalized)
+    if special_totals is not None:
+        net_amount, vat_percent, vat_amount, gross_amount, withholding_percent, withholding_amount, payable_amount = special_totals
+    else:
+        net_amount = _extract_amount(
+            normalized,
+            r"ASESORAMIENTO FISCAL CONTABLE\s+Correspondiente al mes de [a-záéíóú]+\s+([0-9.,]+)\s*(?:€|â‚¬)",
+        )
+        vat_percent = _extract_amount(normalized, r"I\.V\.A\s+([0-9.,]+)\s*%")
+        vat_amount = _extract_amount(
+            normalized,
+            r"I\.V\.A [0-9.,]+ % S/ [0-9.,]+ (?:€|â‚¬)\s+([0-9.,]+)\s*(?:€|â‚¬)",
+        )
+        gross_amount = _extract_amount(normalized, r"TOTAL (?:HONORARIOS|A PAGAR)\s+([0-9.,]+)\s*(?:€|â‚¬)")
+        withholding_percent = None
+        withholding_amount = None
+        payable_amount = None
     return ClarisInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -99,25 +122,28 @@ def parse_claris_text(text: str, *, original_filename: str) -> ClarisInvoice:
         gross_amount=gross_amount,
         original_filename=original_filename,
         sender_email="",
+        withholding_percent=withholding_percent,
+        withholding_amount=withholding_amount,
+        payable_amount=payable_amount,
     )
 
 
 def _extract_invoice_number(text: str) -> str:
-    match = re.search(r"Factura Nº:\s*([A-Z0-9/.-]+)", text)
+    match = re.search(r"Factura(?: SUP)? N(?:Âº|º|°):\s*([A-Z0-9/.-]+)", text, flags=re.IGNORECASE)
     if not match:
         raise ValueError("Could not extract Claris invoice number.")
     return match.group(1)
 
 
 def _extract_invoice_date(text: str) -> date:
-    match = re.search(r"Fecha de expedición:\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+    match = re.search(r"Fecha de expedici(?:Ã³|ó)n:\s*([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
     if not match:
         raise ValueError("Could not extract Claris invoice date.")
     return datetime.strptime(match.group(1), "%d/%m/%Y").date()
 
 
 def _extract_billing_period(text: str, invoice_date: date) -> tuple[date, date]:
-    match = re.search(r"Correspondiente al mes de ([a-záéíóú]+)", text, flags=re.IGNORECASE)
+    match = re.search(r"Correspondiente al mes de ([a-zÃ¡Ã©Ã­Ã³Ãºáéíóú]+)", text, flags=re.IGNORECASE)
     if not match:
         month = invoice_date.month
         year = invoice_date.year
@@ -139,3 +165,22 @@ def _extract_amount(text: str, pattern: str) -> Decimal:
     raw = match.group(1).strip()
     normalized = raw.replace(".", "").replace(",", ".")
     return Decimal(normalized)
+
+
+def _extract_special_invoice_totals(
+    text: str,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, Decimal | None, Decimal | None, Decimal | None] | None:
+    if "Importe base total:" not in text or "Total a pagar:" not in text:
+        return None
+    net_amount = _extract_amount(text, r"Importe base total:\s*([0-9.,]+)\s*€")
+    vat_percent = _extract_amount(text, r"IVA\s*\(([0-9.,]+)%\)")
+    vat_amount = _extract_amount(text, r"IVA\s*\([0-9.,]+%\)\s*([0-9.,]+)\s*€")
+    gross_amount = _extract_amount(text, r"Total factura:\s*([0-9.,]+)\s*€")
+    payable_amount = _extract_amount(text, r"Total a pagar:\s*([0-9.,]+)\s*€")
+    withholding_match = re.search(r"IRPF\s*\(([0-9.,]+)%\)\s*-([0-9.,]+)\s*€", text, flags=re.IGNORECASE)
+    withholding_percent = None
+    withholding_amount = None
+    if withholding_match:
+        withholding_percent = Decimal(withholding_match.group(1).replace(".", "").replace(",", "."))
+        withholding_amount = Decimal(withholding_match.group(2).replace(".", "").replace(",", "."))
+    return net_amount, vat_percent, vat_amount, gross_amount, withholding_percent, withholding_amount, payable_amount

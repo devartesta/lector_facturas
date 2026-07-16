@@ -106,6 +106,9 @@ def parse_hannun_text(text: str, *, original_filename: str, forced_period_yyyymm
         if "renting cnc" in lower:
             division_invoice = "renting_cnc"
             destination_path = "income/shared-services"
+        elif "renting coche" in lower:
+            division_invoice = "renting_coche"
+            destination_path = "income/shared-services"
         elif "shared services staff" in lower:
             division_invoice = "staff"
             destination_path = "income/shared-services"

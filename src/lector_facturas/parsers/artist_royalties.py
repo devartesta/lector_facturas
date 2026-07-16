@@ -316,3 +316,81 @@ def _parse_decimal(raw: str) -> Decimal:
 
 def _parse_percent(raw: str) -> Decimal:
     return Decimal(raw.replace("%", "").replace(",", ".").strip()).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+
+def parse_artist_royalties_summary_text(text: str, *, source_filename: str) -> list[ArtistRoyaltyMonthlySummary]:
+    normalized = text.replace("\xa0", " ").replace("\r", "")
+    period_yyyymm = _extract_period_yyyymm_flexible(normalized)
+    sections = (
+        ("total", ("TOTAL GENERAL",)),
+        ("uk", ("Reino Unido (UK)",)),
+        ("us", ("Estados Unidos (US)",)),
+        ("eu", ("Resto de Europa",)),
+    )
+    summaries: list[ArtistRoyaltyMonthlySummary] = []
+    for scope, markers in sections:
+        section_text = _extract_summary_section_flexible(normalized, markers)
+        money = r"([0-9\.,]+ \S*)"
+        posters_amount = _parse_decimal_flexible(_require_match(section_text, rf"Posters:\s+{money}", f"{scope} posters"))
+        stationery_amount = _parse_decimal_flexible(_require_match(section_text, rf"Stationery:\s+{money}", f"{scope} stationery"))
+        gross_amount = _parse_decimal_flexible(_require_match(section_text, rf"Total bruto:\s+{money}", f"{scope} gross"))
+        withholding_amount = _parse_decimal_flexible(
+            _require_match(section_text, rf"(?:Impuestos|Retenci[oó]n IRPF):\s+{money}", f"{scope} withholding")
+        )
+        withholding_percent = _parse_percent(
+            _require_match(section_text, r"(?:Impuestos|Retenci[oó]n IRPF):\s+[0-9\.,]+ \S* \(([0-9\.,]+%)\)", f"{scope} withholding percent")
+        )
+        net_amount = _parse_decimal_flexible(_require_match(section_text, rf"(?:Total neto|Total factura):\s+{money}", f"{scope} net"))
+        paypal_amount = _parse_decimal_flexible(_require_match(section_text, rf"A pagar por PayPal:\s+{money}", f"{scope} paypal"))
+        bank_transfer_amount = _parse_decimal_flexible(_require_match(section_text, rf"A pagar por transferencia:\s+{money}", f"{scope} transfer"))
+        one_x_amount = _parse_decimal_flexible(_require_match(section_text, rf"A pagar a 1x:\s+{money}", f"{scope} 1x"))
+        summaries.append(
+            ArtistRoyaltyMonthlySummary(
+                company_code="SL",
+                supplier_code="ROYALTIES",
+                summary_scope=scope,
+                period_yyyymm=period_yyyymm,
+                posters_amount=posters_amount,
+                stationery_amount=stationery_amount,
+                gross_amount=gross_amount,
+                withholding_amount=withholding_amount,
+                withholding_percent=withholding_percent,
+                net_amount=net_amount,
+                paypal_amount=paypal_amount,
+                bank_transfer_amount=bank_transfer_amount,
+                one_x_amount=one_x_amount,
+                source_filename=source_filename,
+            )
+        )
+    return summaries
+
+
+def _extract_period_yyyymm_flexible(text: str) -> str:
+    numeric_match = re.search(r"Importe total a facturar en ([0-9]{6})", text)
+    if numeric_match:
+        return numeric_match.group(1)
+    return _extract_period_yyyymm(text)
+
+
+def _extract_summary_section_flexible(text: str, markers: tuple[str, ...]) -> str:
+    marker = next((item for item in markers if text.find(item) != -1), markers[0])
+    start = text.find(marker)
+    if start == -1:
+        raise ValueError(f"Could not find summary section {marker!r}.")
+    next_markers = ["Reino Unido (UK)", "Estados Unidos (US)", "Resto de Europa"]
+    if "TOTAL GENERAL" in marker:
+        next_candidates = [text.find(candidate, start + 1) for candidate in next_markers if text.find(candidate, start + 1) != -1]
+        end = min(next_candidates) if next_candidates else len(text)
+        return text[start:end]
+    for candidate in next_markers:
+        if candidate == marker:
+            continue
+        index = text.find(candidate, start + 1)
+        if index != -1:
+            return text[start:index]
+    return text[start:]
+
+
+def _parse_decimal_flexible(raw: str) -> Decimal:
+    cleaned = re.sub(r"[^0-9,.-]", "", raw)
+    return Decimal(cleaned.replace(".", "").replace(",", ".").strip()).quantize(TWOPLACES, rounding=ROUND_HALF_UP)

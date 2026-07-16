@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import load_workbook
 
 import lector_facturas.fx_rates as fx_rates
-from lector_facturas.pyg_sl_workbook import PygSlDataBundle, ProviderCatalogRow, build_pyg_sl_workbook
+from lector_facturas.pyg_sl_workbook import PygSlDataBundle, ProviderCatalogRow, StageRow, build_pyg_sl_workbook
 
 
 ECB_SAMPLE_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -57,7 +58,19 @@ def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Pa
         marketplace_rows=(),
         rappel_rows=(),
         supplies_rows=(),
-        service_rows=(),
+        service_rows=(
+            StageRow(
+                "202601",
+                "SL",
+                "Ltd",
+                "shared_services",
+                Decimal("123"),
+                "EUR",
+                "documents:shared_services",
+                "2026-0001",
+                "https://drive.google.com/file/d/shared-service/view",
+            ),
+        ),
         expense_rows=(),
         payment_fee_rows=(),
         provider_catalog_rows=(
@@ -81,6 +94,7 @@ def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Pa
     workbook = load_workbook(output_path, data_only=False)
     assert workbook.sheetnames[0] == "P&G-SL"
     assert "i-marketplaces-sl" in workbook.sheetnames
+    assert "i-shared-services-sl" in workbook.sheetnames
     assert "g-expenses-sl" in workbook.sheetnames
     assert "fx-rates" in workbook.sheetnames
     ws = workbook["P&G-SL"]
@@ -92,7 +106,7 @@ def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Pa
     assert ws["D6"].value == "=SUM(D7:D8)"
     assert ws["C8"].value == "FR"
     assert ws["C9"].value == "Marketplaces"
-    assert ws["D10"].value == "=SUMIFS('i-marketplaces-sl'!$I:$I,'i-marketplaces-sl'!$A:$A,D$1,'i-marketplaces-sl'!$C:$C,$C10)"
+    assert ws["D10"].value == '=SUMIFS(\'i-marketplaces-sl\'!$I:$I,\'i-marketplaces-sl\'!$A:$A,D$1,\'i-marketplaces-sl\'!$C:$C,"HANNUN")'
     product_sales_row = _find_row(ws, "  Product sales", column="A")
     manufacturing_row = _find_row(ws, "Manufacturing (% sales)", column="C")
     logistics_row = _find_row(ws, "Logistics (% sales)", column="C")
@@ -111,6 +125,13 @@ def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Pa
     assert params["pct_staff_us"] == 0.1
     assert params["pct_admin_uk"] == 0.15
     assert params["pct_admin_us"] == 0.1
+    shared_detail_ws = workbook["i-shared-services-sl"]
+    assert shared_detail_ws["K3"].value == "2026-0001"
+    assert shared_detail_ws["K3"].hyperlink.target == "https://drive.google.com/file/d/shared-service/view"
+    assert shared_detail_ws.column_dimensions["L"].hidden is True
+    shared_ws = workbook["shared-services"]
+    assert shared_ws["B4"].value == "ver facturas"
+    assert shared_ws["B4"].hyperlink.target == "#'i-shared-services-sl'!A1"
     fx_ws = workbook["fx-rates"]
     fx_entries = {
         (fx_ws[f"A{row}"].value, fx_ws[f"C{row}"].value, fx_ws[f"D{row}"].value)

@@ -92,10 +92,32 @@ def _parse_partner_text(
     sender_email: str,
     division_invoice: str,
 ) -> PartnerIncomeInvoice:
-    normalized = text.replace("\xa0", " ").replace("\r", "")
-    invoice_number = _extract(normalized, r"COMMANDE NO\s+([A-Z0-9-]+)")
-    invoice_date = _parse_date(_extract(normalized, r"DATE DE COMMANDE\s+([0-9]{4}/[0-9]{2}/[0-9]{2})"))
-    gross_amount = _parse_eur(_extract(normalized, r"TOTAL TTC:\s*€\s*([0-9,]+\.[0-9]{2})"))
+    normalized = text.replace("\xa0", " ").replace("\r", "").replace("\x00", "")
+    invoice_number = _extract_first(
+        normalized,
+        (
+            r"COMMANDE NO\s+([A-Z0-9-]+)",
+            r"N[ÚU]MERO\s+([A-Z0-9-]+)",
+        ),
+    )
+    invoice_date = _parse_date(
+        _extract_first(
+            normalized,
+            (
+                r"DATE DE COMMANDE\s+([0-9]{4}/[0-9]{2}/[0-9]{2})",
+                r"FECHA\s+([0-9]{4}/[0-9]{2}/[0-9]{2})",
+            ),
+        )
+    )
+    gross_amount = _parse_eur(
+        _extract_first(
+            normalized,
+            (
+                r"TOTAL TTC:\s*(?:â‚¬|€)?\s*([0-9,]+\.[0-9]{2})",
+                r"Total\s*:\s*(?:â‚¬|€)?\s*([0-9,]+\.[0-9]{2})",
+            ),
+        )
+    )
     billing_period_start = invoice_date
     billing_period_end = invoice_date
     return PartnerIncomeInvoice(
@@ -124,6 +146,14 @@ def _extract(text: str, pattern: str) -> str:
     if not match:
         raise ValueError(f"Could not extract partner income field with pattern: {pattern}")
     return match.group(1).strip()
+
+
+def _extract_first(text: str, patterns: tuple[str, ...]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1).strip()
+    raise ValueError(f"Could not extract partner income field with patterns: {patterns!r}")
 
 
 def _parse_date(raw: str) -> date:

@@ -36,7 +36,9 @@ from lector_facturas.parsers.hushed import parse_hushed_invoice_pdf, RECEIPT_FIL
 from lector_facturas.parsers.ipostal import parse_ipostal_pdf, parse_ipostal_text
 from lector_facturas.parsers.jondo import parse_jondo_pdf
 from lector_facturas.parsers.konvoai import parse_konvoai_pdf
+from lector_facturas.parsers.linkedin import parse_linkedin_pdf
 from lector_facturas.parsers.lizenzero import parse_lizenzero_pdf
+from lector_facturas.parsers.maisons import parse_maisons_pdf
 from lector_facturas.parsers.masmovil import parse_masmovil_pdf
 from lector_facturas.parsers.marketing_ads import parse_google_ads_pdf, parse_meta_ads_pdf
 from lector_facturas.parsers.microsoft import parse_microsoft_pdf
@@ -50,9 +52,10 @@ from lector_facturas.parsers.producthero import parse_producthero_pdf
 from lector_facturas.parsers.quickbooks import parse_quickbooks_pdf, parse_quickbooks_text
 from lector_facturas.parsers.railway import parse_railway_pdf
 from lector_facturas.parsers.regus import parse_regus_pdf
-from lector_facturas.parsers.rever import parse_rever_pdf
+from lector_facturas.parsers.rever import parse_rever_invoice_text, parse_rever_pdf, parse_rever_supplied_note_text
 from lector_facturas.parsers.shared_services import parse_shared_services_pdf
 from lector_facturas.parsers.shopify import parse_shopify_pdf
+from lector_facturas.parsers.simplycom import parse_simplycom_pdf
 from lector_facturas.parsers.spring import parse_spring_pdf
 from lector_facturas.parsers.syncwith import parse_syncwith_pdf
 from lector_facturas.parsers.tgi import parse_tgi_pdf
@@ -149,29 +152,31 @@ PARSER_RULES: tuple[ParserRule, ...] = (
         "HUSHED", "hushed", parse_hushed_invoice_pdf,
         sender_contains=("hushed.com", "affinityclick"),
         subject_contains=("your receipt from hushed",),
-        filename_contains=("receipt-",),
         text_contains=("hushed c/o affinityclick",),
     ),
     ParserRule("IPOSTAL", "ipostal", parse_ipostal_pdf, sender_contains=("ipostal",), filename_contains=("ipostal",), text_contains=("ipostal1", "factura para artesta inc", "identificaciones de correo propias")),
-    ParserRule("JONDO", "jondo", parse_jondo_pdf, filename_regexes=(r"^as-\d+\.pdf$",), text_contains=("order invoice", "jondo uk", "po number: as-")),
+    ParserRule("JONDO", "jondo", parse_jondo_pdf, filename_regexes=(r"^as-\d+\.pdf$", r"^\d+-as-\d+\.pdf$"), text_contains=("order invoice", "jondo uk", "po number: as-")),
     ParserRule("KONVOAI", "konvoai", parse_konvoai_pdf, filename_contains=("b5f7df3c",), sender_contains=("konvoai",), text_contains=("konvo ai",)),
+    ParserRule("LINKEDIN", "linkedin", parse_linkedin_pdf, sender_contains=("linkedin",), filename_contains=("lnkd_invoice_",), text_contains=("invoice from linkedin ireland unlimited company", "job views")),
     ParserRule("LIZENZERO", "lizenzero", parse_lizenzero_pdf, sender_contains=("lizenzero",), text_contains=("lizenzero", "interzero recycling alliance", "verpackungslizenz")),
+    ParserRule("MAISONS", "maisons", parse_maisons_pdf, filename_contains=("invoice-000000323475",), sender_contains=("maisonsdumonde", "mirakl"), text_contains=("maisons du monde france sas", "facture n")),
     ParserRule("LIVITUM", "rappel", parse_rappel_pdf, filename_contains=("factura_a_",), text_contains=("home design labs", "rappel 2025")),
     ParserRule("MASMOVIL", "masmovil", parse_masmovil_pdf, sender_contains=("masmovil",), subject_contains=("masmovil",), text_contains=("xfera moviles", "masmovil negocios")),
     ParserRule("METAADS", "meta_ads", parse_meta_ads_pdf, sender_contains=("meta", "facebook"), text_contains=("meta platforms ireland", "facebook")),
     ParserRule("MICROSOFT", "microsoft", parse_microsoft_pdf, sender_contains=("microsoft",), filename_contains=("microsoft",), text_contains=("microsoft iberica", "numero de facturacion g")),
     ParserRule("NODA", "noda", parse_noda_pdf, sender_contains=("noda",), filename_contains=("020-26", "noda", "factura enero 2026"), text_contains=("asesoria fiscal noda", "noda y asociados")),
-    ParserRule("OPENAI", "openai", parse_openai_pdf, filename_contains=("bzhjntub", "7bsdv5am", "invoice-bzhjntub", "invoice-7bsdv5am", "receipt-"), sender_contains=("openai",), text_contains=("openai", "chatgpt",)),
+    ParserRule("OPENAI", "openai", parse_openai_pdf, filename_contains=("bzhjntub", "7bsdv5am", "invoice-bzhjntub", "invoice-7bsdv5am"), sender_contains=("openai",), text_contains=("openai", "chatgpt",)),
     ParserRule("PORTCLEARANCE", "portclearance", parse_portclearance_pdf, sender_contains=("port clearance", "portclearance"), filename_contains=("pcsi",), text_contains=("port clearance services",)),
     ParserRule("PRESSING", "pressing", parse_pressing_pdf, text_contains=("pressing impressi digital", "detalle en hoja excel adjunta")),
     ParserRule("PRODUCTHERO", "producthero", parse_producthero_pdf, sender_contains=("producthero",), filename_contains=("invoice_205588", "invoice_211723", "producthero"), text_contains=("producthero", "product hero")),
     ParserRule("PROCO", "proco", parse_proco_pdf, sender_contains=("precisionproco", "precision printing"), text_contains=("precision printing co. ltd", "direct mailing", "carriage", "postage")),
-    ParserRule("RAILWAY", "railway", parse_railway_pdf, filename_contains=("1602c2f5",), sender_contains=("railway",)),
+    ParserRule("RAILWAY", "railway", parse_railway_pdf, filename_contains=("1602c2f5",), sender_contains=("railway",), text_contains=("railway corporation",)),
     ParserRule("QUICKBOOKS", "quickbooks", parse_quickbooks_pdf, sender_contains=("intuit", "quickbooks"), text_contains=("intuit inc.", "quickbooks online plus", "period for monthly fees")),
     ParserRule("REGUS", "regus", parse_regus_pdf, filename_contains=("3313-", "invoice("), sender_contains=("regus",)),
     ParserRule("REVER", "rever", parse_rever_pdf, filename_contains=("rvr-", "suppliednote", "invoice-rvr"), sender_contains=("rever",)),
     ParserRule("SHAREDSERVICESSL", "shared_services", parse_shared_services_pdf, filename_contains=("factura_202",), subject_contains=("factura_202",)),
     ParserRule("SHOPIFY", "shopify", parse_shopify_pdf, sender_contains=("shopify",), filename_contains=("shopify", "artesta_"), text_contains=("shopify",)),
+    ParserRule("SIMPLYCOM", "simplycom", parse_simplycom_pdf, sender_contains=("simply.com",), filename_contains=("simplycom",), text_contains=("simply.com a/s", "the sale is subject to reverse charge", "cuenta de simply.com")),
     ParserRule("SYNCWITH", "syncwith", parse_syncwith_pdf, filename_contains=("invoice-tadgcdfs",), sender_contains=("syncwith",), text_contains=("syncwith inc", "hello@syncwith.com")),
     ParserRule("SPRINGGDS", "spring", parse_spring_pdf, filename_contains=("e260",), sender_contains=("spring",)),
     ParserRule("TGI", "tgi", parse_tgi_pdf, sender_contains=("tginc.com",), text_contains=("today's graphics inc", "tgi job")),
@@ -338,6 +343,20 @@ def parse_with_rule(
             return parse_hushed_invoice_pdf(temp_path, receipt_number=receipt_number)
         finally:
             temp_path.unlink(missing_ok=True)
+    if rule.supplier_code == "REVER":
+        text = pdf_text
+        if not text.strip():
+            suffix = Path(original_filename).suffix or ".pdf"
+            with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                handle.write(content)
+                temp_path = Path(handle.name)
+            try:
+                return rule.parser(temp_path)
+            finally:
+                temp_path.unlink(missing_ok=True)
+        if "suppliednote" in original_filename.lower() or "suppli" in original_filename.lower():
+            return parse_rever_supplied_note_text(text, original_filename=original_filename)
+        return parse_rever_invoice_text(text, original_filename=original_filename)
 
     suffix = Path(original_filename).suffix or ".pdf"
     with NamedTemporaryFile(delete=False, suffix=suffix) as handle:

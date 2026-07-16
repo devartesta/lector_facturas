@@ -48,6 +48,17 @@ class PaymentFeeDetailBundle:
     paypal_raw_rows: tuple[dict, ...]
 
 
+@dataclass(frozen=True)
+class PaymentFeeWorkbookMetrics:
+    total_pyg_cost: Decimal
+    shopify_pyg_cost: Decimal
+    paypal_pyg_cost: Decimal
+    chargeback_fee_total: Decimal
+    chargeback_principal_total: Decimal
+    detail_pyg_cost: Decimal
+    tie_out_delta: Decimal
+
+
 def default_output_path(root: Path, company_code: str, period_yyyymm: str) -> Path:
     return root / "output" / "spreadsheet" / f"payment_fees_{company_code.lower()}_{period_yyyymm}.xlsx"
 
@@ -62,11 +73,11 @@ def collect_payment_fee_detail(*, company_code: str, period_yyyymm: str, databas
         )
     )
     transactions = tuple(
-        tx for tx in store.list_payment_order_transactions(
+        store.list_payment_order_transactions(
             company_code=normalized_company,
+            period_yyyymm=period_yyyymm,
             include_unpaid_shopify=True,
         )
-        if _transaction_period(tx) == period_yyyymm
     )
     shopify_raw_rows = tuple(
         row for row in store.list_shopify_payout_transactions()
@@ -109,12 +120,15 @@ def build_payment_fee_detail_workbook(bundle: PaymentFeeDetailBundle, output_pat
 
 def _build_summary_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
     company_label = _COMPANY_LABELS.get(bundle.company_code, bundle.company_code)
+    metrics = calculate_payment_fee_metrics(bundle)
     ws["A1"] = "Payment Fees Summary"
     ws["A1"].font = Font(size=14, bold=True)
     ws["A2"] = "Company"
     ws["B2"] = company_label
     ws["A3"] = "Period"
     ws["B3"] = bundle.period_yyyymm
+
+    _build_tie_out_section(ws, metrics, start_row=5)
 
     headers = [
         "Platform",
@@ -128,7 +142,7 @@ def _build_summary_sheet(ws, bundle: PaymentFeeDetailBundle) -> None:
         "PYG cost",
         "Net amount",
     ]
-    start_row = 5
+    start_row = 15
     for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=start_row, column=col, value=header)
         cell.fill = _HEADER_FILL
@@ -313,12 +327,6 @@ def _set_widths(ws, widths: list[int]) -> None:
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
-def _transaction_period(tx: PaymentOrderTransaction) -> str:
-    if tx.platform == SHOPIFY_PLATFORM:
-        return _transaction_month(tx.transaction_date)
-    return tx.period_yyyymm
-
-
 def _transaction_month(value: str) -> str:
     value = value.strip()
     if not value:
@@ -330,6 +338,72 @@ def _to_decimal(value) -> Decimal | None:
     if value in ("", None):
         return None
     return Decimal(str(value))
+
+
+def calculate_payment_fee_metrics(bundle: PaymentFeeDetailBundle) -> PaymentFeeWorkbookMetrics:
+    total_pyg_cost = sum((abs(summary.total_cost_amount) for summary in bundle.summaries), Decimal("0.00"))
+    shopify_pyg_cost = sum(
+        (abs(summary.total_cost_amount) for summary in bundle.summaries if summary.platform == SHOPIFY_PLATFORM),
+        Decimal("0.00"),
+    )
+    paypal_pyg_cost = sum(
+        (abs(summary.total_cost_amount) for summary in bundle.summaries if summary.platform == PAYPAL_PLATFORM),
+        Decimal("0.00"),
+    )
+    chargeback_fee_total = sum((abs(summary.chargeback_fee_amount) for summary in bundle.summaries), Decimal("0.00"))
+    chargeback_principal_total = sum((summary.chargeback_amount for summary in bundle.summaries), Decimal("0.00"))
+    detail_pyg_cost = sum((tx.fee_amount + tx.chargeback_fee_amount for tx in bundle.transactions), Decimal("0.00"))
+    return PaymentFeeWorkbookMetrics(
+        total_pyg_cost=total_pyg_cost,
+        shopify_pyg_cost=shopify_pyg_cost,
+        paypal_pyg_cost=paypal_pyg_cost,
+        chargeback_fee_total=chargeback_fee_total,
+        chargeback_principal_total=chargeback_principal_total,
+        detail_pyg_cost=detail_pyg_cost,
+        tie_out_delta=detail_pyg_cost - total_pyg_cost,
+    )
+
+
+def _build_tie_out_section(ws, metrics: PaymentFeeWorkbookMetrics, *, start_row: int) -> None:
+    rows = (
+        ("Metric", "Amount"),
+        ("Total PYG month", metrics.total_pyg_cost),
+        ("Shopify subtotal", metrics.shopify_pyg_cost),
+        ("PayPal subtotal", metrics.paypal_pyg_cost),
+        ("Chargeback fee", metrics.chargeback_fee_total),
+        ("Chargeback principal", metrics.chargeback_principal_total),
+        ("Total workbook", metrics.detail_pyg_cost),
+        ("Tie-out delta", metrics.tie_out_delta),
+    )
+    for offset, (label, value) in enumerate(rows):
+        row_idx = start_row + offset
+        label_cell = ws.cell(row=row_idx, column=1, value=label)
+        value_cell = ws.cell(row=row_idx, column=2, value=value)
+        label_cell.border = _BORDER
+        value_cell.border = _BORDER
+        if offset == 0:
+            label_cell.fill = _HEADER_FILL
+            value_cell.fill = _HEADER_FILL
+            label_cell.font = _WHITE_BOLD
+            value_cell.font = _WHITE_BOLD
+            label_cell.alignment = Alignment(horizontal="center")
+            value_cell.alignment = Alignment(horizontal="center")
+            continue
+        if offset in {1, len(rows) - 1}:
+            label_cell.fill = _SECTION_FILL
+            value_cell.fill = _SECTION_FILL
+            label_cell.font = _BOLD
+            value_cell.font = _BOLD
+        value_cell.number_format = _MONEY_FMT
+
+    note_row = start_row + len(rows) + 1
+    ws.cell(
+        row=note_row,
+        column=1,
+        value="Detail uses payment_order_transactions.period_yyyymm; PYG total comes from invoices.payment_fee_monthly_summary.",
+    )
+
+
 def _build_shopify_payout_timing_section(ws, bundle: PaymentFeeDetailBundle, start_row: int) -> None:
     ws.cell(row=start_row, column=1, value="Shopify Payout Timing").font = _BOLD
     ws.cell(row=start_row + 1, column=1, value="Only Shopify transactions with transaction date in the selected period.")

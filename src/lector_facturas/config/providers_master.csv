@@ -19,6 +19,8 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.",HANNUN,HANNUN,HANNUN,expenses/opex/administration,Bidirectional HANNUN relationship; incoming expense invoices and outgoing customer invoices,
 "ARTESTA STORE, S.L.",konvo,KONVO AI,KONVOAI,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",Lizenzero,INTERZERO RECYCLING ALLIANCE GMBH,LIZENZERO,expenses/opex/administration,Packaging license,
+"ARTESTA STORE, S.L.",LinkedIn,LINKEDIN IRELAND UNLIMITED COMPANY,LINKEDIN,expenses/opex/administration,LinkedIn hiring and recruiting invoices,
+"ARTESTA STORE, S.L.","Maisons du Monde","MAISONS DU MONDE FRANCE SAS",MAISONS,income/sales/marketplaces,Marketplace commissions and subscription invoices shown as negative marketplace revenue,no-reply-mirakl-sender@maisonsdumonde.com
 "ARTESTA STORE, S.L.","mas movil","XFERA MOVILES, S.A.U.",MASMOVIL,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",Meta,META PLATFORMS IRELAND LIMITED,METAADS,expenses/opex/marketing,,
 "ARTESTA STORE, S.L.",MICROSOFT,MICROSOFT IBERICA S.R.L.,MICROSOFT,expenses/opex/technology,,
@@ -36,6 +38,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORES (UK) LTD",REVER,REVER,REVER,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",Artistas,ARTIST ROYALTIES,ROYALTIES,expenses/cogs/royalties,Artist royalties received and issued by Artesta,
 "ARTESTA STORE, S.L.",Shopify,SHOPIFY,SHOPIFY,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",SimplyCom,SIMPLY.COM A/S,SIMPLYCOM,expenses/opex/technology,Domain and DNS services,
 "ARTESTA STORE, S.L.",SPRING,"INTERNATIONAL MAIL (SPAIN), S.L.",SPRINGGDS,expenses/cogs/logistics,Spring operating brand,
 "ARTESTA STORE, S.L.",TORRAS,"TORRAS ABOGADOS Y ECONOMISTAS ASOCIADOS, S.L.P.",TORRAS,expenses/opex/administration,,
 "ARTESTA STORE, S.L.",Nóminas,DOS CONSULTING,DOSCONSULTING,expenses/opex/staff,Monthly payroll management for SL,"[\"amaya@dosconsulting.net\", \"gemma@dosconsulting.net\", \"rosario@dosconsulting.net\"]"

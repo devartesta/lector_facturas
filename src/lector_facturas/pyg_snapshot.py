@@ -36,11 +36,13 @@ from lector_facturas.pyg_ltd_workbook import (
 from lector_facturas.pyg_ltd_workbook import _map_expense_subcategory as map_ltd_expense_subcategory
 from lector_facturas.pyg_sl_workbook import (
     ADMINISTRATION_DETAIL_LINES,
+    DEFAULT_MARKETPLACE_CODES,
     DEFAULT_MARKETING_REGIONS,
     DEFAULT_PAYMENT_FEE_LINES as SL_DEFAULT_PAYMENT_FEE_LINES,
     DEFAULT_SERVICE_LINES,
     REPORTING_CURRENCY as SL_REPORTING_CURRENCY,
     collect_pyg_sl_data,
+    marketplace_label,
 )
 from lector_facturas.pyg_sl_workbook import _provider_groups
 from lector_facturas.settings import AppSettings
@@ -157,7 +159,7 @@ def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSet
                 eur_value = _to_currency(fx_service, row.amount_net, row.currency, "EUR", row.yyyymm)
                 _add_amount(base_maps, code, row.yyyymm, base_value)
                 _add_amount(eur_maps, code, row.yyyymm, eur_value)
-                if row.line_item not in {"Ltd", "Inc"} and row.detail != "renting_cnc":
+                if row.line_item not in {"Ltd", "Inc"} and row.detail not in {"renting_cnc", "renting_coche"}:
                     _add_amount(base_maps, "services_external", row.yyyymm, base_value)
                     _add_amount(eur_maps, "services_external", row.yyyymm, eur_value)
         for row in bundle.expense_rows:
@@ -216,7 +218,7 @@ def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSet
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"shopify_{market.lower()}", market, 3, "detail", "shopify", "detail") for market in bundles[0].shopify_markets],
         _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
-        *[_RowDef(f"marketplace_{code.lower()}", code, 3, "detail", "marketplaces", "detail") for code in ("HANNUN", "TOASTY", "CHOOSE")],
+        *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
         _RowDef("rappels", "Rappels", 2, "section", "product_sales", "section"),
         _RowDef("rappel_livitum", "LIVITUM", 3, "detail", "rappels", "detail"),
         _RowDef("supplies", "Supplies", 2, "section", "product_sales", "section"),
@@ -658,7 +660,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         for row in bundle.service_rows:
             if row.yyyymm not in months:
                 continue
-            if row.line_item in {"Ltd", "Inc"} or row.detail == "renting_cnc":
+            if row.line_item in {"Ltd", "Inc"} or row.detail in {"renting_cnc", "renting_coche"}:
                 continue
             services_external_by_month[row.yyyymm] += _to_currency(
                 fx_service,
@@ -679,10 +681,12 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _set_amount(base_maps, "shopify_sl", month, load("shopify", month, "sl"))
         _set_amount(base_maps, "shopify_ltd", month, load("product_sales", month, "ltd"))
         _set_amount(base_maps, "shopify_inc", month, load("product_sales", month, "inc"))
-        _set_amount(base_maps, "marketplaces", month, load("marketplaces", month, "sl"))
+        for marketplace_code in DEFAULT_MARKETPLACE_CODES:
+            code = f"marketplace_{marketplace_code.lower()}"
+            _set_amount(base_maps, code, month, load(code, month, "sl"))
         _set_amount(base_maps, "services", month, services_external_by_month[month])
         _set_amount(base_maps, "rappels", month, load("rappels", month, "sl"))
-        _set_amount(base_maps, "supplies", month, load("supplies", month, "sl"))
+        _set_amount(base_maps, "supplies_rever", month, load("supplies_rever", month, "sl"))
         _set_amount(base_maps, "otros_ingresos", month, load("otros_ingresos_group", month, "sl") + load("otros_ingresos_group", month, "ltd") + load("otros_ingresos_group", month, "inc"))
         _set_amount(
             base_maps,
@@ -705,9 +709,11 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _RowDef("shopify_sl", "SL", 3, "detail", "shopify", "detail"),
         _RowDef("shopify_ltd", "Ltd", 3, "detail", "shopify", "detail"),
         _RowDef("shopify_inc", "Inc", 3, "detail", "shopify", "detail"),
-        _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section"),
+        _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
+        *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
         _RowDef("rappels", "Rappels", 2, "section", "product_sales", "section"),
-        _RowDef("supplies", "Supplies", 2, "section", "product_sales", "section"),
+        _RowDef("supplies", "Supplies", 2, "section", "product_sales", "section", True),
+        _RowDef("supplies_rever", "REVER", 3, "detail", "supplies", "detail"),
         _RowDef("services", "Services", 1, "subtotal", "turnover", "subtotal"),
         _RowDef("otros_ingresos", "Uncategorized income", 1, "section", "turnover", "section"),
         _RowDef("expenses", "EXPENSES", 0, "major", None, "major", True),
@@ -737,6 +743,8 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            "marketplaces": ("sum_children",),
+            "supplies": ("sum_children",),
             "product_sales": ("sum_codes", ("shopify", "marketplaces", "rappels", "supplies")),
             "turnover": ("sum_codes", ("product_sales", "services", "otros_ingresos")),
             "cogs": ("sum_codes", ("manufacturing", "logistics", "royalties", "payment_fees")),

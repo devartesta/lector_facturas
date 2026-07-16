@@ -120,6 +120,84 @@ def test_consolidated_services_detail_excludes_internal_and_renting() -> None:
     assert detail.cell_amount == Decimal("4.00")
 
 
+def test_consolidated_supplies_detail_uses_sl_invoice_links() -> None:
+    snapshot = _snapshot("consolidado", (_snapshot_row("supplies_rever", ("-5.00",), label="REVER"),))
+    bundle = PygSlDataBundle(
+        year=2026,
+        generated_at=datetime(2026, 4, 4, 12, 0, 0),
+        shopify_rows=(),
+        marketplace_rows=(),
+        rappel_rows=(),
+        supplies_rows=(StageRow("202601", "SL", "REVER", "suplidos", Decimal("-5.00"), "EUR", "documents", "R-1", "https://example.com/r-1"),),
+        service_rows=(),
+        expense_rows=(),
+        payment_fee_rows=(),
+        provider_catalog_rows=(),
+        shopify_markets=("ES",),
+    )
+
+    with (
+        patch("lector_facturas.pyg_cell_detail.build_pyg_snapshot", return_value=snapshot),
+        patch("lector_facturas.pyg_cell_detail.collect_pyg_sl_data", return_value=bundle),
+    ):
+        detail = build_pyg_cell_detail(
+            company="consolidado",
+            row_code="supplies_rever",
+            period_kind="month",
+            period_key="202601",
+            currency_mode="eur",
+            months=["202601"],
+            database_url="postgres://ignored",
+        )
+
+    assert detail.supported is True
+    assert detail.is_reconciled is True
+    assert len(detail.items) == 1
+    assert detail.items[0].label == "REVER"
+    assert detail.items[0].drive_url == "https://example.com/r-1"
+
+
+def test_consolidated_marketplace_detail_uses_sl_invoice_links() -> None:
+    snapshot = _snapshot("consolidado", (_snapshot_row("marketplace_hannun", ("12.00",), label="HANNUN"),))
+    bundle = PygSlDataBundle(
+        year=2026,
+        generated_at=datetime(2026, 4, 4, 12, 0, 0),
+        shopify_rows=(),
+        marketplace_rows=(
+            StageRow("202601", "SL", "HANNUN", "orders", Decimal("12.00"), "EUR", "documents", "H-1", "https://drive.example/h-1"),
+            StageRow("202601", "SL", "TOASTY", "orders", Decimal("7.00"), "EUR", "documents", "T-1", "https://drive.example/t-1"),
+        ),
+        rappel_rows=(),
+        supplies_rows=(),
+        service_rows=(),
+        expense_rows=(),
+        payment_fee_rows=(),
+        provider_catalog_rows=(),
+        shopify_markets=("ES",),
+    )
+
+    with (
+        patch("lector_facturas.pyg_cell_detail.build_pyg_snapshot", return_value=snapshot),
+        patch("lector_facturas.pyg_cell_detail.collect_pyg_sl_data", return_value=bundle),
+    ):
+        detail = build_pyg_cell_detail(
+            company="consolidado",
+            row_code="marketplace_hannun",
+            period_kind="month",
+            period_key="202601",
+            currency_mode="eur",
+            months=["202601"],
+            database_url="postgres://ignored",
+        )
+
+    assert detail.supported is True
+    assert detail.is_reconciled is True
+    assert len(detail.items) == 1
+    assert detail.items[0].label == "HANNUN"
+    assert detail.items[0].invoice_number == "H-1"
+    assert detail.items[0].drive_url == "https://drive.example/h-1"
+
+
 def test_ltd_manufacturing_quarter_detail_includes_frame_consumption() -> None:
     snapshot = _snapshot(
         "ltd",
@@ -153,6 +231,71 @@ def test_ltd_manufacturing_quarter_detail_includes_frame_consumption() -> None:
     assert detail.supported is True
     assert detail.is_reconciled is True
     assert len(detail.items) == 2
+
+
+def test_ltd_manufacturing_detail_uses_frame_consumption_when_no_supplier_invoices_exist() -> None:
+    snapshot = _snapshot(
+        "ltd",
+        (_snapshot_row("manufacturing", ("6.00",), label="Manufacturing"),),
+    )
+    bundle = PygLtdDataBundle(
+        year=2026,
+        generated_at=datetime(2026, 4, 4, 12, 0, 0),
+        sales_rows=(),
+        expense_rows=(),
+        payment_fee_rows=(),
+        provider_catalog_rows=(),
+        frame_consumed_by_period={"202601": Decimal("6.00")},
+    )
+
+    with (
+        patch("lector_facturas.pyg_cell_detail.build_pyg_snapshot", return_value=snapshot),
+        patch("lector_facturas.pyg_cell_detail.collect_pyg_ltd_data", return_value=bundle),
+    ):
+        detail = build_pyg_cell_detail(
+            company="ltd",
+            row_code="manufacturing",
+            period_kind="month",
+            period_key="202601",
+            currency_mode="base",
+            months=["202601"],
+            database_url="postgres://ignored",
+        )
+
+    assert detail.supported is True
+    assert detail.is_reconciled is True
+    assert [item.label for item in detail.items] == ["Frame consumption"]
+    assert detail.cell_amount == Decimal("6.00")
+
+
+def test_consolidated_manufacturing_detail_includes_ltd_and_inc_frame_consumption() -> None:
+    snapshot = _snapshot(
+        "consolidado",
+        (_snapshot_row("manufacturing", ("15.00",), label="Manufacturing"),),
+    )
+    sl_item = PygCellDetailItem("SL", "202601", "APPHOTOES", "INV-SL", Decimal("5.00"), Decimal("5.00"), Decimal("5.00"), "EUR", "documents", "")
+    ltd_item = PygCellDetailItem("LTD", "202601", "Frame consumption", "", Decimal("6.00"), Decimal("6.00"), Decimal("6.00"), "GBP", "frame_stock", "")
+    inc_item = PygCellDetailItem("INC", "202601", "Frame consumption", "", Decimal("4.00"), Decimal("4.00"), Decimal("4.00"), "USD", "frame_stock", "")
+
+    with (
+        patch("lector_facturas.pyg_cell_detail.build_pyg_snapshot", return_value=snapshot),
+        patch("lector_facturas.pyg_cell_detail._build_sl_items", return_value=(sl_item,)),
+        patch("lector_facturas.pyg_cell_detail._build_simple_company_items", side_effect=[(ltd_item,), (inc_item,)]),
+    ):
+        detail = build_pyg_cell_detail(
+            company="consolidado",
+            row_code="manufacturing",
+            period_kind="month",
+            period_key="202601",
+            currency_mode="eur",
+            months=["202601"],
+            database_url="postgres://ignored",
+        )
+
+    assert detail.supported is True
+    assert detail.is_reconciled is True
+    assert [item.company for item in detail.items] == ["SL", "LTD", "INC"]
+    assert detail.cell_amount == Decimal("15.00")
 
 
 def test_consolidated_administration_excludes_bbvacnc_items() -> None:

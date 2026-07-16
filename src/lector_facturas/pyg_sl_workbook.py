@@ -28,6 +28,8 @@ REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
 MONTH_NAMES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 DEFAULT_SHOPIFY_MARKETS = ["ES", "FR", "DE", "IT", "AT", "BE", "NL", "PT", "XX"]
+DEFAULT_MARKETPLACE_CODES = ["HANNUN", "TOASTY", "CHOOSE", "MAISONS"]
+MARKETPLACE_LABELS = {"MAISONS": "MAISONSDUMONDE"}
 DEFAULT_SERVICE_LINES = ["HANNUN", "QHANDS", "Ltd", "Inc"]
 DEFAULT_PAYMENT_FEE_LINES = ["SHOPIFY", "PAYPAL"]
 DEFAULT_MARKETING_REGIONS = ["EU", "UK", "US"]
@@ -116,6 +118,7 @@ class PygSlDataBundle:
     diferencias_divisas_by_period: dict[str, Decimal] = field(default_factory=dict)
     # scope → {yyyymm → gross_amount}: royalties desglosados por región (uk, us)
     royalties_by_scope: dict[str, dict[str, Decimal]] = field(default_factory=dict)
+    shared_services_breakdown: dict[tuple[str, str, str], Decimal] = field(default_factory=dict)
 
 
 def _normalize_company_name(value: str) -> str:
@@ -128,6 +131,95 @@ def default_output_path(root: Path, year: int) -> Path:
 
 def month_keys(year: int) -> list[str]:
     return [f"{year}{month:02d}" for month in range(1, 13)]
+
+
+def marketplace_label(code: str) -> str:
+    return MARKETPLACE_LABELS.get(code, code)
+
+
+def _normalize_shopify_market(value: Any) -> str:
+    country_code = str(value or "").upper()
+    return country_code if country_code else "XX"
+
+
+def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
+    seen = {row.line_item for row in rows if row.line_item}
+    preferred = [code for code in DEFAULT_SHOPIFY_MARKETS if code != "XX"]
+    ordered = [code for code in preferred if code in seen]
+    extras = sorted(code for code in seen if code not in set(preferred) and code != "XX")
+    if "XX" in seen:
+        ordered.append("XX")
+    return tuple(ordered + extras) if "XX" not in seen else tuple(ordered[:-1] + extras + ["XX"])
+
+
+def _collect_choose_toasty_adjustments(*, conn: Any, year: int) -> dict[tuple[str, str, str, int, int, int], Decimal]:
+    table_rows = conn.execute(
+        """
+        SELECT tablename
+        FROM pg_tables
+        WHERE schemaname = 'shopify'
+          AND tablename ~ %(pattern)s
+          AND tablename LIKE %(prefix)s
+        ORDER BY tablename
+        """,
+        {"pattern": r"^ventas_[0-9]{6}$", "prefix": f"ventas_{year}%"},
+    ).fetchall()
+    table_names = [str(row["tablename"]) for row in table_rows]
+    if not table_names:
+        return {}
+
+    union_sql = "\nUNION ALL\n".join(
+        f"""
+        SELECT
+          order_month_yyyymm,
+          COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
+          payment_currency,
+          COALESCE(is_rever_tag, 0) AS is_rever_tag,
+          COALESCE(is_hannun_tag, 0) AS is_hannun_tag,
+          COALESCE(is_mirakl_tag, 0) AS is_mirakl_tag,
+          shown_net_presentment AS amount_net
+        FROM shopify.{table_name}
+        WHERE COALESCE(is_choose_tag, 0) = 1
+           OR COALESCE(is_toasty_tag, 0) = 1
+        """
+        for table_name in table_names
+    )
+
+    rows = conn.execute(
+        f"""
+        WITH tagged AS (
+            {union_sql}
+        )
+        SELECT
+          order_month_yyyymm,
+          shipping_country_code,
+          payment_currency,
+          is_rever_tag,
+          is_hannun_tag,
+          is_mirakl_tag,
+          SUM(amount_net) AS amount_net
+        FROM tagged
+        GROUP BY
+          order_month_yyyymm,
+          shipping_country_code,
+          payment_currency,
+          is_rever_tag,
+          is_hannun_tag,
+          is_mirakl_tag
+        """
+    ).fetchall()
+
+    return {
+        (
+            str(row["order_month_yyyymm"]),
+            str(row["shipping_country_code"] or "XX").upper(),
+            str(row["payment_currency"] or "EUR"),
+            int(row["is_rever_tag"] or 0),
+            int(row["is_hannun_tag"] or 0),
+            int(row["is_mirakl_tag"] or 0),
+        ): _decimal(row["amount_net"])
+        for row in rows
+    }
 
 
 def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBundle:
@@ -145,7 +237,8 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
                 currency_code,
                 net_amount AS amount_net,
                 invoice_number,
-                drive_url
+                drive_url,
+                extracted_raw
             FROM invoices.documents
             WHERE period_yyyymm LIKE %(period)s
               AND company_code IN ('LTD', 'INC')
@@ -172,6 +265,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """,
             {"period": f"{year}%"},
         ).fetchall()
+        choose_toasty_adjustments = _collect_choose_toasty_adjustments(conn=conn, year=year)
         docs = conn.execute(
             """
             SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date, parser_name
@@ -194,6 +288,22 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
                 "year_start": f"{year}-01-01T00:00:00+00:00",
                 "year_end": f"{year + 1}-01-01T00:00:00+00:00",
             },
+        ).fetchall()
+        artlink_stock_refs = conn.execute(
+            """
+            SELECT invoice_number, net_amount AS amount_net
+            FROM invoices.documents
+            WHERE company_code = 'LTD'
+              AND supplier_code = 'ARTLINK'
+              AND status = 'classified'
+              AND period_yyyymm LIKE %(period)s
+              AND (
+                COALESCE(review_notes, '') ILIKE '%%stock purchase%%'
+                OR COALESCE(review_notes, '') ILIKE '%%stock cost%%'
+                OR LOWER(COALESCE(extracted_raw->>'manual_override_stock_purchase', '')) IN ('true', '1')
+              )
+            """,
+            {"period": f"{year}%"},
         ).fetchall()
         suppliers = conn.execute(
             """
@@ -226,7 +336,10 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """
             SELECT period_yyyymm, currency_code, total_company_cost_amount
             FROM invoices.payroll_documents
-            WHERE company_code = %(company)s AND period_yyyymm LIKE %(period)s
+            WHERE company_code = %(company)s
+              AND period_yyyymm LIKE %(period)s
+              AND document_type = 'payroll_summary'
+              AND total_company_cost_amount IS NOT NULL
             ORDER BY period_yyyymm
             """,
             {"company": COMPANY_CODE, "period": f"{year}%"},
@@ -269,6 +382,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             {"company": COMPANY_CODE, "period": f"{year}%"},
         ).fetchall()
     supplier_map = {str(row["supplier_code"]): row for row in suppliers}
+    excluded_sl_artlink_refs = _artlink_stock_reference_keys(artlink_stock_refs)
     shopify_rows: list[StageRow] = []
     marketplace_rows: list[StageRow] = []
     rappel_rows: list[StageRow] = []
@@ -279,7 +393,17 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         yyyymm = str(row["order_month_yyyymm"])
         shipping_country_code = str(row["shipping_country_code"] or "").upper()
         currency = str(row["payment_currency"] or "EUR")
-        amount_net = _decimal(row["amount_net"])
+        adjustment_key = (
+            yyyymm,
+            shipping_country_code or "XX",
+            currency,
+            int(row["is_rever_tag"] or 0),
+            int(row["is_hannun_tag"] or 0),
+            int(row["is_mirakl_tag"] or 0),
+        )
+        amount_net = _decimal(row["amount_net"]) - choose_toasty_adjustments.get(adjustment_key, Decimal("0"))
+        if amount_net == Decimal("0"):
+            continue
         if shipping_country_code in {"GB", "US"}:
             continue
         if int(row["is_hannun_tag"] or 0) == 1:
@@ -328,6 +452,16 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
         if supplier_code == "REVER" and (document_type == "supplied_note" or division_invoice == "suplidos"):
             supplies_rows.append(StageRow(yyyymm, COMPANY_CODE, "REVER", "suplidos", -amount_net, currency, "documents", invoice_number, drive_url))
             continue
+        if supplier_code == "MAISONS":
+            marketplace_rows.append(StageRow(yyyymm, COMPANY_CODE, "MAISONS", division_invoice or "marketplace", -abs(amount_net), currency, "documents", invoice_number, drive_url))
+            continue
+        if _should_exclude_sl_artlink_document(
+            supplier_code=supplier_code,
+            invoice_number=invoice_number,
+            amount_net=amount_net,
+            excluded_refs=excluded_sl_artlink_refs,
+        ):
+            continue
         supplier_meta = supplier_map.get(supplier_code)
         if supplier_meta and str(supplier_meta["destination_path"]).startswith("expenses/"):
             _, category, subcategory = str(supplier_meta["destination_path"]).split("/", 2)
@@ -374,7 +508,12 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
     for row in royalties_scope:
         scope = str(row["summary_scope"])
         royalties_by_scope.setdefault(scope, {})[str(row["period_yyyymm"])] = _decimal(row["gross_amount"])
-    return PygSlDataBundle(year, datetime.now(UTC), tuple(shopify_rows), tuple(marketplace_rows), tuple(rappel_rows), tuple(supplies_rows), tuple(service_rows), tuple(expense_rows), payment_fee_rows, provider_rows, tuple(DEFAULT_SHOPIFY_MARKETS), otros_ingresos_by_period=otros_ingresos_by_period, diferencias_divisas_by_period=diferencias_divisas_by_period, royalties_by_scope=royalties_by_scope)
+    shared_services_breakdown = _shared_services_breakdown(
+        rows=shared_services,
+        expense_rows=tuple(expense_rows),
+        royalties_by_scope=royalties_by_scope,
+    )
+    return PygSlDataBundle(year, datetime.now(UTC), tuple(shopify_rows), tuple(marketplace_rows), tuple(rappel_rows), tuple(supplies_rows), tuple(service_rows), tuple(expense_rows), payment_fee_rows, provider_rows, _ordered_shopify_markets(shopify_rows), otros_ingresos_by_period=otros_ingresos_by_period, diferencias_divisas_by_period=diferencias_divisas_by_period, royalties_by_scope=royalties_by_scope, shared_services_breakdown=shared_services_breakdown)
 
 
 def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
@@ -416,6 +555,7 @@ def build_pyg_sl_workbook(bundle: PygSlDataBundle, output_path: Path) -> Path:
     _sheet(wb, "i-rappels-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], rappel_sheet_rows)
     _sheet(wb, "i-supplies-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], supplies_sheet_rows)
     _sheet(wb, "i-services-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], service_sheet_rows)
+    _sheet(wb, "i-shared-services-sl", ["yyyymm", "entity", "line_item", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], _shared_services_detail_rows(service_sheet_rows))
     _sheet(wb, "g-expenses-sl", ["yyyymm", "entity", "category", "subcategory", "supplier_code", "detail", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source", "invoice_number", "drive_url"], expense_sheet_rows)
     _sheet(wb, "g-payment-fees-sl", ["yyyymm", "entity", "supplier_code", "amount_original", "currency_original", "reporting_currency", "fx_rate", "amount_reporting", "source"], payment_fee_sheet_rows)
     fx_rate_rows = _ensure_monthly_fx_rows(
@@ -468,6 +608,7 @@ def _add_back_links(wb: Workbook) -> None:
         "i-rappels-sl",
         "i-supplies-sl",
         "i-services-sl",
+        "i-shared-services-sl",
         "i-royalties-scope-sl",
         "g-expenses-sl",
         "g-payment-fees-sl",
@@ -501,10 +642,82 @@ def _apply_invoice_links(ws) -> None:
         invoice_cell = ws.cell(row=row_idx, column=invoice_col)
         drive_url_cell = ws.cell(row=row_idx, column=drive_url_col)
         invoice_cell.hyperlink = None
+        if drive_url_cell.value and not invoice_cell.value:
+            invoice_cell.value = "ver factura"
         if invoice_cell.value and drive_url_cell.value:
             invoice_cell.hyperlink = str(drive_url_cell.value)
             invoice_cell.style = "Hyperlink"
     ws.column_dimensions[get_column_letter(drive_url_col)].hidden = True
+
+
+def _shared_services_detail_rows(rows: list[list[Any]]) -> list[list[Any]]:
+    """Rows backing the shared-services sheet, with Drive links to intercompany invoices."""
+    return [
+        row
+        for row in rows
+        if len(row) >= 10
+        and str(row[9] or "") == "documents:shared_services"
+    ]
+
+
+def _shared_services_breakdown(
+    *,
+    rows: list[dict[str, Any]],
+    expense_rows: tuple[ExpenseRow, ...],
+    royalties_by_scope: dict[str, dict[str, Decimal]],
+) -> dict[tuple[str, str, str], Decimal]:
+    marketing_by_scope: dict[tuple[str, str], Decimal] = {}
+    for row in expense_rows:
+        if row.subcategory != "marketing":
+            continue
+        scope = row.detail.lower()
+        if scope not in {"uk", "us"}:
+            continue
+        key = (row.yyyymm, scope)
+        marketing_by_scope[key] = marketing_by_scope.get(key, Decimal("0")) + row.amount_net
+
+    result: dict[tuple[str, str, str], Decimal] = {}
+    for row in rows:
+        yyyymm = str(row["period_yyyymm"])
+        company_code = str(row["company_code"]).upper()
+        entity = "Ltd" if company_code == "LTD" else "Inc"
+        scope = "uk" if company_code == "LTD" else "us"
+        raw = row.get("extracted_raw") or {}
+        if not isinstance(raw, dict):
+            continue
+        line_items = raw.get("line_items") or []
+        if not isinstance(line_items, list):
+            continue
+        concepts: dict[str, Decimal] = {}
+        for item in line_items:
+            if not isinstance(item, dict):
+                continue
+            concept = str(item.get("concept") or "").lower()
+            if concept == "administrative":
+                concept = "administration"
+            if concept not in {"marketing", "royalties", "staff", "administration"}:
+                continue
+            concepts[concept] = _decimal(item.get("net_amount"))
+
+        expected_marketing = marketing_by_scope.get((yyyymm, scope))
+        expected_royalties = royalties_by_scope.get(scope, {}).get(yyyymm)
+        if (
+            expected_marketing is not None
+            and expected_royalties is not None
+            and _money_close(concepts.get("royalties"), expected_marketing)
+            and _money_close(concepts.get("marketing"), expected_royalties)
+        ):
+            concepts["marketing"], concepts["royalties"] = concepts["royalties"], concepts["marketing"]
+
+        for concept, amount in concepts.items():
+            result[(yyyymm, entity, concept)] = amount
+    return result
+
+
+def _money_close(left: Decimal | None, right: Decimal | None) -> bool:
+    if left is None or right is None:
+        return False
+    return abs(left - right) <= Decimal("0.02")
 
 
 def _stage_rows_with_fx(
@@ -681,10 +894,10 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
         ws[f"C{row + idx}"] = market
     row += len(bundle.shopify_markets)
     pos["marketplaces_header"] = row; ws[f"C{row}"] = "Marketplaces"; ws[f"C{row}"].font = BOLD; row += 1
-    marketplace_codes = ["HANNUN", "TOASTY", "CHOOSE"]
+    marketplace_codes = DEFAULT_MARKETPLACE_CODES
     marketplace_rows = list(range(row, row + len(marketplace_codes)))
     for idx, code in enumerate(marketplace_codes):
-        ws[f"C{row + idx}"] = code
+        ws[f"C{row + idx}"] = marketplace_label(code)
     row += len(marketplace_codes)
     pos["rappels_header"] = row; ws[f"C{row}"] = "Rappels"; ws[f"C{row}"].font = BOLD; row += 1
     pos["rappels_detail"] = row; ws[f"C{row}"] = "LIVITUM"; row += 1
@@ -797,6 +1010,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
         pos=pos,
         shopify_rows=shopify_rows,
         marketplace_rows=marketplace_rows,
+        marketplace_codes=marketplace_codes,
         service_rows=service_rows,
         manufacturing_rows=manufacturing_rows,
         logistics_rows=logistics_rows,
@@ -946,6 +1160,10 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
     ws[f"A{INC_EUR}"] = "TOTAL EUR"
     ws[f"A{INC_USD}"] = "TOTAL USD"
     ws[f"A{TOTAL_EUR}"] = "TOTAL SHARED SERVICES EUR"
+    for header_row in (LTD_HDR, INC_HDR):
+        ws.cell(row=header_row, column=2, value="ver facturas")
+        ws.cell(row=header_row, column=2).hyperlink = "#'i-shared-services-sl'!A1"
+        ws.cell(row=header_row, column=2).style = "Hyperlink"
 
     st_row = pos["staff_header"]
     ad_row = pos["administration_header"]
@@ -955,22 +1173,31 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
         """VLOOKUP al sheet params para obtener el parámetro configurable."""
         return f'VLOOKUP("{key}",params!$A:$B,2,0)'
 
-    for col in [get_column_letter(i) for i in range(4, 16)]:
+    def shared_value(yyyymm: str, entity: str, concept: str, fallback: str) -> float | str:
+        amount = bundle.shared_services_breakdown.get((yyyymm, entity, concept))
+        return float(amount) if amount is not None else fallback
+
+    for col_idx, yyyymm in enumerate(month_keys(bundle.year), start=4):
+        col = get_column_letter(col_idx)
         # ── LTD (UK) ──────────────────────────────────────────────────────────
         # Marketing UK: gasto real de g-expenses-sl con subcategory="marketing" y detail="uk"
         ws[f"{col}{LTD_MK}"] = (
             f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$2,"
             f"'g-expenses-sl'!$D:$D,\"marketing\",'g-expenses-sl'!$F:$F,\"uk\")"
         )
+        ws[f"{col}{LTD_MK}"] = shared_value(yyyymm, "Ltd", "marketing", str(ws[f"{col}{LTD_MK}"].value))
         # Royalties UK: gasto real por scope desde i-royalties-scope-sl
         ws[f"{col}{LTD_RY}"] = (
             f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$2,"
             f"'i-royalties-scope-sl'!$B:$B,\"uk\")"
         )
+        ws[f"{col}{LTD_RY}"] = shared_value(yyyymm, "Ltd", "royalties", str(ws[f"{col}{LTD_RY}"].value))
         # Staff UK: % configurable del total staff SL
         ws[f"{col}{LTD_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_uk')}"
+        ws[f"{col}{LTD_ST}"] = shared_value(yyyymm, "Ltd", "staff", str(ws[f"{col}{LTD_ST}"].value))
         # Admin UK: % configurable del total (administration + technology) SL
         ws[f"{col}{LTD_AD}"] = f"=('P&G-SL'!{col}{ad_row}+'P&G-SL'!{col}{tech_row})*{p('pct_admin_uk')}"
+        ws[f"{col}{LTD_AD}"] = shared_value(yyyymm, "Ltd", "administration", str(ws[f"{col}{LTD_AD}"].value))
         # Totales LTD
         ws[f"{col}{LTD_EUR}"] = f"=SUM({col}{LTD_MK}:{col}{LTD_AD})"
         ws[f"{col}{LTD_GBP}"] = (
@@ -983,12 +1210,16 @@ def _shared_services_sheet(wb: Workbook, bundle: PygSlDataBundle, pos: dict[str,
             f"=SUMIFS('g-expenses-sl'!$K:$K,'g-expenses-sl'!$A:$A,{col}$2,"
             f"'g-expenses-sl'!$D:$D,\"marketing\",'g-expenses-sl'!$F:$F,\"us\")"
         )
+        ws[f"{col}{INC_MK}"] = shared_value(yyyymm, "Inc", "marketing", str(ws[f"{col}{INC_MK}"].value))
         ws[f"{col}{INC_RY}"] = (
             f"=SUMIFS('i-royalties-scope-sl'!$C:$C,'i-royalties-scope-sl'!$A:$A,{col}$2,"
             f"'i-royalties-scope-sl'!$B:$B,\"us\")"
         )
+        ws[f"{col}{INC_RY}"] = shared_value(yyyymm, "Inc", "royalties", str(ws[f"{col}{INC_RY}"].value))
         ws[f"{col}{INC_ST}"] = f"='P&G-SL'!{col}{st_row}*{p('pct_staff_us')}"
+        ws[f"{col}{INC_ST}"] = shared_value(yyyymm, "Inc", "staff", str(ws[f"{col}{INC_ST}"].value))
         ws[f"{col}{INC_AD}"] = f"=('P&G-SL'!{col}{ad_row}+'P&G-SL'!{col}{tech_row})*{p('pct_admin_us')}"
+        ws[f"{col}{INC_AD}"] = shared_value(yyyymm, "Inc", "administration", str(ws[f"{col}{INC_AD}"].value))
         ws[f"{col}{INC_EUR}"] = f"=SUM({col}{INC_MK}:{col}{INC_AD})"
         ws[f"{col}{INC_USD}"] = (
             f"=IFERROR({col}{INC_EUR}/AVERAGEIFS('fx-rates'!$F:$F,'fx-rates'!$A:$A,{col}$2,"
@@ -1053,6 +1284,7 @@ def _fill_month_formulas(
     pos: dict[str, int],
     shopify_rows: list[int],
     marketplace_rows: list[int],
+    marketplace_codes: list[str],
     service_rows: list[int],
     manufacturing_rows: list[int],
     logistics_rows: list[int],
@@ -1069,8 +1301,9 @@ def _fill_month_formulas(
         for row in shopify_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-shopify-sl\'!$I:$I,\'i-shopify-sl\'!$A:$A,{col}$1,\'i-shopify-sl\'!$C:$C,$C{row})'
         ws[f"{col}{pos['shopify_header']}"] = f"=SUM({col}{shopify_rows[0]}:{col}{shopify_rows[-1]})"
+        for row, code in zip(marketplace_rows, marketplace_codes):
+            ws[f"{col}{row}"] = f'=SUMIFS(\'i-marketplaces-sl\'!$I:$I,\'i-marketplaces-sl\'!$A:$A,{col}$1,\'i-marketplaces-sl\'!$C:$C,"{code}")'
         for row, sheet in (
-            *[(r, "i-marketplaces-sl") for r in marketplace_rows],
             (pos["rappels_detail"], "i-rappels-sl"),
             (pos["supplies_detail"], "i-supplies-sl"),
             *[(r, "i-services-sl") for r in service_rows],
@@ -1251,10 +1484,10 @@ def _count_sheet_sl(wb: Workbook, bundle: PygSlDataBundle) -> None:
         lbl("C", row + idx, market)
     row += len(bundle.shopify_markets)
     pos["marketplaces_header"] = row; lbl("C", row, "Marketplaces", bold=True); row += 1
-    marketplace_codes = ["HANNUN", "TOASTY", "CHOOSE"]
+    marketplace_codes = DEFAULT_MARKETPLACE_CODES
     marketplace_rows_list = list(range(row, row + len(marketplace_codes)))
     for idx, code in enumerate(marketplace_codes):
-        lbl("C", row + idx, code)
+        lbl("C", row + idx, marketplace_label(code))
     row += len(marketplace_codes)
     pos["rappels_header"] = row; lbl("C", row, "Rappels", bold=True); row += 1
     pos["rappels_detail"] = row; lbl("C", row, "LIVITUM"); row += 1
@@ -1662,6 +1895,30 @@ def _provider_groups(rows: tuple[ProviderCatalogRow, ...]) -> dict[str, list[str
     return groups
 
 
+def _artlink_stock_reference_keys(rows: list[dict[str, Any]]) -> set[tuple[str, Decimal]]:
+    refs: set[tuple[str, Decimal]] = set()
+    for row in rows:
+        invoice_number = str(row["invoice_number"] or "").strip()
+        if not invoice_number:
+            continue
+        refs.add((invoice_number, _decimal(row["amount_net"])))
+    return refs
+
+
+def _should_exclude_sl_artlink_document(
+    *,
+    supplier_code: str,
+    invoice_number: str,
+    amount_net: Decimal,
+    excluded_refs: set[tuple[str, Decimal]],
+) -> bool:
+    if supplier_code != "ARTLINK":
+        return False
+    if not invoice_number:
+        return False
+    return (invoice_number.strip(), amount_net) in excluded_refs
+
+
 def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     periodified_roots = {
         invoice_number[: invoice_number.index("_PERIODIFICADA_")]
@@ -1669,14 +1926,14 @@ def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, 
         if (invoice_number := str(row["invoice_number"] or "").strip())
         and "_PERIODIFICADA_" in invoice_number
     }
-    if not periodified_roots:
-        return rows
-
     filtered: list[dict[str, Any]] = []
     for row in rows:
         invoice_number = str(row["invoice_number"] or "").strip()
+        supplier_code = str(row.get("supplier_code") or "").strip().upper()
         parser_name = str(row.get("parser_name") or "").strip().lower()
-        if invoice_number in periodified_roots and parser_name != "manual_periodificada":
+        if supplier_code == "YOURACCOUNTSTAXES" and parser_name != "manual_periodificada":
+            continue
+        if periodified_roots and invoice_number in periodified_roots and parser_name != "manual_periodificada":
             continue
         filtered.append(row)
     return filtered
@@ -1738,11 +1995,6 @@ def _add_navigation_links(
         cell._hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet_name}'!A1", display="->")
         cell.font = Font(color="666666", bold=False)
         cell.alignment = Alignment(horizontal="center", vertical="center")
-
-
-def _normalize_shopify_market(value: Any) -> str:
-    country_code = str(value or "").upper()
-    return country_code if country_code in set(DEFAULT_SHOPIFY_MARKETS[:-1]) else "XX"
 
 
 def _display_label(value: str, *, level: int) -> str:

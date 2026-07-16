@@ -12,6 +12,12 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import StreamingResponse
 
 from lector_facturas.api.schemas import (
+    BankIncomeManualMatchIn,
+    BankIncomeRejectIn,
+    BankIncomeReviewOut,
+    BankIncomeRunIn,
+    BankIncomeRunOut,
+    BankIncomeTransactionOut,
     CompanyOut,
     DailyRunOut,
     DriveBootstrapIn,
@@ -67,6 +73,7 @@ from lector_facturas.api.schemas import (
     SupplierPaymentSettingsIn,
     PaymentSettlementRunOut,
 )
+from lector_facturas.bank_income_reconciliation import run_sl_caixabank_income_reconciliation
 from lector_facturas.gmail_sync import (
     INVOICE_FILE_EXTENSIONS,
     classify_invoice_attachment,
@@ -1425,6 +1432,92 @@ def create_app() -> FastAPI:
             drive_file_name=result.drive_file_name,
             drive_file_url=result.drive_file_url,
         )
+
+    @app.post("/bank/income/sl/run", response_model=BankIncomeRunOut)
+    def run_bank_income_sl(
+        payload: BankIncomeRunIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> BankIncomeRunOut:
+        try:
+            result = run_sl_caixabank_income_reconciliation(store, period_yyyymm=payload.period_yyyymm)
+        except (RuntimeError, ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return BankIncomeRunOut(**result.__dict__)
+
+    @app.get("/bank/income/transactions", response_model=list[BankIncomeTransactionOut])
+    def list_bank_income_transactions(
+        company_code: str = Query(default="SL"),
+        period_yyyymm: str = Query(...),
+        status: str | None = Query(default=None),
+        include_excluded: bool = Query(default=False),
+        store: ReviewStore = Depends(get_store),
+    ) -> list[BankIncomeTransactionOut]:
+        items = store.list_bank_income_transactions(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            status=status,
+            include_excluded=include_excluded,
+        )
+        return [BankIncomeTransactionOut(**item) for item in items]
+
+    @app.get("/bank/income/reviews", response_model=list[BankIncomeReviewOut])
+    def list_bank_income_reviews(
+        company_code: str = Query(default="SL"),
+        period_yyyymm: str = Query(...),
+        status: str | None = Query(default=None),
+        store: ReviewStore = Depends(get_store),
+    ) -> list[BankIncomeReviewOut]:
+        items = store.list_bank_income_reviews(company_code=company_code, period_yyyymm=period_yyyymm, status=status)
+        return [BankIncomeReviewOut(**item) for item in items]
+
+    @app.post("/bank/income/matches/manual", response_model=BankIncomeTransactionOut)
+    def create_manual_bank_income_match(
+        payload: BankIncomeManualMatchIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> BankIncomeTransactionOut:
+        item = store.find_bank_income_transaction(payload.bank_transaction_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Bank transaction not found")
+        match = {
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"bank-income-match:{payload.bank_transaction_id}")),
+            "bank_transaction_id": payload.bank_transaction_id,
+            "company_code": item["company_code"],
+            "period_yyyymm": item["period_yyyymm"],
+            "status": payload.status,
+            "reason_code": payload.reason_code,
+            "match_type": payload.match_type,
+            "target_ids": payload.target_ids,
+            "confidence": payload.confidence,
+            "outside_period": payload.outside_period,
+            "notes": payload.notes,
+            "is_excluded": payload.is_excluded,
+            "exclusion_reason": payload.exclusion_reason,
+        }
+        store.upsert_manual_bank_income_match(match)
+        refreshed = store.find_bank_income_transaction(payload.bank_transaction_id)
+        if refreshed is None:
+            raise HTTPException(status_code=404, detail="Bank transaction not found")
+        return BankIncomeTransactionOut(**refreshed)
+
+    @app.post("/bank/income/matches/{bank_transaction_id}/reject", response_model=BankIncomeTransactionOut)
+    def reject_manual_bank_income_match(
+        bank_transaction_id: str,
+        payload: BankIncomeRejectIn,
+        store: ReviewStore = Depends(get_store),
+    ) -> BankIncomeTransactionOut:
+        item = store.find_bank_income_transaction(bank_transaction_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Bank transaction not found")
+        store.reject_bank_income_match(
+            bank_transaction_id=bank_transaction_id,
+            company_code=item["company_code"],
+            period_yyyymm=item["period_yyyymm"],
+            notes=payload.notes,
+        )
+        refreshed = store.find_bank_income_transaction(bank_transaction_id)
+        if refreshed is None:
+            raise HTTPException(status_code=404, detail="Bank transaction not found")
+        return BankIncomeTransactionOut(**refreshed)
 
     @app.get("/integrations/google-drive/status", response_model=GoogleDriveStatusOut)
     def google_drive_status(settings: AppSettings = Depends(get_settings)) -> GoogleDriveStatusOut:

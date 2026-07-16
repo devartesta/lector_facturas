@@ -121,8 +121,8 @@ def _aggregate_all(
             if row.line_item in {"Ltd", "Inc"}:
                 # Shared services interco: excluded entirely from consolidated
                 continue
-            if row.detail == "renting_cnc":
-                # CNC renting interco: income from HANNUN/QHANDS, offset by BBVACNC lease expense
+            if row.detail in {"renting_cnc", "renting_coche"}:
+                # Renting interco: income from HANNUN/QHANDS, offset by the related lease expense
                 continue
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "services_ext")] += c.amount_reporting; fx_audit.append(a)

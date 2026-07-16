@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import calendar
 import re
+from typing import TypeAlias
 
 from pypdf import PdfReader
 
@@ -54,39 +55,33 @@ class TgiInvoice:
         }
 
 
-def parse_tgi_pdf(path: Path) -> TgiInvoice:
+TgiParseResult: TypeAlias = TgiInvoice | list[TgiInvoice]
+
+
+def parse_tgi_pdf(path: Path) -> TgiParseResult:
     text = "\n".join((page.extract_text() or "") for page in PdfReader(str(path)).pages)
     return parse_tgi_text(text, original_filename=path.name)
 
 
-def parse_tgi_text(text: str, *, original_filename: str) -> TgiInvoice:
+def parse_tgi_text(text: str, *, original_filename: str) -> TgiParseResult:
     normalized = text.replace("\xa0", " ").replace("\r", "")
     invoice_number = _extract_invoice_number(normalized)
     invoice_date = _extract_invoice_date(normalized)
-    description, amount = _extract_line_description_and_amount(normalized)
-    billing_period_start, billing_period_end = _extract_period_range(description, invoice_date)
-    division_invoice = _extract_division(description)
-    net_amount = amount
-    vat_amount = Decimal("0.00")
-    gross_amount = amount
-    return TgiInvoice(
-        supplier_code=SUPPLIER_CODE,
-        supplier_name=SUPPLIER_CODE,
-        issuer_company_name=ISSUER_COMPANY_NAME,
-        billed_company_name=COMPANY_NAME,
-        invoice_number=invoice_number,
-        invoice_date=invoice_date,
-        billing_period_start=billing_period_start,
-        billing_period_end=billing_period_end,
-        period_yyyymm=_period_with_most_days(billing_period_start, billing_period_end),
-        division_invoice=division_invoice,
-        currency_code="USD",
-        vat_percent=Decimal("0.00"),
-        net_amount=net_amount,
-        vat_amount=vat_amount,
-        gross_amount=gross_amount,
-        original_filename=original_filename,
-    )
+    line_items = _extract_line_items(normalized)
+    parsed_items = [
+        _build_invoice_from_line(
+            invoice_number=invoice_number,
+            invoice_date=invoice_date,
+            description=description,
+            amount=amount,
+            original_filename=original_filename,
+        )
+        for description, amount in line_items
+    ]
+    if len(parsed_items) == 1:
+        return parsed_items[0]
+    _validate_multi_line_total(normalized, parsed_items)
+    return parsed_items
 
 
 def _extract_invoice_number(text: str) -> str:
@@ -118,22 +113,89 @@ def _extract_invoice_date(text: str) -> date:
     raise ValueError("Could not extract TGI invoice date.")
 
 
-def _extract_line_description_and_amount(text: str) -> tuple[str, Decimal]:
-    match = re.search(r"\$([\d,]+\.\d{2})([A-Za-z].*?)1\s+Artesta,Inc", text, flags=re.DOTALL)
-    if match:
-        amount = _parse_decimal(match.group(1))
-        description = " ".join(match.group(2).split())
-        return description, amount
+def _extract_line_items(text: str) -> list[tuple[str, Decimal]]:
     match = re.search(
-        r"Quantity\s+Description\s+Amount\s+1\s+(.+?)\s+\$([\d,]+\.\d{2})\s+Subtotal",
+        r"Quantity\s+Description\s+Amount\s+(.*?)\s+(?:Sales Tax|Subtotal)\b",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if match:
-        description = " ".join(match.group(1).split())
-        amount = _parse_decimal(match.group(2))
-        return description, amount
+        block = match.group(1)
+    else:
+        fallback_block = re.search(
+            r"Quantity\s+Description\s+Amount\s+(.*?)\s+Artesta,Inc\b",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not fallback_block:
+            raise ValueError("Could not extract TGI line items block.")
+        block = fallback_block.group(1)
+    items: list[tuple[str, Decimal]] = []
+    for raw_line in block.splitlines():
+        line = " ".join(raw_line.split())
+        if not line:
+            continue
+        prefixed = re.match(r"^\$([\d,]+\.\d{2})(.+?)1$", line)
+        if prefixed:
+            items.append((_normalize_description(prefixed.group(2)), _parse_decimal(prefixed.group(1))))
+            continue
+        suffixed = re.match(r"^1\s+(.+?)\s+\$([\d,]+\.\d{2})$", line)
+        if suffixed:
+            items.append((_normalize_description(suffixed.group(1)), _parse_decimal(suffixed.group(2))))
+            continue
+
+    if items:
+        return items
+
+    # Fallback for older OCR layouts with everything packed into one line.
+    fallback = re.search(r"\$([\d,]+\.\d{2})([A-Za-z].*?)1\s+Artesta,Inc", text, flags=re.DOTALL)
+    if fallback:
+        return [(_normalize_description(fallback.group(2)), _parse_decimal(fallback.group(1)))]
+    fallback = re.search(
+        r"Quantity\s+Description\s+Amount\s+1\s+(.+?)\s+\$([\d,]+\.\d{2})\s+Subtotal",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fallback:
+        return [(_normalize_description(fallback.group(1)), _parse_decimal(fallback.group(2)))]
     raise ValueError("Could not extract TGI description and amount.")
+
+
+def _build_invoice_from_line(
+    *,
+    invoice_number: str,
+    invoice_date: date,
+    description: str,
+    amount: Decimal,
+    original_filename: str,
+) -> TgiInvoice:
+    billing_period_start, billing_period_end = _extract_period_range(description, invoice_date)
+    division_invoice = _extract_division(description)
+    net_amount = amount
+    vat_amount = Decimal("0.00")
+    gross_amount = amount
+    return TgiInvoice(
+        supplier_code=SUPPLIER_CODE,
+        supplier_name=SUPPLIER_CODE,
+        issuer_company_name=ISSUER_COMPANY_NAME,
+        billed_company_name=COMPANY_NAME,
+        invoice_number=invoice_number,
+        invoice_date=invoice_date,
+        billing_period_start=billing_period_start,
+        billing_period_end=billing_period_end,
+        period_yyyymm=_period_with_most_days(billing_period_start, billing_period_end),
+        division_invoice=division_invoice,
+        currency_code="USD",
+        vat_percent=Decimal("0.00"),
+        net_amount=net_amount,
+        vat_amount=vat_amount,
+        gross_amount=gross_amount,
+        original_filename=original_filename,
+    )
+
+
+def _normalize_description(raw_description: str) -> str:
+    return " ".join(raw_description.replace("Charge's", "Charges").split())
 
 
 def _extract_period_range(description: str, invoice_date: date) -> tuple[date, date]:
@@ -167,6 +229,16 @@ def _extract_division(description: str) -> str:
     if "production" in lowered:
         return "manufacturing"
     raise ValueError("Could not infer TGI division from description.")
+
+
+def _validate_multi_line_total(text: str, invoices: list[TgiInvoice]) -> None:
+    total_match = re.search(r"Total\s+Due\s+\$([\d,]+\.\d{2})", text, flags=re.IGNORECASE)
+    if not total_match:
+        return
+    expected = _parse_decimal(total_match.group(1))
+    actual = _parse_decimal(format(sum((invoice.gross_amount for invoice in invoices), Decimal("0.00")), "f"))
+    if actual != expected:
+        raise ValueError(f"TGI multi-line total mismatch: lines sum to {actual} but invoice total is {expected}.")
 
 
 def _month_number(name: str) -> int:

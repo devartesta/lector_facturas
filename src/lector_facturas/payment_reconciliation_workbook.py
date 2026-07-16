@@ -960,7 +960,7 @@ def _add_bank_transfer_sheet(
     ws.merge_cells(f"A{row}:{last_col}{row}")
     c = ws.cell(row=row, column=1,
         value=('Orders with gateway "manual", [] or [""] (bank transfer), '
-               'excluding Hannun and Rever. Source: finance.informe_vat_gestorias_detalle. '
+               f'excluding Hannun and Rever. Source: finance.informe_vat_gestorias_detalle_{report.period_yyyymm}. '
                'Update "Paid" and "Payment date" as payments arrive. '
                'Green = collected · Yellow = pending.'))
     c.font = ITALIC_GREY; c.alignment = LEFT_WRAP

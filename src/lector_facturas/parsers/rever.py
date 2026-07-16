@@ -113,7 +113,9 @@ def parse_rever_invoice_text(text: str, *, original_filename: str) -> ReverDocum
         billing_period_start = invoice_date
         billing_period_end = invoice_date
 
-    is_suplidos = "suplidos" in normalized.lower() or "supplied expenses" in normalized.lower()
+    # Supplied notes are handled separately by parse_rever_supplied_note_text. Regular
+    # invoices may still contain "Supplied Expenses" as the tax label for a negative line.
+    is_suplidos = "suplidos" in normalized.lower()
 
     if is_suplidos:
         net_amount = _parse_decimal(_extract(normalized, r"Total sin impuestos\s+([0-9.,]+)\s*€"))

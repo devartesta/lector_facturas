@@ -426,6 +426,9 @@ def _apply_invoice_links(ws) -> None:
     for row_idx in range(3, ws.max_row + 1):
         invoice_cell = ws.cell(row=row_idx, column=invoice_col)
         drive_url_cell = ws.cell(row=row_idx, column=drive_url_col)
+        invoice_cell.hyperlink = None
+        if drive_url_cell.value and not invoice_cell.value:
+            invoice_cell.value = "ver factura"
         if invoice_cell.value and drive_url_cell.value:
             invoice_cell.hyperlink = str(drive_url_cell.value)
             invoice_cell.style = "Hyperlink"
@@ -1039,14 +1042,14 @@ def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, 
         if (invoice_number := str(row["invoice_number"] or "").strip())
         and "_PERIODIFICADA_" in invoice_number
     }
-    if not periodified_roots:
-        return rows
-
     filtered: list[dict[str, Any]] = []
     for row in rows:
         invoice_number = str(row["invoice_number"] or "").strip()
+        supplier_code = str(row.get("supplier_code") or "").strip().upper()
         parser_name = str(row.get("parser_name") or "").strip().lower()
-        if invoice_number in periodified_roots and parser_name != "manual_periodificada":
+        if supplier_code == "YOURACCOUNTSTAXES" and parser_name != "manual_periodificada":
+            continue
+        if periodified_roots and invoice_number in periodified_roots and parser_name != "manual_periodificada":
             continue
         filtered.append(row)
     return filtered

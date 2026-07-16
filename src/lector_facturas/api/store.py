@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 import json
 import ntpath
@@ -47,6 +48,22 @@ def _compute_due_date(parsed, payment_terms_days: int = 30) -> date | None:
     return end_of_month + timedelta(days=payment_terms_days)
 
 
+def _normalize_date_text(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return text or None
+
+
 SCHEMA_NAME = "invoices"
 COMPANY_CODES = {
     "ARTESTA STORE, S.L.": "SL",
@@ -62,6 +79,8 @@ DOCUMENTS_COLUMN_DEFINITIONS = (
     ("division_invoice", "TEXT NOT NULL DEFAULT ''"),
     ("billing_period_start", "DATE NULL"),
     ("billing_period_end",   "DATE NULL"),
+    ("issuer_tax_id",    "TEXT NULL"),
+    ("billed_tax_id",    "TEXT NULL"),
     # Payment tracking
     ("payment_status",   "TEXT NOT NULL DEFAULT 'pending'"),  # pending | paid | partial | direct_debit
     ("payment_date",     "DATE NULL"),
@@ -136,6 +155,11 @@ class ReviewStore:
         self.payment_summary_path = self.storage_path.with_name("payment_fee_monthly_summary.json")
         self.shopify_payout_transactions_path = self.storage_path.with_name("shopify_payout_transactions.json")
         self.paypal_transactions_raw_path = self.storage_path.with_name("paypal_transactions_raw.json")
+        self.bank_statement_files_path = self.storage_path.with_name("bank_statement_files.json")
+        self.bank_transactions_path = self.storage_path.with_name("bank_transactions.json")
+        self.bank_income_matches_path = self.storage_path.with_name("bank_income_matches.json")
+        self.bank_income_reviews_path = self.storage_path.with_name("bank_income_reviews.json")
+        self.bank_manual_orders_path = self.storage_path.with_name("bank_manual_orders.json")
         self.finance_root = finance_root
         self.database_url = database_url
         if self.database_url:
@@ -154,6 +178,16 @@ class ReviewStore:
             self._write_shopify_payout_transactions([])
         if not self.paypal_transactions_raw_path.exists():
             self._write_paypal_transactions_raw([])
+        if not self.bank_statement_files_path.exists():
+            self._write_bank_statement_files([])
+        if not self.bank_transactions_path.exists():
+            self._write_bank_transactions([])
+        if not self.bank_income_matches_path.exists():
+            self._write_bank_income_matches([])
+        if not self.bank_income_reviews_path.exists():
+            self._write_bank_income_reviews([])
+        if not self.bank_manual_orders_path.exists():
+            self._write_bank_manual_orders([])
 
     def list_companies(self) -> list[dict[str, str]]:
         if self.database_url:
@@ -504,6 +538,8 @@ class ReviewStore:
         gross_amount = gross_amount_override if gross_amount_override is not None else parsed.gross_amount
         net_amount = net_amount_override if net_amount_override is not None else parsed.net_amount
         vat_amount = vat_amount_override if vat_amount_override is not None else parsed.vat_amount
+        issuer_tax_id = getattr(parsed, "issuer_tax_id", None)
+        billed_tax_id = getattr(parsed, "billed_tax_id", None)
         with self._connect() as conn:
             supplier_id = self._find_supplier_id(conn, company_code, supplier_code)
             # Load supplier payment settings
@@ -526,14 +562,14 @@ class ReviewStore:
             conn.execute(
                 f"""
                 INSERT INTO {SCHEMA_NAME}.documents (
-                    id, invoice_number, invoice_date, issuer_company_name, billed_company_name, supplier_name, company_code, windows_path, drive_url,
+                    id, invoice_number, invoice_date, issuer_company_name, billed_company_name, issuer_tax_id, billed_tax_id, supplier_name, company_code, windows_path, drive_url,
                     received_at, sender_email, original_filename, division_invoice, billing_period_start, billing_period_end, vat_percent, gross_amount,
                     vat_amount, net_amount, supplier_id, supplier_code, currency_code, drive_file_id, storage_root, document_type, status, source_channel,
                     email_message_id, email_thread_id, attachment_original_name, parser_name, parser_confidence, extracted_raw, review_notes,
                     created_at, updated_at, source_sender, source_subject, period_yyyymm,
                     payment_status, payment_method, payment_due_date
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW(), %s, %s, %s,
                     %s, %s, %s
                 )
@@ -544,6 +580,8 @@ class ReviewStore:
                     parsed.invoice_date,
                     parsed.issuer_company_name,
                     parsed.billed_company_name,
+                    issuer_tax_id,
+                    billed_tax_id,
                     parsed.supplier_name,
                     company_code,
                     windows_path,
@@ -1003,6 +1041,46 @@ class ReviewStore:
         with self.shopify_payout_transactions_path.open("w", encoding="utf-8") as handle:
             json.dump(items, handle, ensure_ascii=False, indent=2)
 
+    def _read_bank_statement_files(self) -> list[dict[str, Any]]:
+        with self.bank_statement_files_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_bank_statement_files(self, items: list[dict[str, Any]]) -> None:
+        with self.bank_statement_files_path.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle, ensure_ascii=False, indent=2)
+
+    def _read_bank_transactions(self) -> list[dict[str, Any]]:
+        with self.bank_transactions_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_bank_transactions(self, items: list[dict[str, Any]]) -> None:
+        with self.bank_transactions_path.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle, ensure_ascii=False, indent=2)
+
+    def _read_bank_income_matches(self) -> list[dict[str, Any]]:
+        with self.bank_income_matches_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_bank_income_matches(self, items: list[dict[str, Any]]) -> None:
+        with self.bank_income_matches_path.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle, ensure_ascii=False, indent=2)
+
+    def _read_bank_income_reviews(self) -> list[dict[str, Any]]:
+        with self.bank_income_reviews_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_bank_income_reviews(self, items: list[dict[str, Any]]) -> None:
+        with self.bank_income_reviews_path.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle, ensure_ascii=False, indent=2)
+
+    def _read_bank_manual_orders(self) -> list[dict[str, Any]]:
+        with self.bank_manual_orders_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _write_bank_manual_orders(self, items: list[dict[str, Any]]) -> None:
+        with self.bank_manual_orders_path.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle, ensure_ascii=False, indent=2)
+
     def _read_paypal_transactions_raw(self) -> list[dict[str, Any]]:
         with self.paypal_transactions_raw_path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
@@ -1167,6 +1245,10 @@ class ReviewStore:
             conn.execute(self._paypal_transactions_raw_table_sql())
             conn.execute(self._payment_order_transactions_table_sql())
             conn.execute(self._payment_fee_monthly_summary_table_sql())
+            conn.execute(self._bank_statement_files_table_sql())
+            conn.execute(self._bank_transactions_table_sql())
+            conn.execute(self._bank_income_matches_table_sql())
+            conn.execute(self._bank_income_reviews_table_sql())
             conn.execute(self._payroll_documents_table_sql())
             conn.execute(self._otros_gastos_table_sql())
             conn.execute(self._otros_ingresos_table_sql())
@@ -1210,6 +1292,11 @@ class ReviewStore:
             conn.execute(self._payment_order_transactions_unique_index_sql())
             conn.execute(self._payment_order_transactions_period_index_sql())
             conn.execute(self._payment_fee_monthly_summary_unique_index_sql())
+            conn.execute(self._bank_statement_files_unique_index_sql())
+            conn.execute(self._bank_transactions_unique_index_sql())
+            conn.execute(self._bank_transactions_period_index_sql())
+            conn.execute(self._bank_income_matches_transaction_index_sql())
+            conn.execute(self._bank_income_reviews_period_index_sql())
             conn.execute(self._payroll_documents_unique_index_sql())
             conn.execute(self._otros_gastos_unique_index_sql())
             conn.execute(self._otros_ingresos_unique_index_sql())
@@ -1412,160 +1499,168 @@ class ReviewStore:
         if not transactions:
             return 0
         chunk_size = 100
-        for start in range(0, len(transactions), chunk_size):
-            chunk = transactions[start:start + chunk_size]
-            with self._connect() as conn:
-                for transaction in chunk:
-                    conn.execute(
-                        f"""
-                        INSERT INTO {SCHEMA_NAME}.payment_order_transactions (
-                            id, platform, company_code, market_code, currency_code, order_id, order_name,
-                            external_transaction_id, external_payout_id, transaction_date, payout_date,
-                            transaction_type, status, gross_amount, fee_amount, net_amount,
-                            chargeback_amount, chargeback_fee_amount, affects_balance, is_cancelled,
-                            is_chargeback, payment_reference, customer_reference, raw_payload, period_yyyymm,
-                            created_at, updated_at
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s, %s::jsonb, %s,
-                            NOW(), NOW()
-                        )
-                        ON CONFLICT (platform, external_transaction_id) DO UPDATE SET
-                            company_code = EXCLUDED.company_code,
-                            market_code = EXCLUDED.market_code,
-                            currency_code = EXCLUDED.currency_code,
-                            order_id = EXCLUDED.order_id,
-                            order_name = EXCLUDED.order_name,
-                            external_payout_id = EXCLUDED.external_payout_id,
-                            transaction_date = EXCLUDED.transaction_date,
-                            payout_date = EXCLUDED.payout_date,
-                            transaction_type = EXCLUDED.transaction_type,
-                            status = EXCLUDED.status,
-                            gross_amount = EXCLUDED.gross_amount,
-                            fee_amount = EXCLUDED.fee_amount,
-                            net_amount = EXCLUDED.net_amount,
-                            chargeback_amount = EXCLUDED.chargeback_amount,
-                            chargeback_fee_amount = EXCLUDED.chargeback_fee_amount,
-                            affects_balance = EXCLUDED.affects_balance,
-                            is_cancelled = EXCLUDED.is_cancelled,
-                            is_chargeback = EXCLUDED.is_chargeback,
-                            payment_reference = EXCLUDED.payment_reference,
-                            customer_reference = EXCLUDED.customer_reference,
-                            raw_payload = EXCLUDED.raw_payload,
-                            period_yyyymm = EXCLUDED.period_yyyymm,
-                            updated_at = NOW()
-                        """,
-                        (
-                            transaction.id,
-                            transaction.platform,
-                            transaction.company_code,
-                            transaction.market_code,
-                            transaction.currency_code,
-                            transaction.order_id,
-                            transaction.order_name,
-                            transaction.external_transaction_id,
-                            transaction.external_payout_id,
-                            transaction.transaction_date,
-                            transaction.payout_date or None,
-                            transaction.transaction_type,
-                            transaction.status,
-                            transaction.gross_amount,
-                            transaction.fee_amount,
-                            transaction.net_amount,
-                            transaction.chargeback_amount,
-                            transaction.chargeback_fee_amount,
-                            transaction.affects_balance,
-                            transaction.is_cancelled,
-                            transaction.is_chargeback,
-                            transaction.payment_reference,
-                            transaction.customer_reference,
-                            json.dumps(transaction.raw_payload or {}),
-                            transaction.period_yyyymm,
-                        ),
+        sql = f"""
+            INSERT INTO {SCHEMA_NAME}.payment_order_transactions (
+                id, platform, company_code, market_code, currency_code, order_id, order_name,
+                external_transaction_id, external_payout_id, transaction_date, payout_date,
+                transaction_type, status, gross_amount, fee_amount, net_amount,
+                chargeback_amount, chargeback_fee_amount, affects_balance, is_cancelled,
+                is_chargeback, payment_reference, customer_reference, raw_payload, period_yyyymm,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s::jsonb, %s,
+                NOW(), NOW()
+            )
+            ON CONFLICT (platform, external_transaction_id) DO UPDATE SET
+                company_code = EXCLUDED.company_code,
+                market_code = EXCLUDED.market_code,
+                currency_code = EXCLUDED.currency_code,
+                order_id = EXCLUDED.order_id,
+                order_name = EXCLUDED.order_name,
+                external_payout_id = EXCLUDED.external_payout_id,
+                transaction_date = EXCLUDED.transaction_date,
+                payout_date = EXCLUDED.payout_date,
+                transaction_type = EXCLUDED.transaction_type,
+                status = EXCLUDED.status,
+                gross_amount = EXCLUDED.gross_amount,
+                fee_amount = EXCLUDED.fee_amount,
+                net_amount = EXCLUDED.net_amount,
+                chargeback_amount = EXCLUDED.chargeback_amount,
+                chargeback_fee_amount = EXCLUDED.chargeback_fee_amount,
+                affects_balance = EXCLUDED.affects_balance,
+                is_cancelled = EXCLUDED.is_cancelled,
+                is_chargeback = EXCLUDED.is_chargeback,
+                payment_reference = EXCLUDED.payment_reference,
+                customer_reference = EXCLUDED.customer_reference,
+                raw_payload = EXCLUDED.raw_payload,
+                period_yyyymm = EXCLUDED.period_yyyymm,
+                updated_at = NOW()
+        """
+        with self._connect() as conn:
+            for start in range(0, len(transactions), chunk_size):
+                chunk = transactions[start:start + chunk_size]
+                with conn.cursor() as cursor:
+                    cursor.executemany(
+                        sql,
+                        [
+                            (
+                                transaction.id,
+                                transaction.platform,
+                                transaction.company_code,
+                                transaction.market_code,
+                                transaction.currency_code,
+                                transaction.order_id,
+                                transaction.order_name,
+                                transaction.external_transaction_id,
+                                transaction.external_payout_id,
+                                transaction.transaction_date,
+                                transaction.payout_date or None,
+                                transaction.transaction_type,
+                                transaction.status,
+                                transaction.gross_amount,
+                                transaction.fee_amount,
+                                transaction.net_amount,
+                                transaction.chargeback_amount,
+                                transaction.chargeback_fee_amount,
+                                transaction.affects_balance,
+                                transaction.is_cancelled,
+                                transaction.is_chargeback,
+                                transaction.payment_reference,
+                                transaction.customer_reference,
+                                json.dumps(transaction.raw_payload or {}),
+                                transaction.period_yyyymm,
+                            )
+                            for transaction in chunk
+                        ],
                     )
-                conn.commit()
+            conn.commit()
         return len(transactions)
 
     def _upsert_shopify_payout_transactions_db(self, records: list[dict[str, Any]]) -> int:
         if not records:
             return 0
+        sql = f"""
+            INSERT INTO {SCHEMA_NAME}.shopify_payout_transactions (
+                id, source_record_id, transaction_date, type, order_id, order_name,
+                card_brand, card_source, payout_status, payout_date, payout_id,
+                available_on, amount, fee, net, checkout, payment_method_name,
+                presentment_amount, presentment_currency, currency, vat,
+                business_entity_name, business_entity_id, company_code, market_code,
+                raw_payload, created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s::jsonb, NOW(), NOW()
+            )
+            ON CONFLICT (source_record_id) DO UPDATE SET
+                transaction_date = EXCLUDED.transaction_date,
+                type = EXCLUDED.type,
+                order_id = EXCLUDED.order_id,
+                order_name = EXCLUDED.order_name,
+                card_brand = EXCLUDED.card_brand,
+                card_source = EXCLUDED.card_source,
+                payout_status = EXCLUDED.payout_status,
+                payout_date = EXCLUDED.payout_date,
+                payout_id = EXCLUDED.payout_id,
+                available_on = EXCLUDED.available_on,
+                amount = EXCLUDED.amount,
+                fee = EXCLUDED.fee,
+                net = EXCLUDED.net,
+                checkout = EXCLUDED.checkout,
+                payment_method_name = EXCLUDED.payment_method_name,
+                presentment_amount = EXCLUDED.presentment_amount,
+                presentment_currency = EXCLUDED.presentment_currency,
+                currency = EXCLUDED.currency,
+                vat = EXCLUDED.vat,
+                business_entity_name = EXCLUDED.business_entity_name,
+                business_entity_id = EXCLUDED.business_entity_id,
+                company_code = EXCLUDED.company_code,
+                market_code = EXCLUDED.market_code,
+                raw_payload = EXCLUDED.raw_payload,
+                updated_at = NOW()
+        """
         with self._connect() as conn:
-            for record in records:
-                conn.execute(
-                    f"""
-                    INSERT INTO {SCHEMA_NAME}.shopify_payout_transactions (
-                        id, source_record_id, transaction_date, type, order_id, order_name,
-                        card_brand, card_source, payout_status, payout_date, payout_id,
-                        available_on, amount, fee, net, checkout, payment_method_name,
-                        presentment_amount, presentment_currency, currency, vat,
-                        business_entity_name, business_entity_id, company_code, market_code,
-                        raw_payload, created_at, updated_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s::jsonb, NOW(), NOW()
-                    )
-                    ON CONFLICT (source_record_id) DO UPDATE SET
-                        transaction_date = EXCLUDED.transaction_date,
-                        type = EXCLUDED.type,
-                        order_id = EXCLUDED.order_id,
-                        order_name = EXCLUDED.order_name,
-                        card_brand = EXCLUDED.card_brand,
-                        card_source = EXCLUDED.card_source,
-                        payout_status = EXCLUDED.payout_status,
-                        payout_date = EXCLUDED.payout_date,
-                        payout_id = EXCLUDED.payout_id,
-                        available_on = EXCLUDED.available_on,
-                        amount = EXCLUDED.amount,
-                        fee = EXCLUDED.fee,
-                        net = EXCLUDED.net,
-                        checkout = EXCLUDED.checkout,
-                        payment_method_name = EXCLUDED.payment_method_name,
-                        presentment_amount = EXCLUDED.presentment_amount,
-                        presentment_currency = EXCLUDED.presentment_currency,
-                        currency = EXCLUDED.currency,
-                        vat = EXCLUDED.vat,
-                        business_entity_name = EXCLUDED.business_entity_name,
-                        business_entity_id = EXCLUDED.business_entity_id,
-                        company_code = EXCLUDED.company_code,
-                        market_code = EXCLUDED.market_code,
-                        raw_payload = EXCLUDED.raw_payload,
-                        updated_at = NOW()
-                    """,
-                    (
-                        str(uuid.uuid5(uuid.NAMESPACE_URL, f"shopify-payout-row:{record.get('source_record_id', '')}")),
-                        record.get("source_record_id", ""),
-                        record.get("transaction_date") or None,
-                        record.get("type", ""),
-                        record.get("order_id", ""),
-                        record.get("order_name", ""),
-                        record.get("card_brand", ""),
-                        record.get("card_source", ""),
-                        record.get("payout_status", ""),
-                        record.get("payout_date") or None,
-                        record.get("payout_id", ""),
-                        record.get("available_on") or None,
-                        record.get("amount", "0.00"),
-                        record.get("fee", "0.00"),
-                        record.get("net", "0.00"),
-                        record.get("checkout", ""),
-                        record.get("payment_method_name", ""),
-                        record.get("presentment_amount") or None,
-                        record.get("presentment_currency", ""),
-                        record.get("currency", ""),
-                        record.get("vat", "0.00"),
-                        record.get("business_entity_name", ""),
-                        record.get("business_entity_id", ""),
-                        record.get("company_code", ""),
-                        record.get("market_code", ""),
-                        json.dumps(record.get("raw_payload", {}) or {}),
-                    ),
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    sql,
+                    [
+                        (
+                            str(uuid.uuid5(uuid.NAMESPACE_URL, f"shopify-payout-row:{record.get('source_record_id', '')}")),
+                            record.get("source_record_id", ""),
+                            record.get("transaction_date") or None,
+                            record.get("type", ""),
+                            record.get("order_id", ""),
+                            record.get("order_name", ""),
+                            record.get("card_brand", ""),
+                            record.get("card_source", ""),
+                            record.get("payout_status", ""),
+                            record.get("payout_date") or None,
+                            record.get("payout_id", ""),
+                            record.get("available_on") or None,
+                            record.get("amount", "0.00"),
+                            record.get("fee", "0.00"),
+                            record.get("net", "0.00"),
+                            record.get("checkout", ""),
+                            record.get("payment_method_name", ""),
+                            record.get("presentment_amount") or None,
+                            record.get("presentment_currency", ""),
+                            record.get("currency", ""),
+                            record.get("vat", "0.00"),
+                            record.get("business_entity_name", ""),
+                            record.get("business_entity_id", ""),
+                            record.get("company_code", ""),
+                            record.get("market_code", ""),
+                            json.dumps(record.get("raw_payload", {}) or {}),
+                        )
+                        for record in records
+                    ],
                 )
             conn.commit()
         return len(records)
@@ -1573,134 +1668,138 @@ class ReviewStore:
     def _upsert_paypal_transactions_raw_db(self, records: list[dict[str, Any]]) -> int:
         if not records:
             return 0
+        sql = f"""
+            INSERT INTO {SCHEMA_NAME}.paypal_transactions_raw (
+                id, source_record_id, transaction_date, fecha, hora, zona_horaria,
+                nombre, tipo, estado, divisa, bruto, tarifa, neto,
+                sender_email, recipient_email, transaction_id, shipping_address,
+                address_status, item_name, item_id, shipping_amount, insurance_amount,
+                sales_tax_amount, option1_name, option1_value, option2_name, option2_value,
+                reference_transaction_id, invoice_number, custom_number, quantity,
+                receipt_id, balance_amount, address_line_1, address_line_2, city, region,
+                postal_code, country, contact_phone, subject, note, country_code,
+                balance_impact, order_number, shopify_order_name, company_code, market_code, raw_payload,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s::jsonb,
+                NOW(), NOW()
+            )
+            ON CONFLICT (source_record_id) DO UPDATE SET
+                transaction_date = EXCLUDED.transaction_date,
+                fecha = EXCLUDED.fecha,
+                hora = EXCLUDED.hora,
+                zona_horaria = EXCLUDED.zona_horaria,
+                nombre = EXCLUDED.nombre,
+                tipo = EXCLUDED.tipo,
+                estado = EXCLUDED.estado,
+                divisa = EXCLUDED.divisa,
+                bruto = EXCLUDED.bruto,
+                tarifa = EXCLUDED.tarifa,
+                neto = EXCLUDED.neto,
+                sender_email = EXCLUDED.sender_email,
+                recipient_email = EXCLUDED.recipient_email,
+                transaction_id = EXCLUDED.transaction_id,
+                shipping_address = EXCLUDED.shipping_address,
+                address_status = EXCLUDED.address_status,
+                item_name = EXCLUDED.item_name,
+                item_id = EXCLUDED.item_id,
+                shipping_amount = EXCLUDED.shipping_amount,
+                insurance_amount = EXCLUDED.insurance_amount,
+                sales_tax_amount = EXCLUDED.sales_tax_amount,
+                option1_name = EXCLUDED.option1_name,
+                option1_value = EXCLUDED.option1_value,
+                option2_name = EXCLUDED.option2_name,
+                option2_value = EXCLUDED.option2_value,
+                reference_transaction_id = EXCLUDED.reference_transaction_id,
+                invoice_number = EXCLUDED.invoice_number,
+                custom_number = EXCLUDED.custom_number,
+                quantity = EXCLUDED.quantity,
+                receipt_id = EXCLUDED.receipt_id,
+                balance_amount = EXCLUDED.balance_amount,
+                address_line_1 = EXCLUDED.address_line_1,
+                address_line_2 = EXCLUDED.address_line_2,
+                city = EXCLUDED.city,
+                region = EXCLUDED.region,
+                postal_code = EXCLUDED.postal_code,
+                country = EXCLUDED.country,
+                contact_phone = EXCLUDED.contact_phone,
+                subject = EXCLUDED.subject,
+                note = EXCLUDED.note,
+                country_code = EXCLUDED.country_code,
+                balance_impact = EXCLUDED.balance_impact,
+                order_number = EXCLUDED.order_number,
+                shopify_order_name = EXCLUDED.shopify_order_name,
+                company_code = EXCLUDED.company_code,
+                market_code = EXCLUDED.market_code,
+                raw_payload = EXCLUDED.raw_payload,
+                updated_at = NOW()
+        """
         with self._connect() as conn:
-            for record in records:
-                conn.execute(
-                    f"""
-                    INSERT INTO {SCHEMA_NAME}.paypal_transactions_raw (
-                        id, source_record_id, transaction_date, fecha, hora, zona_horaria,
-                        nombre, tipo, estado, divisa, bruto, tarifa, neto,
-                        sender_email, recipient_email, transaction_id, shipping_address,
-                        address_status, item_name, item_id, shipping_amount, insurance_amount,
-                        sales_tax_amount, option1_name, option1_value, option2_name, option2_value,
-                        reference_transaction_id, invoice_number, custom_number, quantity,
-                        receipt_id, balance_amount, address_line_1, address_line_2, city, region,
-                        postal_code, country, contact_phone, subject, note, country_code,
-                        balance_impact, order_number, shopify_order_name, company_code, market_code, raw_payload,
-                        created_at, updated_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s::jsonb,
-                        NOW(), NOW()
-                    )
-                    ON CONFLICT (source_record_id) DO UPDATE SET
-                        transaction_date = EXCLUDED.transaction_date,
-                        fecha = EXCLUDED.fecha,
-                        hora = EXCLUDED.hora,
-                        zona_horaria = EXCLUDED.zona_horaria,
-                        nombre = EXCLUDED.nombre,
-                        tipo = EXCLUDED.tipo,
-                        estado = EXCLUDED.estado,
-                        divisa = EXCLUDED.divisa,
-                        bruto = EXCLUDED.bruto,
-                        tarifa = EXCLUDED.tarifa,
-                        neto = EXCLUDED.neto,
-                        sender_email = EXCLUDED.sender_email,
-                        recipient_email = EXCLUDED.recipient_email,
-                        transaction_id = EXCLUDED.transaction_id,
-                        shipping_address = EXCLUDED.shipping_address,
-                        address_status = EXCLUDED.address_status,
-                        item_name = EXCLUDED.item_name,
-                        item_id = EXCLUDED.item_id,
-                        shipping_amount = EXCLUDED.shipping_amount,
-                        insurance_amount = EXCLUDED.insurance_amount,
-                        sales_tax_amount = EXCLUDED.sales_tax_amount,
-                        option1_name = EXCLUDED.option1_name,
-                        option1_value = EXCLUDED.option1_value,
-                        option2_name = EXCLUDED.option2_name,
-                        option2_value = EXCLUDED.option2_value,
-                        reference_transaction_id = EXCLUDED.reference_transaction_id,
-                        invoice_number = EXCLUDED.invoice_number,
-                        custom_number = EXCLUDED.custom_number,
-                        quantity = EXCLUDED.quantity,
-                        receipt_id = EXCLUDED.receipt_id,
-                        balance_amount = EXCLUDED.balance_amount,
-                        address_line_1 = EXCLUDED.address_line_1,
-                        address_line_2 = EXCLUDED.address_line_2,
-                        city = EXCLUDED.city,
-                        region = EXCLUDED.region,
-                        postal_code = EXCLUDED.postal_code,
-                        country = EXCLUDED.country,
-                        contact_phone = EXCLUDED.contact_phone,
-                        subject = EXCLUDED.subject,
-                        note = EXCLUDED.note,
-                        country_code = EXCLUDED.country_code,
-                        balance_impact = EXCLUDED.balance_impact,
-                        order_number = EXCLUDED.order_number,
-                        shopify_order_name = EXCLUDED.shopify_order_name,
-                        company_code = EXCLUDED.company_code,
-                        market_code = EXCLUDED.market_code,
-                        raw_payload = EXCLUDED.raw_payload,
-                        updated_at = NOW()
-                    """,
-                    (
-                        str(uuid.uuid5(uuid.NAMESPACE_URL, f"paypal-raw-row:{record.get('source_record_id', '')}")),
-                        record.get("source_record_id", ""),
-                        record.get("transaction_date") or None,
-                        record.get("fecha", ""),
-                        record.get("hora", ""),
-                        record.get("zona_horaria", ""),
-                        record.get("nombre", ""),
-                        record.get("tipo", ""),
-                        record.get("estado", ""),
-                        record.get("divisa", ""),
-                        record.get("bruto", "0.00"),
-                        record.get("tarifa", "0.00"),
-                        record.get("neto", "0.00"),
-                        record.get("sender_email", ""),
-                        record.get("recipient_email", ""),
-                        record.get("transaction_id", ""),
-                        record.get("shipping_address", ""),
-                        record.get("address_status", ""),
-                        record.get("item_name", ""),
-                        record.get("item_id", ""),
-                        record.get("shipping_amount", "0.00"),
-                        record.get("insurance_amount", "0.00"),
-                        record.get("sales_tax_amount", "0.00"),
-                        record.get("option1_name", ""),
-                        record.get("option1_value", ""),
-                        record.get("option2_name", ""),
-                        record.get("option2_value", ""),
-                        record.get("reference_transaction_id", ""),
-                        record.get("invoice_number", ""),
-                        record.get("custom_number", ""),
-                        record.get("quantity", ""),
-                        record.get("receipt_id", ""),
-                        record.get("balance_amount") or None,
-                        record.get("address_line_1", ""),
-                        record.get("address_line_2", ""),
-                        record.get("city", ""),
-                        record.get("region", ""),
-                        record.get("postal_code", ""),
-                        record.get("country", ""),
-                        record.get("contact_phone", ""),
-                        record.get("subject", ""),
-                        record.get("note", ""),
-                        record.get("country_code", ""),
-                        record.get("balance_impact", ""),
-                        record.get("order_number", ""),
-                        record.get("shopify_order_name", ""),
-                        record.get("company_code", ""),
-                        record.get("market_code", ""),
-                        json.dumps(record.get("raw_payload", {}) or {}),
-                    ),
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    sql,
+                    [
+                        (
+                            str(uuid.uuid5(uuid.NAMESPACE_URL, f"paypal-raw-row:{record.get('source_record_id', '')}")),
+                            record.get("source_record_id", ""),
+                            record.get("transaction_date") or None,
+                            record.get("fecha", ""),
+                            record.get("hora", ""),
+                            record.get("zona_horaria", ""),
+                            record.get("nombre", ""),
+                            record.get("tipo", ""),
+                            record.get("estado", ""),
+                            record.get("divisa", ""),
+                            record.get("bruto", "0.00"),
+                            record.get("tarifa", "0.00"),
+                            record.get("neto", "0.00"),
+                            record.get("sender_email", ""),
+                            record.get("recipient_email", ""),
+                            record.get("transaction_id", ""),
+                            record.get("shipping_address", ""),
+                            record.get("address_status", ""),
+                            record.get("item_name", ""),
+                            record.get("item_id", ""),
+                            record.get("shipping_amount", "0.00"),
+                            record.get("insurance_amount", "0.00"),
+                            record.get("sales_tax_amount", "0.00"),
+                            record.get("option1_name", ""),
+                            record.get("option1_value", ""),
+                            record.get("option2_name", ""),
+                            record.get("option2_value", ""),
+                            record.get("reference_transaction_id", ""),
+                            record.get("invoice_number", ""),
+                            record.get("custom_number", ""),
+                            record.get("quantity", ""),
+                            record.get("receipt_id", ""),
+                            record.get("balance_amount") or None,
+                            record.get("address_line_1", ""),
+                            record.get("address_line_2", ""),
+                            record.get("city", ""),
+                            record.get("region", ""),
+                            record.get("postal_code", ""),
+                            record.get("country", ""),
+                            record.get("contact_phone", ""),
+                            record.get("subject", ""),
+                            record.get("note", ""),
+                            record.get("country_code", ""),
+                            record.get("balance_impact", ""),
+                            record.get("order_number", ""),
+                            record.get("shopify_order_name", ""),
+                            record.get("company_code", ""),
+                            record.get("market_code", ""),
+                            json.dumps(record.get("raw_payload", {}) or {}),
+                        )
+                        for record in records
+                    ],
                 )
             conn.commit()
         return len(records)
@@ -2687,6 +2786,8 @@ class ReviewStore:
                 invoice_date DATE NULL,
                 issuer_company_name TEXT NOT NULL DEFAULT '',
                 billed_company_name TEXT NOT NULL DEFAULT '',
+                issuer_tax_id TEXT NULL,
+                billed_tax_id TEXT NULL,
                 supplier_name TEXT NOT NULL DEFAULT '',
                 company_code TEXT NOT NULL,
                 windows_path TEXT NOT NULL DEFAULT '',
@@ -3464,11 +3565,821 @@ class ReviewStore:
                 "notes": str(row[4] or ""),
             }
 
+    # ------------------------------------------------------------------
+    # Bank income reconciliation
+    # ------------------------------------------------------------------
+
+    def set_bank_manual_orders(self, items: list[dict[str, Any]]) -> None:
+        if self.database_url:
+            raise RuntimeError("Local-only helper")
+        self._write_bank_manual_orders(items)
+
+    def upsert_bank_statement_file(self, item: dict[str, Any]) -> dict[str, Any]:
+        if self.database_url:
+            return self._upsert_bank_statement_file_db(item)
+        items = {str(existing.get("id", "")): existing for existing in self._read_bank_statement_files()}
+        items[str(item["id"])] = dict(item)
+        self._write_bank_statement_files(list(items.values()))
+        return dict(item)
+
+    def replace_bank_transactions(self, *, company_code: str, period_yyyymm: str, transactions: list[dict[str, Any]]) -> None:
+        if self.database_url:
+            self._replace_bank_transactions_db(company_code=company_code, period_yyyymm=period_yyyymm, transactions=transactions)
+            return
+        existing = [
+            item for item in self._read_bank_transactions()
+            if not (str(item.get("company_code", "")) == company_code and str(item.get("period_yyyymm", "")) == period_yyyymm)
+        ]
+        existing.extend(dict(item) for item in transactions)
+        self._write_bank_transactions(existing)
+
+    def list_bank_income_transactions(
+        self,
+        *,
+        company_code: str,
+        period_yyyymm: str,
+        status: str | None = None,
+        include_excluded: bool = False,
+    ) -> list[dict[str, Any]]:
+        transactions = self._list_bank_income_transactions_db(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+        ) if self.database_url else [
+            dict(item)
+            for item in self._read_bank_transactions()
+            if str(item.get("company_code", "")) == company_code and str(item.get("period_yyyymm", "")) == period_yyyymm
+        ]
+        match_by_tx = {
+            item["bank_transaction_id"]: item
+            for item in self.list_bank_income_matches(company_code=company_code, period_yyyymm=period_yyyymm)
+        }
+        merged: list[dict[str, Any]] = []
+        for item in transactions:
+            match = match_by_tx.get(str(item["id"]), {})
+            row = dict(item)
+            row["status"] = str(match.get("status", ""))
+            row["reason_code"] = str(match.get("reason_code", ""))
+            row["match_type"] = str(match.get("match_type", ""))
+            row["target_ids"] = list(match.get("target_ids", []))
+            row["confidence"] = int(match.get("confidence", 0) or 0)
+            row["outside_period"] = bool(match.get("outside_period", False))
+            row["notes"] = str(match.get("notes", ""))
+            row["source"] = str(match.get("source", ""))
+            row["is_excluded"] = bool(match.get("is_excluded", row.get("is_excluded", False)))
+            row["exclusion_reason"] = str(match.get("exclusion_reason", row.get("exclusion_reason", "")))
+            if status and row["status"] != status:
+                continue
+            if not include_excluded and row["is_excluded"]:
+                continue
+            merged.append(row)
+        return sorted(merged, key=lambda item: (str(item.get("booking_date") or ""), str(item.get("id") or "")))
+
+    def find_bank_income_transaction(self, bank_transaction_id: str) -> dict[str, Any] | None:
+        if self.database_url:
+            return self._find_bank_income_transaction_db(bank_transaction_id)
+        rows = [dict(item) for item in self._read_bank_transactions() if str(item.get("id", "")) == bank_transaction_id]
+        if not rows:
+            return None
+        row = rows[0]
+        company_code = str(row.get("company_code", ""))
+        period_yyyymm = str(row.get("period_yyyymm", ""))
+        merged = self.list_bank_income_transactions(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            include_excluded=True,
+        )
+        for item in merged:
+            if item["id"] == bank_transaction_id:
+                return item
+        return row
+
+    def replace_auto_bank_income_matches(self, *, company_code: str, period_yyyymm: str, matches: list[dict[str, Any]]) -> None:
+        if self.database_url:
+            self._replace_auto_bank_income_matches_db(company_code=company_code, period_yyyymm=period_yyyymm, matches=matches)
+            return
+        existing = [
+            item for item in self._read_bank_income_matches()
+            if not (
+                str(item.get("company_code", "")) == company_code
+                and str(item.get("period_yyyymm", "")) == period_yyyymm
+                and str(item.get("source", "auto")) == "auto"
+            )
+        ]
+        existing.extend(dict(item) for item in matches)
+        self._write_bank_income_matches(existing)
+
+    def list_bank_income_matches(
+        self,
+        *,
+        company_code: str,
+        period_yyyymm: str,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self.database_url:
+            return self._list_bank_income_matches_db(company_code=company_code, period_yyyymm=period_yyyymm, source=source)
+        items = [
+            dict(item)
+            for item in self._read_bank_income_matches()
+            if str(item.get("company_code", "")) == company_code and str(item.get("period_yyyymm", "")) == period_yyyymm
+        ]
+        if source:
+            items = [item for item in items if str(item.get("source", "")) == source]
+        return items
+
+    def replace_auto_bank_income_reviews(self, *, company_code: str, period_yyyymm: str, reviews: list[dict[str, Any]]) -> None:
+        if self.database_url:
+            self._replace_auto_bank_income_reviews_db(company_code=company_code, period_yyyymm=period_yyyymm, reviews=reviews)
+            return
+        existing = [
+            item for item in self._read_bank_income_reviews()
+            if not (
+                str(item.get("company_code", "")) == company_code
+                and str(item.get("period_yyyymm", "")) == period_yyyymm
+                and str(item.get("source", "auto")) == "auto"
+            )
+        ]
+        existing.extend(dict(item) for item in reviews)
+        self._write_bank_income_reviews(existing)
+
+    def list_bank_income_reviews(
+        self,
+        *,
+        company_code: str,
+        period_yyyymm: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self.database_url:
+            return self._list_bank_income_reviews_db(company_code=company_code, period_yyyymm=period_yyyymm, status=status)
+        items = [
+            dict(item)
+            for item in self._read_bank_income_reviews()
+            if str(item.get("company_code", "")) == company_code and str(item.get("period_yyyymm", "")) == period_yyyymm
+        ]
+        if status:
+            items = [item for item in items if str(item.get("status", "")) == status]
+        return items
+
+    def upsert_manual_bank_income_match(self, item: dict[str, Any]) -> dict[str, Any]:
+        record = dict(item)
+        record["source"] = "manual"
+        if self.database_url:
+            return self._upsert_bank_income_match_db(record)
+        items = {str(existing.get("bank_transaction_id", "")): existing for existing in self._read_bank_income_matches()}
+        items[str(record["bank_transaction_id"])] = record
+        self._write_bank_income_matches(list(items.values()))
+        reviews = [
+            review for review in self._read_bank_income_reviews()
+            if str(review.get("bank_transaction_id", "")) != str(record["bank_transaction_id"])
+        ]
+        self._write_bank_income_reviews(reviews)
+        return record
+
+    def reject_bank_income_match(self, *, bank_transaction_id: str, company_code: str, period_yyyymm: str, notes: str = "") -> dict[str, Any]:
+        record = {
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"bank-income-match:{bank_transaction_id}")),
+            "bank_transaction_id": bank_transaction_id,
+            "company_code": company_code,
+            "period_yyyymm": period_yyyymm,
+            "status": "pending_review",
+            "reason_code": "manual_rejected",
+            "match_type": "",
+            "target_ids": [],
+            "confidence": 0,
+            "outside_period": False,
+            "notes": notes,
+            "is_excluded": False,
+            "exclusion_reason": "",
+            "source": "manual",
+        }
+        return self.upsert_manual_bank_income_match(record)
+
+    def list_shopify_payout_aggregates(self, *, company_code: str, from_period: str, to_period: str) -> list[dict[str, Any]]:
+        if self.database_url:
+            return self._list_shopify_payout_aggregates_db(company_code=company_code, from_period=from_period, to_period=to_period)
+        payout_map: dict[str, dict[str, Any]] = {}
+        for item in self._read_shopify_payout_transactions():
+            if str(item.get("company_code", "")) != company_code:
+                continue
+            payout_date = str(item.get("payout_date") or item.get("available_on") or item.get("transaction_date") or "")[:10]
+            payout_period = payout_date[:7].replace("-", "") if payout_date else ""
+            if payout_period < from_period or payout_period > to_period:
+                continue
+            target_id = str(item.get("payout_id") or f"shopify-payout-{payout_date}")
+            current = payout_map.setdefault(
+                target_id,
+                {
+                    "target_id": target_id,
+                    "payout_id": str(item.get("payout_id", "")),
+                    "payout_date": payout_date,
+                    "payout_period": payout_period,
+                    "net_amount": Decimal("0.00"),
+                    "currency": str(item.get("currency", "")) or "EUR",
+                    "_has_transfer": False,
+                },
+            )
+            row_type = str(item.get("type", ""))
+            if row_type == "transfer":
+                current["_has_transfer"] = True
+                current["net_amount"] += -Decimal(str(item.get("amount") or "0"))
+            elif not current["_has_transfer"]:
+                current["net_amount"] += Decimal(str(item.get("net") or "0"))
+        return [
+            {
+                **{k: v for k, v in item.items() if not k.startswith("_")},
+                "net_amount": str(Decimal(str(item["net_amount"])).quantize(Decimal("0.01"))),
+            }
+            for item in sorted(payout_map.values(), key=lambda row: (row["payout_date"], row["target_id"]))
+        ]
+
+    def list_manual_open_orders(self, *, company_code: str, period_yyyymm: str) -> list[dict[str, Any]]:
+        if self.database_url:
+            items = self._list_manual_open_orders_db(company_code=company_code, period_yyyymm=period_yyyymm)
+        else:
+            items = [
+                dict(item)
+                for item in self._read_bank_manual_orders()
+                if str(item.get("company_code", "")) == company_code and str(item.get("period_yyyymm", "")) <= period_yyyymm
+            ]
+        consumed_ids = set(self.list_consumed_manual_order_ids(company_code=company_code))
+        return [item for item in items if str(item.get("order_name", "")) not in consumed_ids]
+
+    def list_consumed_manual_order_ids(self, *, company_code: str) -> list[str]:
+        if self.database_url:
+            return self._list_consumed_manual_order_ids_db(company_code=company_code)
+        consumed: set[str] = set()
+        for item in self._read_bank_income_matches():
+            if str(item.get("company_code", "")) != company_code:
+                continue
+            if str(item.get("status", "")) != "validated":
+                continue
+            if not str(item.get("match_type", "")).startswith("manual_order"):
+                continue
+            for target_id in item.get("target_ids", []):
+                consumed.add(str(target_id))
+        return sorted(consumed)
+
+    def _upsert_bank_statement_file_db(self, item: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {SCHEMA_NAME}.bank_statement_files (
+                    id, company_code, period_yyyymm, bank_name, account_label, source_path, file_name,
+                    file_hash, parser_name, imported_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, NOW(), NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    source_path = EXCLUDED.source_path,
+                    file_name = EXCLUDED.file_name,
+                    file_hash = EXCLUDED.file_hash,
+                    parser_name = EXCLUDED.parser_name,
+                    updated_at = NOW()
+                """,
+                (
+                    item["id"],
+                    item["company_code"],
+                    item["period_yyyymm"],
+                    item.get("bank_name", ""),
+                    item.get("account_label", ""),
+                    item.get("source_path", ""),
+                    item.get("file_name", ""),
+                    item.get("file_hash", ""),
+                    item.get("parser_name", ""),
+                ),
+            )
+            conn.commit()
+        return item
+
+    def _replace_bank_transactions_db(self, *, company_code: str, period_yyyymm: str, transactions: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"DELETE FROM {SCHEMA_NAME}.bank_transactions WHERE company_code = %s AND period_yyyymm = %s",
+                (company_code, period_yyyymm),
+            )
+            for item in transactions:
+                conn.execute(
+                    f"""
+                    INSERT INTO {SCHEMA_NAME}.bank_transactions (
+                        id, statement_file_id, company_code, period_yyyymm, bank_name, account_label,
+                        booking_date, value_date, amount, balance, currency, direction, concept, detail,
+                        classification, is_excluded, exclusion_reason, fingerprint, source_row_number,
+                        raw_payload, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s::jsonb, NOW(), NOW()
+                    )
+                    """,
+                    (
+                        item["id"],
+                        item.get("statement_file_id", ""),
+                        item["company_code"],
+                        item["period_yyyymm"],
+                        item.get("bank_name", ""),
+                        item.get("account_label", ""),
+                        item.get("booking_date") or None,
+                        item.get("value_date") or None,
+                        item.get("amount"),
+                        item.get("balance"),
+                        item.get("currency", ""),
+                        item.get("direction", ""),
+                        item.get("concept", ""),
+                        item.get("detail", ""),
+                        item.get("classification", ""),
+                        bool(item.get("is_excluded", False)),
+                        item.get("exclusion_reason", ""),
+                        item.get("fingerprint", ""),
+                        int(item.get("source_row_number", 0) or 0),
+                        json.dumps(item.get("raw_payload", {}) or {}),
+                    ),
+                )
+            conn.commit()
+
+    def _list_bank_income_transactions_db(self, *, company_code: str, period_yyyymm: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, company_code, period_yyyymm, bank_name, account_label, booking_date, value_date,
+                       amount, balance, currency, direction, concept, detail, classification,
+                       is_excluded, exclusion_reason
+                FROM {SCHEMA_NAME}.bank_transactions
+                WHERE company_code = %s AND period_yyyymm = %s
+                ORDER BY booking_date, id
+                """,
+                (company_code, period_yyyymm),
+            ).fetchall()
+        return [
+            {
+                "id": str(row[0]),
+                "company_code": str(row[1]),
+                "period_yyyymm": str(row[2]),
+                "bank_name": str(row[3] or ""),
+                "account_label": str(row[4] or ""),
+                "booking_date": row[5].isoformat() if row[5] else None,
+                "value_date": row[6].isoformat() if row[6] else None,
+                "amount": str(row[7]),
+                "balance": str(row[8]) if row[8] is not None else None,
+                "currency": str(row[9] or ""),
+                "direction": str(row[10] or ""),
+                "concept": str(row[11] or ""),
+                "detail": str(row[12] or ""),
+                "classification": str(row[13] or ""),
+                "is_excluded": bool(row[14]),
+                "exclusion_reason": str(row[15] or ""),
+            }
+            for row in rows
+        ]
+
+    def _find_bank_income_transaction_db(self, bank_transaction_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT company_code, period_yyyymm
+                FROM {SCHEMA_NAME}.bank_transactions
+                WHERE id = %s
+                """,
+                (bank_transaction_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        for item in self.list_bank_income_transactions(
+            company_code=str(row[0]),
+            period_yyyymm=str(row[1]),
+            include_excluded=True,
+        ):
+            if item["id"] == bank_transaction_id:
+                return item
+        return None
+
+    def _replace_auto_bank_income_matches_db(self, *, company_code: str, period_yyyymm: str, matches: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"DELETE FROM {SCHEMA_NAME}.bank_income_matches WHERE company_code = %s AND period_yyyymm = %s AND source = 'auto'",
+                (company_code, period_yyyymm),
+            )
+            for item in matches:
+                conn.execute(
+                    f"""
+                    INSERT INTO {SCHEMA_NAME}.bank_income_matches (
+                        id, bank_transaction_id, company_code, period_yyyymm, status, reason_code, match_type,
+                        target_ids, confidence, outside_period, notes, is_excluded, exclusion_reason, source,
+                        created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s, %s, %s, %s, %s, %s,
+                        NOW(), NOW()
+                    )
+                    ON CONFLICT (bank_transaction_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        reason_code = EXCLUDED.reason_code,
+                        match_type = EXCLUDED.match_type,
+                        target_ids = EXCLUDED.target_ids,
+                        confidence = EXCLUDED.confidence,
+                        outside_period = EXCLUDED.outside_period,
+                        notes = EXCLUDED.notes,
+                        is_excluded = EXCLUDED.is_excluded,
+                        exclusion_reason = EXCLUDED.exclusion_reason,
+                        source = EXCLUDED.source,
+                        updated_at = NOW()
+                    """,
+                    (
+                        item["id"],
+                        item["bank_transaction_id"],
+                        item["company_code"],
+                        item["period_yyyymm"],
+                        item.get("status", ""),
+                        item.get("reason_code", ""),
+                        item.get("match_type", ""),
+                        json.dumps(item.get("target_ids", [])),
+                        int(item.get("confidence", 0) or 0),
+                        bool(item.get("outside_period", False)),
+                        item.get("notes", ""),
+                        bool(item.get("is_excluded", False)),
+                        item.get("exclusion_reason", ""),
+                        item.get("source", "auto"),
+                    ),
+                )
+            conn.commit()
+
+    def _upsert_bank_income_match_db(self, item: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {SCHEMA_NAME}.bank_income_matches (
+                    id, bank_transaction_id, company_code, period_yyyymm, status, reason_code, match_type,
+                    target_ids, confidence, outside_period, notes, is_excluded, exclusion_reason, source,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s, %s, %s, %s, %s, %s,
+                    NOW(), NOW()
+                )
+                ON CONFLICT (bank_transaction_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    reason_code = EXCLUDED.reason_code,
+                    match_type = EXCLUDED.match_type,
+                    target_ids = EXCLUDED.target_ids,
+                    confidence = EXCLUDED.confidence,
+                    outside_period = EXCLUDED.outside_period,
+                    notes = EXCLUDED.notes,
+                    is_excluded = EXCLUDED.is_excluded,
+                    exclusion_reason = EXCLUDED.exclusion_reason,
+                    source = EXCLUDED.source,
+                    updated_at = NOW()
+                """,
+                (
+                    item["id"],
+                    item["bank_transaction_id"],
+                    item["company_code"],
+                    item["period_yyyymm"],
+                    item.get("status", ""),
+                    item.get("reason_code", ""),
+                    item.get("match_type", ""),
+                    json.dumps(item.get("target_ids", [])),
+                    int(item.get("confidence", 0) or 0),
+                    bool(item.get("outside_period", False)),
+                    item.get("notes", ""),
+                    bool(item.get("is_excluded", False)),
+                    item.get("exclusion_reason", ""),
+                    item.get("source", "manual"),
+                ),
+            )
+            conn.execute(
+                f"DELETE FROM {SCHEMA_NAME}.bank_income_reviews WHERE bank_transaction_id = %s",
+                (item["bank_transaction_id"],),
+            )
+            conn.commit()
+        return item
+
+    def _list_bank_income_matches_db(self, *, company_code: str, period_yyyymm: str, source: str | None) -> list[dict[str, Any]]:
+        query = f"""
+            SELECT id, bank_transaction_id, company_code, period_yyyymm, status, reason_code, match_type,
+                   target_ids, confidence, outside_period, notes, is_excluded, exclusion_reason, source
+            FROM {SCHEMA_NAME}.bank_income_matches
+            WHERE company_code = %s AND period_yyyymm = %s
+        """
+        params: list[object] = [company_code, period_yyyymm]
+        if source:
+            query += " AND source = %s"
+            params.append(source)
+        query += " ORDER BY bank_transaction_id"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": str(row[0]),
+                "bank_transaction_id": str(row[1]),
+                "company_code": str(row[2]),
+                "period_yyyymm": str(row[3]),
+                "status": str(row[4] or ""),
+                "reason_code": str(row[5] or ""),
+                "match_type": str(row[6] or ""),
+                "target_ids": row[7] or [],
+                "confidence": int(row[8] or 0),
+                "outside_period": bool(row[9]),
+                "notes": str(row[10] or ""),
+                "is_excluded": bool(row[11]),
+                "exclusion_reason": str(row[12] or ""),
+                "source": str(row[13] or ""),
+            }
+            for row in rows
+        ]
+
+    def _replace_auto_bank_income_reviews_db(self, *, company_code: str, period_yyyymm: str, reviews: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"DELETE FROM {SCHEMA_NAME}.bank_income_reviews WHERE company_code = %s AND period_yyyymm = %s AND source = 'auto'",
+                (company_code, period_yyyymm),
+            )
+            for item in reviews:
+                conn.execute(
+                    f"""
+                    INSERT INTO {SCHEMA_NAME}.bank_income_reviews (
+                        id, company_code, period_yyyymm, bank_transaction_id, review_type, status, reason_code,
+                        target_ids, notes, source, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s, %s, NOW(), NOW()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        bank_transaction_id = EXCLUDED.bank_transaction_id,
+                        review_type = EXCLUDED.review_type,
+                        status = EXCLUDED.status,
+                        reason_code = EXCLUDED.reason_code,
+                        target_ids = EXCLUDED.target_ids,
+                        notes = EXCLUDED.notes,
+                        source = EXCLUDED.source,
+                        updated_at = NOW()
+                    """,
+                    (
+                        item["id"],
+                        item["company_code"],
+                        item["period_yyyymm"],
+                        item.get("bank_transaction_id", ""),
+                        item.get("review_type", ""),
+                        item.get("status", "open"),
+                        item.get("reason_code", ""),
+                        json.dumps(item.get("target_ids", [])),
+                        item.get("notes", ""),
+                        item.get("source", "auto"),
+                    ),
+                )
+            conn.commit()
+
+    def _list_bank_income_reviews_db(self, *, company_code: str, period_yyyymm: str, status: str | None) -> list[dict[str, Any]]:
+        query = f"""
+            SELECT id, company_code, period_yyyymm, bank_transaction_id, review_type, status, reason_code,
+                   target_ids, notes, source
+            FROM {SCHEMA_NAME}.bank_income_reviews
+            WHERE company_code = %s AND period_yyyymm = %s
+        """
+        params: list[object] = [company_code, period_yyyymm]
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+        query += " ORDER BY reason_code, id"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "id": str(row[0]),
+                "company_code": str(row[1]),
+                "period_yyyymm": str(row[2]),
+                "bank_transaction_id": str(row[3] or ""),
+                "review_type": str(row[4] or ""),
+                "status": str(row[5] or ""),
+                "reason_code": str(row[6] or ""),
+                "target_ids": row[7] or [],
+                "notes": str(row[8] or ""),
+                "source": str(row[9] or ""),
+            }
+            for row in rows
+        ]
+
+    def _list_shopify_payout_aggregates_db(self, *, company_code: str, from_period: str, to_period: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    COALESCE(NULLIF(payout_id, ''), 'shopify-payout-' || TO_CHAR(COALESCE(payout_date, available_on, transaction_date) AT TIME ZONE 'Europe/Madrid', 'YYYY-MM-DD')) AS target_id,
+                    MAX(NULLIF(payout_id, '')) AS payout_id,
+                    TO_CHAR(MIN(COALESCE(payout_date, available_on, transaction_date) AT TIME ZONE 'Europe/Madrid'), 'YYYY-MM-DD') AS payout_date,
+                    TO_CHAR(MIN(COALESCE(payout_date, available_on, transaction_date) AT TIME ZONE 'Europe/Madrid'), 'YYYYMM') AS payout_period,
+                    CASE
+                        WHEN BOOL_OR(type = 'transfer') THEN
+                            SUM(CASE WHEN type = 'transfer' THEN -amount ELSE 0 END)::numeric(14,2)
+                        ELSE
+                            SUM(net)::numeric(14,2)
+                    END AS net_amount,
+                    COALESCE(NULLIF(MAX(currency), ''), 'EUR') AS currency
+                FROM {SCHEMA_NAME}.shopify_payout_transactions
+                WHERE company_code = %s
+                  AND TO_CHAR(COALESCE(payout_date, available_on, transaction_date) AT TIME ZONE 'Europe/Madrid', 'YYYYMM') >= %s
+                  AND TO_CHAR(COALESCE(payout_date, available_on, transaction_date) AT TIME ZONE 'Europe/Madrid', 'YYYYMM') <= %s
+                GROUP BY 1
+                ORDER BY 3, 1
+                """,
+                (company_code, from_period, to_period),
+            ).fetchall()
+        return [
+            {
+                "target_id": str(row[0]),
+                "payout_id": str(row[1] or ""),
+                "payout_date": str(row[2] or ""),
+                "payout_period": str(row[3] or ""),
+                "net_amount": str(row[4]),
+                "currency": str(row[5] or "EUR"),
+            }
+            for row in rows
+        ]
+
+    def _list_manual_open_orders_db(self, *, company_code: str, period_yyyymm: str) -> list[dict[str, Any]]:
+        currency_map = {"SL": "EUR", "LTD": "GBP", "INC": "USD"}
+        currency = currency_map.get(company_code, "")
+        if len(period_yyyymm) != 6 or not period_yyyymm.isdigit():
+            raise ValueError(f"Invalid period_yyyymm: {period_yyyymm!r}")
+        year = int(period_yyyymm[:4])
+        month = int(period_yyyymm[4:])
+        previous_period = f"{year - 1}12" if month == 1 else f"{year}{month - 1:02d}"
+        detalle_table = f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
+        ventas_table = f"shopify.ventas_{period_yyyymm}"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                WITH manual_rows AS (
+                    SELECT
+                        order_name,
+                        order_month_yyyymm,
+                        order_date::text AS order_date,
+                        shown_gross_presentment,
+                        tags
+                    FROM finance.informe_vat_gestorias_detalle
+                    WHERE order_month_yyyymm <= %s
+                      AND payment_currency = %s
+                      AND shown_gross_presentment <> 0
+                      AND is_hannun_tag = 0
+                      AND is_rever_tag = 0
+                      AND (
+                          payment_gateway_names @> '["manual"]'::jsonb
+                       OR payment_gateway_names = '[]'::jsonb
+                       OR payment_gateway_names @> '[""]'::jsonb
+                      )
+                    UNION ALL
+                    SELECT
+                        d.order_name,
+                        d.order_month_yyyymm,
+                        v.order_date::text AS order_date,
+                        d.shown_gross_presentment,
+                        d.tags
+                    FROM {detalle_table} d
+                    LEFT JOIN {ventas_table} v
+                      ON d.order_name = v.order_name
+                     AND d.payment_currency = v.payment_currency
+                    WHERE d.payment_currency = %s
+                      AND d.shown_gross_presentment <> 0
+                      AND d.is_hannun_tag = 0
+                      AND d.is_rever_tag = 0
+                      AND (
+                          d.payment_gateway_names @> '["manual"]'::jsonb
+                       OR d.payment_gateway_names = '[]'::jsonb
+                       OR d.payment_gateway_names @> '[""]'::jsonb
+                      )
+                )
+                SELECT
+                    order_name,
+                    order_month_yyyymm,
+                    MIN(order_date) AS order_date,
+                    SUM(shown_gross_presentment)::numeric(14,2) AS total,
+                    MAX(tags) AS tags
+                FROM manual_rows
+                GROUP BY order_name, order_month_yyyymm
+                ORDER BY order_month_yyyymm, order_name
+                """,
+                (previous_period, currency, currency),
+            ).fetchall()
+        return [
+            {
+                "order_name": str(row[0]),
+                "period_yyyymm": str(row[1]),
+                "order_date": _normalize_date_text(row[2]),
+                "total": str(row[3]),
+                "tags": str(row[4] or ""),
+                "company_code": company_code,
+            }
+            for row in rows
+        ]
+
+    def _list_consumed_manual_order_ids_db(self, *, company_code: str) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT target_ids
+                FROM {SCHEMA_NAME}.bank_income_matches
+                WHERE company_code = %s
+                  AND status = 'validated'
+                  AND match_type IN ('manual_order', 'manual_order_group')
+                """,
+                (company_code,),
+            ).fetchall()
+        consumed: set[str] = set()
+        for row in rows:
+            for target_id in row[0] or []:
+                consumed.add(str(target_id))
+        return sorted(consumed)
+
     def _artist_royalties_documents_unique_index_sql(self) -> str:
         return f"""
             CREATE UNIQUE INDEX IF NOT EXISTS invoices_artist_royalties_documents_unique_idx
             ON {SCHEMA_NAME}.artist_royalties_documents (company_code, period_yyyymm, invoice_number)
             WHERE invoice_number <> ''
+        """
+
+    def _bank_statement_files_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.bank_statement_files (
+                id TEXT PRIMARY KEY,
+                company_code TEXT NOT NULL,
+                period_yyyymm TEXT NOT NULL,
+                bank_name TEXT NOT NULL DEFAULT '',
+                account_label TEXT NOT NULL DEFAULT '',
+                source_path TEXT NOT NULL DEFAULT '',
+                file_name TEXT NOT NULL DEFAULT '',
+                file_hash TEXT NOT NULL DEFAULT '',
+                parser_name TEXT NOT NULL DEFAULT '',
+                imported_at TIMESTAMPTZ NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """
+
+    def _bank_transactions_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.bank_transactions (
+                id TEXT PRIMARY KEY,
+                statement_file_id TEXT NOT NULL DEFAULT '',
+                company_code TEXT NOT NULL,
+                period_yyyymm TEXT NOT NULL,
+                bank_name TEXT NOT NULL DEFAULT '',
+                account_label TEXT NOT NULL DEFAULT '',
+                booking_date DATE NULL,
+                value_date DATE NULL,
+                amount NUMERIC(14,2) NOT NULL DEFAULT 0,
+                balance NUMERIC(14,2) NULL,
+                currency TEXT NOT NULL DEFAULT '',
+                direction TEXT NOT NULL DEFAULT '',
+                concept TEXT NOT NULL DEFAULT '',
+                detail TEXT NOT NULL DEFAULT '',
+                classification TEXT NOT NULL DEFAULT '',
+                is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
+                exclusion_reason TEXT NOT NULL DEFAULT '',
+                fingerprint TEXT NOT NULL DEFAULT '',
+                source_row_number INT NOT NULL DEFAULT 0,
+                raw_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """
+
+    def _bank_income_matches_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.bank_income_matches (
+                id TEXT PRIMARY KEY,
+                bank_transaction_id TEXT NOT NULL,
+                company_code TEXT NOT NULL,
+                period_yyyymm TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT '',
+                reason_code TEXT NOT NULL DEFAULT '',
+                match_type TEXT NOT NULL DEFAULT '',
+                target_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                confidence INT NOT NULL DEFAULT 0,
+                outside_period BOOLEAN NOT NULL DEFAULT FALSE,
+                notes TEXT NOT NULL DEFAULT '',
+                is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
+                exclusion_reason TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'auto',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """
+
+    def _bank_income_reviews_table_sql(self) -> str:
+        return f"""
+            CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.bank_income_reviews (
+                id TEXT PRIMARY KEY,
+                company_code TEXT NOT NULL,
+                period_yyyymm TEXT NOT NULL,
+                bank_transaction_id TEXT NOT NULL DEFAULT '',
+                review_type TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                reason_code TEXT NOT NULL DEFAULT '',
+                target_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                notes TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'auto',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
         """
 
     def _artist_royalties_documents_period_index_sql(self) -> str:
@@ -3481,6 +4392,36 @@ class ReviewStore:
         return f"""
             CREATE UNIQUE INDEX IF NOT EXISTS invoices_artist_royalties_monthly_summary_unique_idx
             ON {SCHEMA_NAME}.artist_royalties_monthly_summary (company_code, period_yyyymm, summary_scope)
+        """
+
+    def _bank_statement_files_unique_index_sql(self) -> str:
+        return f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS invoices_bank_statement_files_unique_idx
+            ON {SCHEMA_NAME}.bank_statement_files (company_code, source_path, file_hash)
+        """
+
+    def _bank_transactions_unique_index_sql(self) -> str:
+        return f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS invoices_bank_transactions_unique_idx
+            ON {SCHEMA_NAME}.bank_transactions (company_code, account_label, fingerprint)
+        """
+
+    def _bank_transactions_period_index_sql(self) -> str:
+        return f"""
+            CREATE INDEX IF NOT EXISTS invoices_bank_transactions_period_idx
+            ON {SCHEMA_NAME}.bank_transactions (company_code, period_yyyymm, booking_date)
+        """
+
+    def _bank_income_matches_transaction_index_sql(self) -> str:
+        return f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS invoices_bank_income_matches_tx_idx
+            ON {SCHEMA_NAME}.bank_income_matches (bank_transaction_id)
+        """
+
+    def _bank_income_reviews_period_index_sql(self) -> str:
+        return f"""
+            CREATE INDEX IF NOT EXISTS invoices_bank_income_reviews_period_idx
+            ON {SCHEMA_NAME}.bank_income_reviews (company_code, period_yyyymm, status)
         """
 
     def _documents_exact_email_duplicate_index_sql(self) -> str:

@@ -24,6 +24,7 @@ Shopify:
   No reversal        → dispute still open or lost
 
 PayPal:
+  T1110 → dispute hold/claim debit (stored as a negative movement)
   T1111 → dispute hold (money retained, stored as positive bruto, we negate it)
   T1112 → dispute resolved in our favour (money returned) — rare, tracked when present
 """
@@ -65,6 +66,88 @@ CB_LOST = "Likely lost"     # no reversal after CB_LOST_DAYS — assumed lost
 
 # Disputes older than this many days without reversal are flagged as CB_LOST
 CB_LOST_DAYS = 75
+
+
+def _period_detail_table(period_yyyymm: str) -> str:
+    if len(period_yyyymm) != 6 or not period_yyyymm.isdigit():
+        raise ValueError(f"Invalid period_yyyymm: {period_yyyymm!r}")
+    return f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
+
+
+def _period_sales_table(period_yyyymm: str) -> str:
+    if len(period_yyyymm) != 6 or not period_yyyymm.isdigit():
+        raise ValueError(f"Invalid period_yyyymm: {period_yyyymm!r}")
+    return f"shopify.ventas_{period_yyyymm}"
+
+
+def _preferred_current_detail_rows_cte(period_yyyymm: str) -> str:
+    """Current-period accounting rows for reconciliation.
+
+    The monthly partition (finance.informe_vat_gestorias_detalle_YYYYMM) is the
+    only source that consistently carries company-currency-normalized rows for
+    non-EUR/GBP/USD checkout currencies (for example SEK or CZK orders booked
+    into SL in EUR). However, after sales-normalization fixes the rolling base
+    table is often refreshed before the month partition. To keep the
+    reconciliation self-healing on Railway, we prefer base-table rows when they
+    are already stored in the company currency and fall back to the partition
+    for the remaining orders.
+    """
+    detalle_table = _period_detail_table(period_yyyymm)
+    return f"""
+        preferred_detail_rows AS (
+            SELECT
+                b.order_month_yyyymm,
+                b.order_date,
+                b.order_name,
+                b.shipping_country_code,
+                b.shipping_state_code,
+                b.payment_gateway_names,
+                b.is_rever_tag,
+                b.is_hannun_tag,
+                b.is_mirakl_tag,
+                b.standard_rate,
+                b.payment_currency,
+                b.tax_rate,
+                b.shown_tax_presentment,
+                b.shown_gross_presentment,
+                b.shown_net_presentment,
+                b.tags,
+                b.descuadre
+            FROM finance.informe_vat_gestorias_detalle b
+            WHERE b.order_month_yyyymm = %s
+              AND b.payment_currency = %s
+
+            UNION ALL
+
+            SELECT
+                p.order_month_yyyymm,
+                p.order_date,
+                p.order_name,
+                p.shipping_country_code,
+                p.shipping_state_code,
+                p.payment_gateway_names,
+                p.is_rever_tag,
+                p.is_hannun_tag,
+                p.is_mirakl_tag,
+                p.standard_rate,
+                p.payment_currency,
+                p.tax_rate,
+                p.shown_tax_presentment,
+                p.shown_gross_presentment,
+                p.shown_net_presentment,
+                p.tags,
+                p.descuadre
+            FROM {detalle_table} p
+            WHERE p.payment_currency = %s
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM finance.informe_vat_gestorias_detalle b
+                    WHERE b.order_month_yyyymm = %s
+                      AND b.payment_currency = %s
+                      AND b.order_name = p.order_name
+              )
+        )
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -388,31 +471,35 @@ def build_reconciliation(
         raise ValueError(
             f"Unknown company_code '{company_code}'. Expected one of: {list(COMPANY_CURRENCY)}"
         )
+    ventas_table = _period_sales_table(period_yyyymm)
+    preferred_detail_cte = _preferred_current_detail_rows_cte(period_yyyymm)
 
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
         # -- Accounting: one row per order_name.
         # Includes both sales (positive) and refund lines (negative) so the net
         # per order matches what the payment channel should have settled.
         acct_rows = conn.execute(
-            """
+            f"""
+            WITH {preferred_detail_cte}
             SELECT
-                order_name,
-                order_date,
-                shipping_country_code,
-                payment_currency                                          AS currency,
-                SUM(shown_gross_presentment)                             AS importe_contab,
-                bool_or(payment_gateway_names @> '["gift_card"]'::jsonb) AS gift_card,
-                payment_gateway_names::text                              AS gateways_raw
-            FROM finance.informe_vat_gestorias_detalle
-            WHERE order_month_yyyymm = %s
-              AND payment_currency    = %s
-              AND shown_gross_presentment <> 0
-              AND (payment_gateway_names @> '["shopify_payments"]'::jsonb
-                   OR payment_gateway_names @> '["paypal"]'::jsonb)
-            GROUP BY order_name, order_date, shipping_country_code,
-                     payment_currency, payment_gateway_names
+                d.order_name,
+                COALESCE(v.order_date, d.order_date)                          AS order_date,
+                d.shipping_country_code,
+                d.payment_currency                                           AS currency,
+                SUM(d.shown_gross_presentment)                              AS importe_contab,
+                bool_or(d.payment_gateway_names @> '["gift_card"]'::jsonb)  AS gift_card,
+                d.payment_gateway_names::text                               AS gateways_raw
+            FROM preferred_detail_rows d
+            LEFT JOIN {ventas_table} v
+              ON d.order_name = v.order_name
+             AND d.payment_currency = v.payment_currency
+            WHERE d.shown_gross_presentment <> 0
+              AND (d.payment_gateway_names @> '["shopify_payments"]'::jsonb
+                   OR d.payment_gateway_names @> '["paypal"]'::jsonb)
+            GROUP BY d.order_name, COALESCE(v.order_date, d.order_date), d.shipping_country_code,
+                     d.payment_currency, d.payment_gateway_names
             """,
-            (period_yyyymm, currency),
+            (period_yyyymm, currency, currency, period_yyyymm, currency),
         ).fetchall()
 
         # -- Payment: Shopify Payments.
@@ -464,12 +551,90 @@ def build_reconciliation(
                                         AS order_name,
                 NULL::text              AS order_id,
                 SUM(
-                    CASE WHEN t.tipo = 'T1111' THEN -t.bruto ELSE t.bruto END
+                    CASE
+                        WHEN t.tipo = 'T1111' THEN -(
+                            CASE
+                                WHEN COALESCE(NULLIF(t.divisa, ''), '') = %s THEN t.bruto
+                                WHEN COALESCE(
+                                         (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     )
+                                   + COALESCE(
+                                         (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     ) <> 0
+                                THEN ROUND(
+                                    t.bruto
+                                    * (
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                    )
+                                    / NULLIF(
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        ),
+                                        0
+                                    ),
+                                    2
+                                )
+                                ELSE t.bruto
+                            END
+                        )
+                        ELSE
+                            CASE
+                                WHEN COALESCE(NULLIF(t.divisa, ''), '') = %s THEN t.bruto
+                                WHEN COALESCE(
+                                         (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     )
+                                   + COALESCE(
+                                         (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     ) <> 0
+                                THEN ROUND(
+                                    t.bruto
+                                    * (
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                    )
+                                    / NULLIF(
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        ),
+                                        0
+                                    ),
+                                    2
+                                )
+                                ELSE t.bruto
+                            END
+                    END
                 )                       AS importe_pago,
-                bool_or(t.tipo = 'T1111') AS tiene_chargeback,
+                bool_or(t.tipo IN ('T1110', 'T1111')) AS tiene_chargeback,
                 CASE
                     WHEN bool_or(t.tipo = 'T1112') THEN 'Won'
-                    WHEN bool_or(t.tipo = 'T1111') THEN 'In dispute'
+                    WHEN bool_or(t.tipo IN ('T1110', 'T1111')) THEN 'In dispute'
                     ELSE NULL
                 END                     AS chargeback_status
             FROM invoices.paypal_transactions_raw t
@@ -477,6 +642,8 @@ def build_reconciliation(
                 ON parent.transaction_id    = t.reference_transaction_id
                AND parent.shopify_order_name IS NOT NULL
                AND parent.shopify_order_name <> ''
+            LEFT JOIN shopify.json_orders j
+                ON j.raw_json ->> 'name' = COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
             WHERE t.company_code = %s
               AND to_char(
                     t.transaction_date AT TIME ZONE 'Europe/Madrid',
@@ -488,7 +655,7 @@ def build_reconciliation(
               )
             GROUP BY COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
             """,
-            (company_code, period_yyyymm),
+            (currency, currency, company_code, period_yyyymm),
         ).fetchall()
 
         # -- pedido_id for Shopify links (accounting-only orders have no GID) --
@@ -505,31 +672,33 @@ def build_reconciliation(
         # -- B2B / manual payment orders for the period (gateway='manual', [] or [""],
         #    excluding Hannun and Rever, non-zero gross) --
         b2b_rows = conn.execute(
-            """
+            f"""
+            WITH {preferred_detail_cte}
             SELECT
-                order_name,
-                order_date,
-                shipping_country_code,
-                tags,
-                tax_rate,
-                SUM(shown_tax_presentment)  AS iva,
-                SUM(shown_net_presentment)  AS base,
-                SUM(shown_gross_presentment) AS total
-            FROM finance.informe_vat_gestorias_detalle
-            WHERE order_month_yyyymm = %s
-              AND payment_currency   = %s
-              AND shown_gross_presentment <> 0
-              AND is_hannun_tag = 0
-              AND is_rever_tag  = 0
+                d.order_name,
+                COALESCE(v.order_date, d.order_date) AS order_date,
+                d.shipping_country_code,
+                d.tags,
+                d.tax_rate,
+                SUM(d.shown_tax_presentment)   AS iva,
+                SUM(d.shown_net_presentment)   AS base,
+                SUM(d.shown_gross_presentment) AS total
+            FROM preferred_detail_rows d
+            LEFT JOIN {ventas_table} v
+              ON d.order_name = v.order_name
+             AND d.payment_currency = v.payment_currency
+            WHERE d.shown_gross_presentment <> 0
+              AND d.is_hannun_tag = 0
+              AND d.is_rever_tag  = 0
               AND (
-                  payment_gateway_names @> '[\"manual\"]'::jsonb
-               OR payment_gateway_names = '[]'::jsonb
-               OR payment_gateway_names @> '[\"\"]'::jsonb
+                  d.payment_gateway_names @> '[\"manual\"]'::jsonb
+               OR d.payment_gateway_names = '[]'::jsonb
+               OR d.payment_gateway_names @> '[\"\"]'::jsonb
               )
-            GROUP BY order_name, order_date, shipping_country_code, tags, tax_rate
-            ORDER BY order_name
+            GROUP BY d.order_name, COALESCE(v.order_date, d.order_date), d.shipping_country_code, d.tags, d.tax_rate
+            ORDER BY d.order_name
             """,
-            (period_yyyymm, currency),
+            (period_yyyymm, currency, currency, period_yyyymm, currency),
         ).fetchall()
 
         # -- Shopify numeric order_id for B2B orders (for building hyperlinks) --
@@ -607,28 +776,145 @@ def build_reconciliation(
                 COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
                                AS order_name,
                 to_char(
-                    MIN(CASE WHEN t.tipo = 'T1111'
+                    MIN(CASE WHEN t.tipo IN ('T1110', 'T1111')
                              THEN t.transaction_date AT TIME ZONE 'Europe/Madrid' END),
                     'DD/MM/YYYY'
                 )              AS withdrawal_date,
-                SUM(CASE WHEN t.tipo = 'T1111' THEN t.bruto ELSE 0 END)
+                SUM(CASE
+                        WHEN t.tipo = 'T1110' THEN
+                            CASE
+                                WHEN COALESCE(NULLIF(t.divisa, ''), '') = %s THEN t.bruto
+                                WHEN COALESCE(
+                                         (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     )
+                                   + COALESCE(
+                                         (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     ) <> 0
+                                THEN ROUND(
+                                    t.bruto
+                                    * (
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                    )
+                                    / NULLIF(
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        ),
+                                        0
+                                    ),
+                                    2
+                                )
+                                ELSE t.bruto
+                            END
+                        WHEN t.tipo = 'T1111' THEN -(
+                            CASE
+                                WHEN COALESCE(NULLIF(t.divisa, ''), '') = %s THEN t.bruto
+                                WHEN COALESCE(
+                                         (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     )
+                                   + COALESCE(
+                                         (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     ) <> 0
+                                THEN ROUND(
+                                    t.bruto
+                                    * (
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                    )
+                                    / NULLIF(
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        ),
+                                        0
+                                    ),
+                                    2
+                                )
+                                ELSE t.bruto
+                            END
+                        )
+                        ELSE 0 END)
                                AS withdrawal_amount,
                 to_char(
                     MIN(CASE WHEN t.tipo = 'T1112'
                              THEN t.transaction_date AT TIME ZONE 'Europe/Madrid' END),
                     'DD/MM/YYYY'
                 )              AS reversal_date,
-                SUM(CASE WHEN t.tipo = 'T1112' THEN t.bruto ELSE 0 END)
+                SUM(CASE
+                        WHEN t.tipo = 'T1112' THEN
+                            CASE
+                                WHEN COALESCE(NULLIF(t.divisa, ''), '') = %s THEN t.bruto
+                                WHEN COALESCE(
+                                         (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     )
+                                   + COALESCE(
+                                         (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                         0
+                                     ) <> 0
+                                THEN ROUND(
+                                    t.bruto
+                                    * (
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'shop_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                    )
+                                    / NULLIF(
+                                        COALESCE(
+                                            (j.raw_json -> 'subtotal_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        )
+                                        + COALESCE(
+                                            (j.raw_json -> 'total_shipping_price_set' -> 'presentment_money' ->> 'amount')::numeric,
+                                            0
+                                        ),
+                                        0
+                                    ),
+                                    2
+                                )
+                                ELSE t.bruto
+                            END
+                        ELSE 0 END)
                                AS reversal_amount,
                 CASE
                     WHEN bool_or(t.tipo = 'T1112') THEN
                         EXTRACT(DAY FROM (
                             MIN(CASE WHEN t.tipo = 'T1112' THEN t.transaction_date END)
-                            - MIN(CASE WHEN t.tipo = 'T1111' THEN t.transaction_date END)
+                            - MIN(CASE WHEN t.tipo IN ('T1110', 'T1111') THEN t.transaction_date END)
                         ))::int
                     ELSE
                         (current_date
-                         - MIN(CASE WHEN t.tipo = 'T1111'
+                         - MIN(CASE WHEN t.tipo IN ('T1110', 'T1111')
                                     THEN t.transaction_date END)::date)
                 END            AS days_open
             FROM invoices.paypal_transactions_raw t
@@ -636,8 +922,10 @@ def build_reconciliation(
                 ON parent.transaction_id    = t.reference_transaction_id
                AND parent.shopify_order_name IS NOT NULL
                AND parent.shopify_order_name <> ''
+            LEFT JOIN shopify.json_orders j
+                ON j.raw_json ->> 'name' = COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
             WHERE t.company_code = %s
-              AND t.tipo IN ('T1111', 'T1112')
+              AND t.tipo IN ('T1110', 'T1111', 'T1112')
               AND t.transaction_date >= now() - interval '12 months'
               AND (
                    (t.shopify_order_name IS NOT NULL AND t.shopify_order_name <> '')
@@ -646,7 +934,7 @@ def build_reconciliation(
             GROUP BY COALESCE(NULLIF(t.shopify_order_name, ''), parent.shopify_order_name)
             ORDER BY MIN(t.transaction_date) DESC
             """,
-            (company_code,),
+            (currency, currency, currency, company_code),
         ).fetchall()
 
         # Accounting data for chargeback orders (to get order_date, country, amount)
@@ -656,19 +944,42 @@ def build_reconciliation(
         )
         if cb_order_names:
             cb_acct_rows = conn.execute(
-                """
+                f"""
+                WITH {preferred_detail_cte},
+                accounting_rows AS (
+                    SELECT
+                        d.order_name,
+                        COALESCE(v.order_date, d.order_date) AS order_date,
+                        d.shipping_country_code,
+                        d.payment_currency,
+                        d.shown_gross_presentment
+                    FROM preferred_detail_rows d
+                    LEFT JOIN {ventas_table} v
+                      ON d.order_name = v.order_name
+                     AND d.payment_currency = v.payment_currency
+                    WHERE d.order_name = ANY(%s)
+                    UNION ALL
+                    SELECT
+                        m.order_name,
+                        m.order_date,
+                        m.shipping_country_code,
+                        m.payment_currency,
+                        m.shown_gross_presentment
+                    FROM finance.informe_vat_gestorias_detalle m
+                    WHERE m.order_month_yyyymm <> %s
+                      AND m.order_name = ANY(%s)
+                      AND m.payment_currency = %s
+                )
                 SELECT
                     order_name,
-                    order_date,
+                    MIN(order_date) AS order_date,
                     shipping_country_code,
                     payment_currency AS currency,
                     SUM(shown_gross_presentment) AS importe_contab
-                FROM finance.informe_vat_gestorias_detalle
-                WHERE order_name = ANY(%s)
-                  AND payment_currency = %s
-                GROUP BY order_name, order_date, shipping_country_code, payment_currency
+                FROM accounting_rows
+                GROUP BY order_name, shipping_country_code, payment_currency
                 """,
-                (cb_order_names, currency),
+                (period_yyyymm, currency, currency, period_yyyymm, currency, cb_order_names, period_yyyymm, cb_order_names, currency),
             ).fetchall()
         else:
             cb_acct_rows = []
@@ -818,9 +1129,7 @@ def build_reconciliation(
         acct    = cb_acct_map.get(name)
         days    = int(r["days_open"]) if r["days_open"] is not None else None
         has_rev = bool(r.get("reversal_date"))
-        # PayPal stores T1111 bruto as positive; financial impact is negative
-        w_raw = _qdec(r["withdrawal_amount"])
-        w_amt = (-w_raw).quantize(Decimal("0.01")) if w_raw else None
+        w_amt = _qdec(r["withdrawal_amount"])
         v_amt = _qdec(r["reversal_amount"])
         net   = (w_amt + (v_amt or Decimal("0"))).quantize(Decimal("0.01")) if w_amt else None
         chargeback_inventory.append(ChargebackInventoryRow(

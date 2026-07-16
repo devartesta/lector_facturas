@@ -48,10 +48,12 @@ def main() -> int:
         with conn.cursor() as cur:
             for bundle in bundles:
                 parsed = parse_tgi_pdf(bundle["invoice_pdf"])
-                provider = get_provider("ARTESTA INC", parsed.supplier_code)
-                base_filename = build_base_filename(parsed.supplier_code, parsed.invoice_date, parsed.invoice_number)
+                parsed_items = parsed if isinstance(parsed, list) else [parsed]
+                first = parsed_items[0]
+                provider = get_provider("ARTESTA INC", first.supplier_code)
+                base_filename = build_base_filename(first.supplier_code, first.invoice_date, first.invoice_number)
                 pdf_filename = f"{base_filename}.pdf"
-                windows_path = build_windows_path(provider.company, parsed.period_yyyymm, provider.destination_path, pdf_filename)
+                windows_path = build_windows_path(provider.company, first.period_yyyymm, provider.destination_path, pdf_filename)
                 parent_id = ensure_drive_path(client, args.root_folder_id, windows_path)
                 pdf_drive = client.ensure_file(
                     name=pdf_filename,
@@ -77,18 +79,19 @@ def main() -> int:
                             "drive_url": str(detail_drive.get("webViewLink", "")),
                         }
                     )
-                supplier_id = lookup_supplier_id(cur, "INC", parsed.supplier_code)
-                upsert_document_row(
-                    cur,
-                    supplier_id=supplier_id,
-                    parsed=parsed,
-                    windows_path=windows_path,
-                    drive_url=str(pdf_drive.get("webViewLink", "")),
-                    drive_file_id=str(pdf_drive.get("id", "")),
-                    detail_files=detail_files,
-                    local_source_file=str(bundle["invoice_pdf"]),
-                )
-                uploaded.append((parsed.invoice_number, parsed.division_invoice, str(pdf_drive.get("webViewLink", ""))))
+                supplier_id = lookup_supplier_id(cur, "INC", first.supplier_code)
+                for parsed_item in parsed_items:
+                    upsert_document_row(
+                        cur,
+                        supplier_id=supplier_id,
+                        parsed=parsed_item,
+                        windows_path=windows_path,
+                        drive_url=str(pdf_drive.get("webViewLink", "")),
+                        drive_file_id=str(pdf_drive.get("id", "")),
+                        detail_files=detail_files,
+                        local_source_file=str(bundle["invoice_pdf"]),
+                    )
+                    uploaded.append((parsed_item.invoice_number, parsed_item.division_invoice, str(pdf_drive.get("webViewLink", ""))))
         conn.commit()
 
     print(f"Uploaded {len(uploaded)} TGI invoices to Google Drive.")

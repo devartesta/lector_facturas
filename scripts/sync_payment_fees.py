@@ -31,6 +31,11 @@ def parse_args() -> argparse.Namespace:
         choices=["shopify", "paypal"],
         help="Sync only one platform. Defaults to both.",
     )
+    parser.add_argument(
+        "--enrich-paypal-with-shopify-orders",
+        action="store_true",
+        help="Resolve PayPal order names/ids through Shopify. Slower, but keeps richer reconciliation data.",
+    )
     return parser.parse_args()
 
 
@@ -46,7 +51,12 @@ def main() -> int:
         shopify_client=ShopifyPaymentsClient(settings.to_shopify_config()) if settings.shopify_ready else None,
         paypal_client=PayPalClient(settings.to_paypal_config()) if settings.paypal_ready else None,
     )
-    results = service.sync(date_from=date_from, date_to=date_to, platform=args.platform)
+    results = service.sync(
+        date_from=date_from,
+        date_to=date_to,
+        platform=args.platform,
+        enrich_paypal_with_shopify_orders=args.enrich_paypal_with_shopify_orders,
+    )
     for result in results:
         print(
             f"{result.platform}: transactions_upserted={result.transactions_upserted} "

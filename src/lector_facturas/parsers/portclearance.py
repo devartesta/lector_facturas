@@ -62,7 +62,10 @@ def parse_portclearance_text(text: str, *, original_filename: str) -> PortCleara
     normalized = text.replace("\xa0", " ").replace("\r", "")
     invoice_number = _extract(normalized, r"(?:INVOICE NO\s+|[0-9]{2}\.[0-9]{2}\.[0-9]{4}\s+[0-9A-Z]+\s+)(PCSI[A-Z0-9]+)")
     invoice_date = _parse_date(_extract(normalized, r"ARTESTA STORES LTD.*?\n([0-9]{2}\.[0-9]{2}\.[0-9]{4})\s+[0-9A-Z]+\s+[A-Z0-9]+"))
-    net_amount = _parse_decimal(_extract(normalized, r"TOTAL\s+0\.00\s+([0-9.]+)\s+GBP"))
+    vat_raw, gross_raw = _extract_total_amounts(normalized)
+    vat_amount = _parse_decimal(vat_raw)
+    gross_amount = _parse_decimal(gross_raw)
+    net_amount = gross_amount - vat_amount
     return PortClearanceInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -75,12 +78,19 @@ def parse_portclearance_text(text: str, *, original_filename: str) -> PortCleara
         period_yyyymm=invoice_date.strftime("%Y%m"),
         currency_code="GBP",
         vat_percent=Decimal("0"),
-        gross_amount=net_amount,
-        vat_amount=Decimal("0"),
+        gross_amount=gross_amount,
+        vat_amount=vat_amount,
         net_amount=net_amount,
         original_filename=original_filename,
         sender_email="accounts@pcsl.uk.com",
     )
+
+
+def _extract_total_amounts(text: str) -> tuple[str, str]:
+    match = re.search(r"TOTAL\s+([0-9.]+)\s+([0-9.]+)\s+GBP", text, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        raise ValueError("Could not extract Port Clearance totals.")
+    return match.group(1).strip(), match.group(2).strip()
 
 
 def _extract(text: str, pattern: str) -> str:

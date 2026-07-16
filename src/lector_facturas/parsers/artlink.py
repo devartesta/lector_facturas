@@ -9,9 +9,12 @@ import re
 from pypdf import PdfReader
 
 
-COMPANY_NAME = "ARTESTA STORE, S.L."
 ISSUER_COMPANY_NAME = "ART LINK BALTIC OU"
 SUPPLIER_CODE = "ARTLINK"
+COMPANY_ALIASES: dict[str, str] = {
+    "ARTESTA STORE S.L.": "ARTESTA STORE, S.L.",
+    "ARTESTA STORES LTD": "ARTESTA STORES (UK) LTD",
+}
 
 
 @dataclass(frozen=True)
@@ -63,11 +66,14 @@ def parse_artlink_text(text: str, *, original_filename: str) -> ArtlinkInvoice:
     invoice_number = _extract(normalized, r"INVOICE\s+([0-9]+)")
     invoice_date = _parse_date(_extract(normalized, r"Date:\s+([0-9]{2}-[0-9]{2}-[0-9]{2})"))
     gross_amount = _parse_decimal(_extract(normalized, r"T O T A L EUR\s+([0-9.,]+)"))
+    billed_company_name = _extract_billed_company_name(normalized)
+    lower_normalized = normalized.lower()
+    division_invoice = "logistics" if "freight cost" in lower_normalized else "manufacturing"
     return ArtlinkInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
         issuer_company_name=ISSUER_COMPANY_NAME,
-        billed_company_name=COMPANY_NAME,
+        billed_company_name=billed_company_name,
         invoice_number=invoice_number,
         invoice_date=invoice_date,
         billing_period_start=invoice_date,
@@ -80,7 +86,22 @@ def parse_artlink_text(text: str, *, original_filename: str) -> ArtlinkInvoice:
         net_amount=gross_amount,
         original_filename=original_filename,
         sender_email="",
+        division_invoice=division_invoice,
     )
+
+
+def _extract_billed_company_name(text: str) -> str:
+    for pattern, canonical in (
+        (r"\bArtesta\s+Stores\s+Ltd\b", "ARTESTA STORES (UK) LTD"),
+        (r"\bArtesta\s+Store\s+S\.L\.?\b", "ARTESTA STORE, S.L."),
+    ):
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return canonical
+    match = re.search(r"Delivery Address:\s*(.+)", text, flags=re.IGNORECASE)
+    if not match:
+        return "ARTESTA STORE, S.L."
+    candidate = re.sub(r"\s+", " ", match.group(1)).strip().upper()
+    return COMPANY_ALIASES.get(candidate, candidate)
 
 
 def _extract(text: str, pattern: str) -> str:

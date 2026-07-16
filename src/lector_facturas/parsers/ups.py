@@ -63,6 +63,7 @@ class UpsInvoice:
     net_amount: Decimal
     original_filename: str
     sender_email: str
+    document_type: str = "invoice"
     parser_name: str = "ups"
     parser_confidence: Decimal = Decimal("0.9920")
 
@@ -81,6 +82,7 @@ class UpsInvoice:
             "net_amount": format(self.net_amount, "f"),
             "sender_email": self.sender_email,
             "reverse_charge": True,
+            "document_type": self.document_type,
         }
 
 
@@ -91,6 +93,8 @@ def parse_ups_pdf(path: Path) -> UpsInvoice:
 
 def parse_ups_text(text: str, *, original_filename: str) -> UpsInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "")
+    if "Kreditnr.:" in normalized or "Gesamtkreditbetrag" in normalized:
+        return _parse_ups_credit_note(normalized, original_filename=original_filename)
     invoice_number = _extract_invoice_number(normalized)
     invoice_date = _extract_invoice_date(normalized)
     billing_period_end = _extract_period_end(normalized)
@@ -117,6 +121,34 @@ def parse_ups_text(text: str, *, original_filename: str) -> UpsInvoice:
     )
 
 
+def _parse_ups_credit_note(text: str, *, original_filename: str) -> UpsInvoice:
+    credit_number = _extract_credit_number(text)
+    credit_date = _extract_credit_date(text)
+    billing_period_end = _extract_credit_period_end(text, credit_date=credit_date)
+    billing_period_start = _extract_period_start(text, invoice_date=credit_date, billing_period_end=billing_period_end)
+    gross_amount = -_extract_credit_amount(text)
+    sender_email = _extract_sender_email(text)
+    return UpsInvoice(
+        supplier_code=SUPPLIER_CODE,
+        supplier_name=SUPPLIER_CODE,
+        issuer_company_name=ISSUER_COMPANY_NAME,
+        billed_company_name=COMPANY_NAME,
+        invoice_number=credit_number,
+        invoice_date=credit_date,
+        billing_period_start=billing_period_start,
+        billing_period_end=billing_period_end,
+        period_yyyymm=credit_date.strftime("%Y%m"),
+        currency_code="EUR",
+        vat_percent=Decimal("0.00"),
+        net_amount=gross_amount,
+        vat_amount=Decimal("0.00"),
+        gross_amount=gross_amount,
+        original_filename=original_filename,
+        sender_email=sender_email,
+        document_type="credit_note",
+    )
+
+
 def _extract_invoice_number(text: str) -> str:
     match = re.search(
         r"Kundennr\.:\s*Rechnungsnr\.:\s*Seite:.*?\n[A-Z0-9]+\n(\d{9})\n",
@@ -132,10 +164,26 @@ def _extract_invoice_number(text: str) -> str:
     return match.group(1)
 
 
+def _extract_credit_number(text: str) -> str:
+    match = re.search(r"Kreditnr\.:(?:\s*\n[^\n]+){0,8}\s*\n(\d{9,10})\n", text)
+    if not match:
+        match = re.search(r"\nKreditnr\.\s*\n(\d{9,10})\n", text)
+    if not match:
+        raise ValueError("Could not extract UPS credit note number.")
+    return match.group(1)
+
+
 def _extract_invoice_date(text: str) -> date:
     match = re.search(r"Rechnungsdatum\s*(\d{2}\.[A-Za-zÄÖÜäöü]+ \d{4})", text)
     if not match:
         raise ValueError("Could not extract UPS invoice date.")
+    return _parse_german_full_date(match.group(1))
+
+
+def _extract_credit_date(text: str) -> date:
+    match = re.search(r"Kreditdatum\s*(\d{2}\.[A-Za-zÃ„Ã–ÃœÃ¤Ã¶Ã¼]+ \d{4})", text)
+    if not match:
+        raise ValueError("Could not extract UPS credit note date.")
     return _parse_german_full_date(match.group(1))
 
 
@@ -144,6 +192,18 @@ def _extract_period_end(text: str) -> date:
     if not match:
         raise ValueError("Could not extract UPS billing period end.")
     return _parse_german_full_date(match.group(1))
+
+
+def _extract_credit_period_end(text: str, *, credit_date: date) -> date:
+    matches = re.findall(r"\b(\d{1,2})\.(Jan|Feb|MÃ¤r|Apr|Mai|Jun|Jul|Aug|Sep|Okt|Nov|Dez)\b", text, flags=re.IGNORECASE)
+    dates: list[date] = []
+    for day_raw, month_raw in matches:
+        month = GERMAN_MONTHS[_normalize_month_key(month_raw)]
+        candidate = date(credit_date.year, month, int(day_raw))
+        if candidate > credit_date:
+            candidate = date(credit_date.year - 1, month, int(day_raw))
+        dates.append(candidate)
+    return max(dates) if dates else credit_date
 
 
 def _extract_period_start(text: str, *, invoice_date: date, billing_period_end: date) -> date:
@@ -165,6 +225,13 @@ def _extract_total_amount(text: str) -> Decimal:
     match = re.search(r"Fälliger Gesamtbetrag\s*EUR\s*([\d.,]+)", text)
     if not match:
         raise ValueError("Could not extract UPS total amount.")
+    return _parse_decimal(match.group(1))
+
+
+def _extract_credit_amount(text: str) -> Decimal:
+    match = re.search(r"Gesamtkreditbetrag\s*EUR\s*([\d.,]+)", text)
+    if not match:
+        raise ValueError("Could not extract UPS credit note total amount.")
     return _parse_decimal(match.group(1))
 
 

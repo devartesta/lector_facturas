@@ -60,6 +60,27 @@ IMPORT_SAMPLE = dedent(
     """
 )
 
+CREDIT_NOTE_SAMPLE = dedent(
+    """
+    Sie erreichen uns per E-Mail: defcr@ups.com
+    Kreditdatum
+    16.April 2026
+    Kundennr.:
+    Kreditnr.:
+    Seite:
+    A055C1
+    2003610362
+    1 von 2
+    Rechnungskorrektur
+    ARTESTA STORE  S.L.
+    MwSt.-frei 2,13
+    Gesamtkreditbetrag EUR 2,13
+    15.Apr 000327353607 Gutschrift fÃ¼r Doppelbelastung
+    Art.196 - Dir 2006/112/EC Steuerschuldnerschaft des
+    LeistungsempfÃ¤ngers
+    """
+)
+
 
 class UpsParserTests(unittest.TestCase):
     def test_parse_regular_ups_invoice(self) -> None:
@@ -84,6 +105,15 @@ class UpsParserTests(unittest.TestCase):
         self.assertEqual(parsed.period_yyyymm, "202601")
         self.assertEqual(parsed.gross_amount, Decimal("57.25"))
         self.assertEqual(parsed.sender_email, "rechnungswesen@ups.com")
+
+    def test_parse_credit_note(self) -> None:
+        parsed = parse_ups_text(CREDIT_NOTE_SAMPLE, original_filename="Credit_2003610362.pdf")
+        self.assertEqual(parsed.invoice_number, "2003610362")
+        self.assertEqual(parsed.invoice_date.isoformat(), "2026-04-16")
+        self.assertEqual(parsed.period_yyyymm, "202604")
+        self.assertEqual(parsed.gross_amount, Decimal("-2.13"))
+        self.assertEqual(parsed.net_amount, Decimal("-2.13"))
+        self.assertEqual(parsed.document_type, "credit_note")
 
 
 if __name__ == "__main__":

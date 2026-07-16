@@ -15,6 +15,7 @@ from lector_facturas.stock_detail_workbook import StockDetailBundle, collect_sto
 from lector_facturas.payment_reconciliation import build_reconciliation
 from lector_facturas.payment_reconciliation_workbook import build_reconciliation_workbook
 from lector_facturas.folder_structure import ENTITY_ALIASES
+from lector_facturas.supply_stock import refresh_frame_consumption_month
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,11 @@ def sync_pyg_inc_to_drive(
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
     _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("INC",))
+    _refresh_frame_stock_for_pyg_year(
+        database_url=database_url,
+        year=year,
+        fabricantes=("TGI",),
+    )
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_inc(root, year)
@@ -179,6 +185,11 @@ def sync_pyg_ltd_to_drive(
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
     _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("LTD",))
+    _refresh_frame_stock_for_pyg_year(
+        database_url=database_url,
+        year=year,
+        fabricantes=("Proco",),
+    )
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_ltd(root, year)
@@ -224,6 +235,11 @@ def sync_pyg_consolidated_to_drive(
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
     _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("SL", "LTD", "INC"))
+    _refresh_frame_stock_for_pyg_year(
+        database_url=database_url,
+        year=year,
+        fabricantes=("Proco", "TGI"),
+    )
 
     root = output_root or Path(__file__).resolve().parents[2]
     output_path = default_output_path_consolidated(root, year)
@@ -373,6 +389,11 @@ def sync_stock_detail_to_drive(
     entity_key = FABRICANTE_ENTITY.get(fabricante)
     if not entity_key:
         raise ValueError(f"Unknown fabricante '{fabricante}'. Expected one of: {list(FABRICANTE_ENTITY)}")
+    _refresh_frame_stock_month(
+        database_url=database_url,
+        fabricante=fabricante,
+        mes_yyyymm=mes_yyyymm,
+    )
 
     entity_name = ENTITY_ALIASES[entity_key]
     year = mes_yyyymm[:4]
@@ -691,6 +712,55 @@ def sync_gestoria_to_drive(
         n_resumen_rows=len(report.resumen_rows),
         n_detalle_rows=len(report.detalle_rows),
     )
+
+
+def _refresh_frame_stock_month(
+    *,
+    database_url: str,
+    fabricante: str,
+    mes_yyyymm: str,
+) -> None:
+    import psycopg
+
+    with psycopg.connect(database_url) as conn:
+        refresh_frame_consumption_month(fabricante, mes_yyyymm, conn)
+        conn.commit()
+
+
+def _refresh_frame_stock_for_pyg_year(
+    *,
+    database_url: str,
+    year: int,
+    fabricantes: tuple[str, ...],
+) -> None:
+    """Refresh all stocked frame months that can affect the yearly PYG.
+
+    Consumption can arrive late after a preliminary stock workbook was built.
+    Refreshing here keeps the PYG from reading stale values from
+    supply.frame_stock_monthly.
+    """
+    import psycopg
+
+    year_prefix = f"{year}"
+    with psycopg.connect(database_url) as conn:
+        for fabricante in fabricantes:
+            months = conn.execute(
+                """
+                SELECT mes_yyyymm
+                FROM supply.consumo_marcos_diario
+                WHERE fabricante = %s AND mes_yyyymm LIKE %s
+                UNION
+                SELECT to_char(purchase_date, 'YYYYMM') AS mes_yyyymm
+                FROM supply.frame_purchases
+                WHERE fabricante = %s AND to_char(purchase_date, 'YYYY') = %s
+                ORDER BY mes_yyyymm
+                """,
+                (fabricante, f"{year_prefix}%", fabricante, year_prefix),
+            ).fetchall()
+            for row in months:
+                mes_yyyymm = row["mes_yyyymm"] if isinstance(row, dict) else row[0]
+                refresh_frame_consumption_month(fabricante, str(mes_yyyymm), conn)
+        conn.commit()
 
 
 def _database_url() -> str:

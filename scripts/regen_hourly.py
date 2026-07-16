@@ -55,6 +55,45 @@ def _post(url: str, payload: dict | None, bearer_token: str, timeout: int = 600)
         return False, str(exc)
 
 
+def _post_with_retries(
+    url: str,
+    payload: dict | None,
+    bearer_token: str,
+    *,
+    timeout: int,
+    attempts: int,
+    retry_delay_seconds: int = 10,
+) -> tuple[bool, str]:
+    last_detail = ""
+    for attempt in range(1, attempts + 1):
+        ok, detail = _post(url, payload, bearer_token, timeout=timeout)
+        if ok:
+            if attempt > 1:
+                return True, f"{detail}\n[hourly] recovered after retry {attempt}/{attempts}"
+            return True, detail
+        last_detail = detail
+        if attempt < attempts and _is_transient_http_detail(detail):
+            print(
+                f"[hourly] transient HTTP error, retrying {attempt + 1}/{attempts} in {retry_delay_seconds}s: {detail}",
+                flush=True,
+            )
+            time.sleep(retry_delay_seconds)
+            continue
+        break
+    return False, last_detail
+
+
+def _is_transient_http_detail(detail: str) -> bool:
+    lower = detail.lower()
+    return (
+        "remote end closed connection" in lower
+        or "connection reset" in lower
+        or "timed out" in lower
+        or "temporarily unavailable" in lower
+        or "bad gateway" in lower
+    )
+
+
 def _summarise(step_name: str, body: str) -> str:
     """Parse JSON response body and return a compact volume summary line."""
     try:
@@ -158,7 +197,16 @@ def main() -> None:
     for step_name, url, payload in steps:
         t0 = time.monotonic()
         print(f"[hourly] >>> {step_name} ...", flush=True)
-        ok, detail = _post(url, payload, bearer_token)
+        if step_name in {"sales-reports", "pyg"}:
+            ok, detail = _post_with_retries(
+                url,
+                payload,
+                bearer_token,
+                timeout=int(os.environ.get("HOURLY_REPORT_TIMEOUT_SECONDS", "1200")),
+                attempts=int(os.environ.get("HOURLY_REPORT_RETRY_ATTEMPTS", "3")),
+            )
+        else:
+            ok, detail = _post(url, payload, bearer_token)
         elapsed = time.monotonic() - t0
         if ok:
             summary = _summarise(step_name, detail)

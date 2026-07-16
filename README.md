@@ -421,6 +421,7 @@ Cada worker es un proceso independiente en Railway que llama a la API en loop.
 | `lf-02-email-review` | `worker_02_email_review.py` | Cada 30 min | `EMAIL_REVIEW_RUN_URL` |
 | `lf-03-invoice-processing` | `worker_03_invoice_processing.py` | Cada 15 min | `INVOICE_PROCESSING_RUN_URL` |
 | `lf-04-payment-fees` | `worker_04_payment_fees.py` | Diario 02:30 | `PAYMENT_FEES_RUN_URL`, `PAYMENT_FEES_LOOKBACK_DAYS` |
+| `lf-hourly-regen` | `regen_hourly.py` | Cada hora | `API_BASE_URL`, `API_SECRET_KEY`, `EMAIL_REVIEW_MAILBOX`, `EMAIL_DOWNLOAD_SYNC_NAME` |
 | `lf-05-pyg-sl` | `worker_05_pyg_sl.py` | Diario 20:00 | `PYG_SL_RUN_URL`, `PYG_SL_YEAR`, `PYG_SL_DRIVE_FOLDER_ID` |
 | `lf-06-pyg-ltd` | `worker_06_pyg_ltd.py` | Diario 20:10 | `PYG_LTD_RUN_URL`, `PYG_LTD_YEAR` |
 | `lf-07-pyg-inc` | `worker_07_pyg_inc.py` | Diario 20:20 | `PYG_INC_RUN_URL`, `PYG_INC_YEAR` |
@@ -429,6 +430,36 @@ Cada worker es un proceso independiente en Railway que llama a la API en loop.
 | `lf-10-sales-report` | `worker_11_daily_reports.py` | Diario 08:00 | `API_BASE_URL`, `REPORTS_HOUR`, `REPORTS_MINUTE`, `REPORTS_CLOSE_DAY`, `REPORTS_COMPANIES`, `REPORTS_TIMEZONE` |
 
 Los workers 05-08 esperan a que el worker-03 termine antes de generar el P&G (coordinación via `invoices.worker_coordination`). Si el job de facturas lleva más de 4h sin heartbeat se considera stale y no se bloquea.
+
+### `lf-hourly-regen` - Regeneracion horaria consolidada
+
+Orquestador horario que llama a la API y refresca el pipeline operativo en este orden:
+
+1. `email-download`
+2. `email-review`
+3. `invoice-processing`
+4. `stock-detail/Proco`
+5. `stock-detail/TGI`
+6. `sales-reports`
+7. `payment-fee-detail`
+8. `pyg`
+
+**Script:** `scripts/regen_hourly.py`
+**Frecuencia:** cada hora
+
+Para `payment-fee-detail`, este worker regenera el mes en curso cada hora y, durante los dos primeros dias del mes, tambien el mes anterior para cerrar desfases de payouts y ajustes tardios. Es el worker que debe desplegarse en Railway para mantener al dia los Excels de `payment fees`.
+
+**Variables de entorno:**
+
+| Variable | Por defecto | Descripcion |
+|----------|------------|-------------|
+| `API_BASE_URL` | - (obligatorio) | URL base de la API |
+| `API_SECRET_KEY` | - | Bearer token si la API requiere auth |
+| `EMAIL_REVIEW_MAILBOX` | `andrea@artestastore.com` | Mailbox usada por `email-download` y `email-review` |
+| `EMAIL_DOWNLOAD_SYNC_NAME` | `revision-correo-principal` | Checkpoint del sync de correo |
+| `HOURLY_REPORT_TIMEOUT_SECONDS` | `1200` | Timeout largo para `sales-reports` y `pyg` |
+| `HOURLY_REPORT_RETRY_ATTEMPTS` | `3` | Reintentos para pasos pesados |
+| `HOURLY_FAILURE_ALERTS_ENABLED` | `false` | Activa alertas de fallo por step |
 
 ### `lf-10-sales-report` — Informes de ventas diarios
 

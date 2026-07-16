@@ -19,6 +19,19 @@ Total IVA: 298,15 €
 TOTAL: 1.717,85 €
 """
 
+OUTGOING_CAR_RENTING = """Artesta Store, S.L.
+30/06/2026
+FACTURA
+NÃºmero de factura: 2026-0032
+Hannun SA
+administracion@hannun.com
+CONCEPTO UDS. BASE UD. BASE TOTAL % IVA IVA
+RefacturaciÃ³n renting coche (+ fee) 1 237,16 € 237,16 € 21% 49,80 €
+Total Base Imponible: 237,16 €
+Total IVA: 49,80 €
+TOTAL: 286,96 €
+"""
+
 INCOMING_OFFICE = """-
 Factura de venta:
 Fecha de factura:
@@ -51,6 +64,13 @@ class HannunParserTests(unittest.TestCase):
         self.assertEqual(parsed.division_invoice, "orders")
         self.assertEqual(parsed.destination_path, "income/sales/marketplaces")
         self.assertEqual(parsed.period_yyyymm, "202602")
+
+    def test_parse_outgoing_car_renting_as_services_income(self) -> None:
+        parsed = parse_hannun_text(OUTGOING_CAR_RENTING, original_filename="Factura_2026-0032.pdf")
+        self.assertEqual(parsed.invoice_number, "2026-0032")
+        self.assertEqual(parsed.division_invoice, "renting_coche")
+        self.assertEqual(parsed.destination_path, "income/shared-services")
+        self.assertEqual(parsed.period_yyyymm, "202606")
 
     def test_parse_incoming_office_invoice_with_forced_period(self) -> None:
         parsed = parse_hannun_text(INCOMING_OFFICE, original_filename="VTA26-010327.pdf", forced_period_yyyymm="202602")

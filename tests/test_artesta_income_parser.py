@@ -13,12 +13,12 @@ QHANDS_SAMPLE = dedent(
     Artesta Store, S.L.
     28/02/2026
     FACTURA
-    Número de factura: 2026-0012
+    NÃºmero de factura: 2026-0012
     Qhands design SL.
-    Renting CNC 1 1.661,16 € 1.661,16 € 21% 348,84 €
-    Total Base Imponible: 1.661,16 €
-    Total IVA: 348,84 €
-    TOTAL: 2.010,00 €
+    Renting CNC 1 1.661,16 â‚¬ 1.661,16 â‚¬ 21% 348,84 â‚¬
+    Total Base Imponible: 1.661,16 â‚¬
+    Total IVA: 348,84 â‚¬
+    TOTAL: 2.010,00 â‚¬
     """
 )
 
@@ -27,12 +27,12 @@ QHANDS_MARCH_SAMPLE = dedent(
     Artesta Store, S.L.
     31/03/2026
     FACTURA
-    NÃºmero de factura: 2026-0020
+    NÃƒÂºmero de factura: 2026-0020
     Qhands design SL.
-    Renting CNC 1 1.800,00 â‚¬ 1.800,00 â‚¬ 21% 378,00 â‚¬
-    Total Base Imponible: 1.800,00 â‚¬
-    Total IVA: 378,00 â‚¬
-    TOTAL: 2.178,00 â‚¬
+    Renting CNC 1 1.800,00 Ã¢â€šÂ¬ 1.800,00 Ã¢â€šÂ¬ 21% 378,00 Ã¢â€šÂ¬
+    Total Base Imponible: 1.800,00 Ã¢â€šÂ¬
+    Total IVA: 378,00 Ã¢â€šÂ¬
+    TOTAL: 2.178,00 Ã¢â€šÂ¬
     """
 )
 
@@ -41,12 +41,12 @@ RAPPEL_SAMPLE = dedent(
     Artesta Store, S.L.
     26/01/2026
     FACTURA
-    Número de factura: A_2026-0006
+    NÃºmero de factura: A_2026-0006
     Home design labs S.L.
-    Rappel 2025 -1 1.118,95 € -1.118,95 € 21% -234,98 €
-    Total Base Imponible: -1.118,95 €
-    Total IVA: -234,98 €
-    TOTAL: -1.353,93 €
+    Rappel 2025 -1 1.118,95 â‚¬ -1.118,95 â‚¬ 21% -234,98 â‚¬
+    Total Base Imponible: -1.118,95 â‚¬
+    Total IVA: -234,98 â‚¬
+    TOTAL: -1.353,93 â‚¬
     """
 )
 
@@ -59,7 +59,7 @@ TOASTY_SAMPLE = dedent(
     2026/02/19
     CLIENT
     Toasty SAS
-    TOTAL TTC: € 1,746.60
+    TOTAL TTC: â‚¬ 1,746.60
     """
 )
 
@@ -72,9 +72,28 @@ CHOOSE_SAMPLE = dedent(
     2026/03/20
     CLIENT
     CHOOSE SAS
-    TOTAL TTC: € 15,609.96
+    TOTAL TTC: â‚¬ 15,609.96
     """
 )
+
+CHOOSE_MODERN_SAMPLE = dedent(
+    """
+    Artesta Store, S.L.
+    FACTURA
+    NÚMERO
+    AS-110388
+    FECHA
+    2026/06/29
+    DATOS DE CLIENTE
+    CHOOSE SAS
+    Artículo Cantidad IVA Precio unitario Precio unitario sin IVA Total
+    Choose campaign 1 0% € 6,777.88 € 6,777.88 € 6,777.88
+    Subtotal: € 6,777.88
+    Total : € 6,777.88
+    """
+)
+
+
 class ArtestaIncomeParserTests(unittest.TestCase):
     def test_parse_qhands(self) -> None:
         parsed = parse_qhands_text(QHANDS_SAMPLE, original_filename="Factura_2026-0012.pdf")
@@ -105,6 +124,13 @@ class ArtestaIncomeParserTests(unittest.TestCase):
         self.assertEqual(parsed.supplier_code, "CHOOSE")
         self.assertEqual(parsed.division_invoice, "campaign")
         self.assertEqual(parsed.gross_amount, Decimal("15609.96"))
+
+    def test_parse_choose_modern_format(self) -> None:
+        parsed = parse_choose_text(CHOOSE_MODERN_SAMPLE, original_filename="invoice-AS-110388.pdf")
+        self.assertEqual(parsed.supplier_code, "CHOOSE")
+        self.assertEqual(parsed.invoice_number, "AS-110388")
+        self.assertEqual(parsed.period_yyyymm, "202606")
+        self.assertEqual(parsed.gross_amount, Decimal("6777.88"))
 
 
 if __name__ == "__main__":

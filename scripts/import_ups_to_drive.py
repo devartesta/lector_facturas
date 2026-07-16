@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--client-id", required=True)
     parser.add_argument("--client-secret", required=True)
     parser.add_argument("--refresh-token", required=True)
+    parser.add_argument("--input-dir", action="append", default=[], help="Directory with UPS PDF invoices to import. Can be repeated.")
     args = parser.parse_args()
 
     client = GoogleDriveClient(
@@ -42,7 +43,7 @@ def main() -> int:
         )
     )
 
-    invoice_files = discover_ups_pdfs()
+    invoice_files = discover_ups_pdfs(args.input_dir)
     uploaded: list[tuple[str, str]] = []
     with psycopg.connect(args.database_url) as conn:
         with conn.cursor() as cur:
@@ -78,7 +79,14 @@ def main() -> int:
     return 0
 
 
-def discover_ups_pdfs() -> list[Path]:
+def discover_ups_pdfs(input_dirs: list[str] | None = None) -> list[Path]:
+    if input_dirs:
+        files: list[Path] = []
+        for input_dir in input_dirs:
+            directory = Path(input_dir)
+            files.extend(directory.glob("*.PDF"))
+            files.extend(directory.glob("*.pdf"))
+        return sorted(set(files))
     january = FINANCE_ROOT / "Artesta Store, S.L" / "2026" / "1Q" / "202601" / "Gastos" / "Proveedores" / "UPS"
     february = FINANCE_ROOT / "Artesta Store, S.L" / "2026" / "1Q" / "202602" / "Gastos" / "Proveedores" / "UPS"
     return sorted(list(january.glob("*.PDF")) + list(february.glob("*.PDF")))
@@ -144,7 +152,7 @@ def upsert_document_row(
         parsed.currency_code,
         drive_file_id,
         "GOOGLE_DRIVE",
-        "invoice",
+        parsed.document_type,
         "classified",
         "import",
         "",
@@ -162,7 +170,8 @@ def upsert_document_row(
         cursor.execute(
             f"""
             UPDATE {SCHEMA_NAME}.documents
-            SET invoice_date = %s,
+            SET invoice_number = %s,
+                invoice_date = %s,
                 issuer_company_name = %s,
                 billed_company_name = %s,
                 supplier_name = %s,

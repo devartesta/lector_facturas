@@ -76,6 +76,25 @@ ARTESTA 171663
 Invoice Date : 3/31/26
 """
 
+TGI_MULTI_LINE_SAMPLE = """
+Artesta,Inc
+Today's Graphics Inc
+Invoice
+Invoice Date
+Terms
+Cust P.O. #
+172285
+6/30/26
+Net 45 Days
+Quantity Description Amount
+$1,506.60June Production1
+$2,614.92Shipping1
+Artesta,Inc
+Sales Tax
+Subtotal
+Total  Due $4,121.52
+"""
+
 
 def test_parse_january_production() -> None:
     invoice = parse_tgi_text(JAN_PRODUCTION_SAMPLE, original_filename="171197.pdf")
@@ -118,3 +137,23 @@ def test_parse_tgi_ocr_layout() -> None:
     assert parsed.period_yyyymm == "202603"
     assert parsed.division_invoice == "logistics"
     assert parsed.gross_amount == Decimal("4826.94")
+
+
+def test_parse_tgi_multi_line_invoice() -> None:
+    parsed = parse_tgi_text(TGI_MULTI_LINE_SAMPLE, original_filename="172285.pdf")
+
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+
+    manufacturing = next(item for item in parsed if item.division_invoice == "manufacturing")
+    logistics = next(item for item in parsed if item.division_invoice == "logistics")
+
+    assert manufacturing.invoice_number == "172285"
+    assert manufacturing.invoice_date.isoformat() == "2026-06-30"
+    assert manufacturing.gross_amount == Decimal("1506.60")
+    assert manufacturing.period_yyyymm == "202606"
+
+    assert logistics.invoice_number == "172285"
+    assert logistics.invoice_date.isoformat() == "2026-06-30"
+    assert logistics.gross_amount == Decimal("2614.92")
+    assert logistics.period_yyyymm == "202606"

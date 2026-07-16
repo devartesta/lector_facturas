@@ -68,9 +68,9 @@ def parse_payroll_summary_text(text: str, *, original_filename: str) -> PayrollS
     company_total_numbers = _extract_decimals_from_line(company_total_line)
     if len(company_total_numbers) < 3:
         raise ValueError("Could not extract payroll employer totals.")
-    employee_deductions_amount = abs(company_total_numbers[0])
-    employer_social_security_amount = company_total_numbers[1]
-    total_company_cost_amount = company_total_numbers[2]
+    employee_deductions_amount, employer_social_security_amount, total_company_cost_amount = _parse_company_totals(
+        company_total_numbers
+    )
 
     summary_totals_line = _line_after(normalized, company_total_line)
     summary_totals_numbers = _extract_decimals_from_line(summary_totals_line)
@@ -102,7 +102,10 @@ def parse_payroll_summary_text(text: str, *, original_filename: str) -> PayrollS
 
 
 def _extract_period_range(text: str) -> tuple[date, date]:
-    match = re.search(r"PAGA TOTAL DEL\s+([0-9]{2}/[0-9]{2}/[0-9]{4})\s+AL\s+([0-9]{2}/[0-9]{2}/[0-9]{4})", text)
+    match = re.search(
+        r"PAGA\s+.+?\s+DEL\s+([0-9]{2}/[0-9]{2}/[0-9]{4})\s+AL\s+([0-9]{2}/[0-9]{2}/[0-9]{4})",
+        text,
+    )
     if not match:
         raise ValueError("Could not extract payroll period.")
     return (
@@ -133,6 +136,12 @@ def _line_after(text: str, target_line: str) -> str:
 def _extract_decimals_from_line(line: str) -> list[Decimal]:
     raw_values = re.findall(r"-?[0-9]{1,3}(?:\.[0-9]{3})*,[0-9]{2}", line)
     return [_parse_decimal_es(value) for value in raw_values]
+
+
+def _parse_company_totals(numbers: list[Decimal]) -> tuple[Decimal, Decimal, Decimal]:
+    if len(numbers) >= 4 and numbers[-1] < 0:
+        return abs(numbers[-1]), numbers[-2], numbers[0]
+    return abs(numbers[0]), numbers[1], numbers[2]
 
 
 def _require_match(text: str, pattern: str, label: str) -> str:

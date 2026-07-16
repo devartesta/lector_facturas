@@ -170,6 +170,7 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
                 division_invoice,
                 document_type,
                 currency_code,
+                gross_amount,
                 net_amount,
                 invoice_number,
                 drive_url,
@@ -271,7 +272,7 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
                 subcategory=subcategory,
                 supplier_code=supplier_code,
                 detail=str(row["division_invoice"] or row["document_type"] or "").lower(),
-                amount_net=_decimal(row["net_amount"]),
+                amount_net=_document_cost_amount(row, supplier_code=supplier_code),
                 currency=str(row["currency_code"] or "USD"),
                 source="documents",
                 invoice_number=str(row["invoice_number"] or ""),
@@ -426,6 +427,9 @@ def _apply_invoice_links(ws) -> None:
     for row_idx in range(3, ws.max_row + 1):
         invoice_cell = ws.cell(row=row_idx, column=invoice_col)
         drive_url_cell = ws.cell(row=row_idx, column=drive_url_col)
+        invoice_cell.hyperlink = None
+        if drive_url_cell.value and not invoice_cell.value:
+            invoice_cell.value = "ver factura"
         if invoice_cell.value and drive_url_cell.value:
             invoice_cell.hyperlink = str(drive_url_cell.value)
             invoice_cell.style = "Hyperlink"
@@ -1040,6 +1044,13 @@ def _map_expense_subcategory(*, supplier_code: str, division_invoice: str, suppl
     return ""
 
 
+def _document_cost_amount(row: dict[str, Any], *, supplier_code: str) -> Decimal:
+    supplier = supplier_code.upper()
+    if supplier == "JONDO":
+        return _decimal(row.get("gross_amount"))
+    return _decimal(row.get("net_amount"))
+
+
 def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     periodified_roots = {
         invoice_number[: invoice_number.index("_PERIODIFICADA_")]
@@ -1047,14 +1058,14 @@ def _filter_periodified_documents(rows: list[dict[str, Any]]) -> list[dict[str, 
         if (invoice_number := str(row["invoice_number"] or "").strip())
         and "_PERIODIFICADA_" in invoice_number
     }
-    if not periodified_roots:
-        return rows
-
     filtered: list[dict[str, Any]] = []
     for row in rows:
         invoice_number = str(row["invoice_number"] or "").strip()
+        supplier_code = str(row.get("supplier_code") or "").strip().upper()
         parser_name = str(row.get("parser_name") or "").strip().lower()
-        if invoice_number in periodified_roots and parser_name != "manual_periodificada":
+        if supplier_code == "YOURACCOUNTSTAXES" and parser_name != "manual_periodificada":
+            continue
+        if periodified_roots and invoice_number in periodified_roots and parser_name != "manual_periodificada":
             continue
         filtered.append(row)
     return filtered

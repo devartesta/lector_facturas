@@ -32,9 +32,9 @@ Data sources
     payment method.  Filtered by ``payment_currency`` and
     ``is_hannun_tag = 0``.
 
-``finance.informe_vat_gestorias_detalle``
-    Single table with one row per order.  Filtered by
-    ``order_month_yyyymm`` and ``payment_currency``.
+``finance.informe_vat_gestorias_detalle_{yyyymm}``
+    Partitioned table (one per month) with one row per order.  Filtered by
+    ``payment_currency`` and ``is_hannun_tag = 0``.
 
 ``invoices.shopify_payout_transactions`` (INC only)
     Per-order Shopify fee (``SUM(fee)`` for ``type = 'charge'``).
@@ -166,6 +166,7 @@ def collect_gestoria_data(
     region = COMPANY_REGION[company_code.upper()]
 
     resumen_table = f"finance.informe_vat_gestorias_resumen_{period_yyyymm}"
+    detalle_table = f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
 
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
         resumen_rows = conn.execute(
@@ -180,14 +181,34 @@ def collect_gestoria_data(
         ).fetchall()
 
         detalle_rows = conn.execute(
-            """
-            SELECT *
-            FROM finance.informe_vat_gestorias_detalle
-            WHERE order_month_yyyymm = %s
-              AND payment_currency   = %s
-            ORDER BY shipping_country_code, order_date, order_name
+            f"""
+            SELECT
+                d.order_month_yyyymm,
+                v.order_date,
+                d.order_name,
+                d.shipping_country_code,
+                d.shipping_state_code,
+                d.payment_gateway_names,
+                d.is_rever_tag,
+                d.is_hannun_tag,
+                d.is_mirakl_tag,
+                d.standard_rate,
+                d.payment_currency,
+                d.tax_rate,
+                d.shown_tax_presentment,
+                d.shown_gross_presentment,
+                d.shown_net_presentment,
+                d.tags,
+                d.descuadre
+            FROM {detalle_table} d
+            LEFT JOIN shopify.ventas_{period_yyyymm} v
+              ON d.order_name = v.order_name
+             AND d.payment_currency = v.payment_currency
+            WHERE d.payment_currency = %s
+              AND d.is_hannun_tag = 0
+            ORDER BY d.shipping_country_code, v.order_date, d.order_name
             """,
-            (period_yyyymm, currency),
+            (currency,),
         ).fetchall()
 
         fees_by_order: dict[str, Decimal] = {}
@@ -605,8 +626,8 @@ def _add_detail_sheet(wb: Workbook, data: GestoriaReportData, month_label: str) 
     _cell(
         row, 1,
         f"Order detail for {period}. "
-        f"Source: finance.informe_vat_gestorias_detalle. "
-        f"Yellow rows: |descuadre| > 0.01. Hannun orders included.",
+        f"Source: finance.informe_vat_gestorias_detalle_{period}. "
+        f"Yellow rows: |descuadre| > 0.01. Hannun orders excluded.",
         font=ITALIC_GREY,
         align=LEFT_WRAP,
         border=None,

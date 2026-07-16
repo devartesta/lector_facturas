@@ -64,8 +64,18 @@ def parse_railway_pdf(path: Path) -> RailwayInvoice:
 def parse_railway_text(text: str, *, original_filename: str) -> RailwayInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "").replace("\x00", "-")
     invoice_number = _extract(normalized, r"Invoice number\s+([A-Z0-9-]+)")
-    invoice_date = _parse_english_date(_extract(normalized, r"Date of issue\s+([A-Za-z]+ [0-9]{1,2}, [0-9]{4})"))
+    invoice_date = _parse_english_date(
+        _extract(normalized, r"(?:Date of issue|Date paid)\s+([A-Za-z]+ [0-9]{1,2}, [0-9]{4})")
+    )
     ranges = re.findall(r"([A-Za-z]{3,9} [0-9]{1,2}, [0-9]{4})-([A-Za-z]{3,9} [0-9]{1,2}, [0-9]{4})", normalized)
+    shared_year_ranges = re.findall(
+        r"([A-Za-z]{3,9} [0-9]{1,2})-([A-Za-z]{3,9} [0-9]{1,2}, [0-9]{4})",
+        normalized,
+    )
+    ranges.extend(
+        (f"{start}, {end.rsplit(', ', 1)[1]}", end)
+        for start, end in shared_year_ranges
+    )
     if ranges:
         starts = [_parse_english_date(start) for start, _ in ranges]
         ends = [_parse_english_date(end) for _, end in ranges]
@@ -74,9 +84,25 @@ def parse_railway_text(text: str, *, original_filename: str) -> RailwayInvoice:
     else:
         billing_period_start = date(invoice_date.year, invoice_date.month, 1)
         billing_period_end = invoice_date
-    net_amount = _parse_money(_extract(normalized, r"Total excluding tax\s+\$([0-9,]+\.[0-9]{2})"))
-    vat_amount = _parse_money(_extract(normalized, r"VAT - Spain\s*[- ]?\s*21%\s*on\s*\$[0-9,]+\.[0-9]{2}\s*[- ]?\s*\$([0-9,]+\.[0-9]{2})"))
-    gross_amount = _parse_money(_extract(normalized, r"Amount due\s+\$([0-9,]+\.[0-9]{2})"))
+    gross_amount = _parse_money(_extract(normalized, r"\b(?:Amount due|Amount paid|Total)\s+\$([0-9,]+\.[0-9]{2})"))
+    vat_match = re.search(
+        r"VAT - Spain\s*[- ]?\s*([0-9]{1,2})%\s*on\s*\$[0-9,]+\.[0-9]{2}\s*[- ]?\s*\$([0-9,]+\.[0-9]{2})",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if vat_match:
+        vat_percent = Decimal(vat_match.group(1))
+        vat_amount = _parse_money(vat_match.group(2))
+    else:
+        vat_percent = Decimal("0")
+        vat_amount = Decimal("0")
+
+    net_match = re.search(r"Total excluding tax\s+\$([0-9,]+\.[0-9]{2})", normalized, flags=re.IGNORECASE | re.DOTALL)
+    if net_match:
+        net_amount = _parse_money(net_match.group(1))
+    else:
+        net_amount = gross_amount - vat_amount
+
     return RailwayInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -88,7 +114,7 @@ def parse_railway_text(text: str, *, original_filename: str) -> RailwayInvoice:
         billing_period_end=billing_period_end,
         period_yyyymm=billing_period_start.strftime("%Y%m"),
         currency_code="USD",
-        vat_percent=Decimal("21"),
+        vat_percent=vat_percent,
         gross_amount=gross_amount,
         vat_amount=vat_amount,
         net_amount=net_amount,

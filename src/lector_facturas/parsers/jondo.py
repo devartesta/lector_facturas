@@ -55,14 +55,23 @@ class JondoInvoice:
 
 def parse_jondo_pdf(path: Path) -> JondoInvoice:
     text = "\n".join((page.extract_text() or "") for page in PdfReader(str(path)).pages)
-    invoice_number = _extract(text, r"PO Number:\s*([A-Z0-9-]+)")
+    return _parse_jondo_text(text, original_filename=path.name)
+
+
+def _parse_jondo_text(text: str, *, original_filename: str) -> JondoInvoice:
+    invoice_number = _invoice_number_from_filename(original_filename) or _extract(text, r"PO Number:\s*([A-Z0-9-]+)")
     invoice_date = _parse_iso_date(_extract(text, r"Date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})"))
-    net_amount = _parse_decimal(_extract(text, r"\bSubtotal\s+USD \$\s*([0-9.,]+)"))
+    product_subtotal = _parse_decimal(_extract(text, r"\bSubtotal\s+USD \$\s*([0-9.,]+)"))
+    shipping_amount = _extract_optional_decimal(text, r"\bShipping\s+USD \$\s*([0-9.,]+)") or Decimal("0")
+    net_amount = product_subtotal + shipping_amount
     gross_amount = _parse_decimal(_extract(text, r"\bTotal\s+USD \$\s*([0-9.,]+)"))
     billed_company_name = _detect_billed_company(text)
     vat_amount = _extract_optional_decimal(text, r"GB VAT\s+USD \$\s*([0-9.,]+)")
     if vat_amount is None:
         vat_amount = gross_amount - net_amount
+    if billed_company_name == US_COMPANY_NAME:
+        # US sales tax is not reclaimed, so it should remain part of the expense base.
+        net_amount = gross_amount
     return JondoInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -78,7 +87,7 @@ def parse_jondo_pdf(path: Path) -> JondoInvoice:
         gross_amount=gross_amount,
         vat_amount=vat_amount,
         net_amount=net_amount,
-        original_filename=path.name,
+        original_filename=original_filename,
         sender_email="",
     )
 
@@ -88,6 +97,12 @@ def _detect_billed_company(text: str) -> str:
     if "ARTESTA,INC" in upper or "ARTESTA INC" in upper:
         return US_COMPANY_NAME
     return COMPANY_NAME
+
+
+def _invoice_number_from_filename(original_filename: str) -> str:
+    stem = Path(original_filename).stem
+    match = re.fullmatch(r"(\d+-AS-\d+)", stem, flags=re.IGNORECASE)
+    return match.group(1).upper() if match else ""
 
 
 def _detect_issuer_company(text: str) -> str:

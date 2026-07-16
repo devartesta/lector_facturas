@@ -76,7 +76,7 @@ def parse_syncwith_text(text: str, *, original_filename: str) -> SyncWithInvoice
     invoice_number = _extract(normalized, r"Invoice number\s+([A-Z0-9 -]+)").replace(" ", "-")
     invoice_date = _parse_english_date(_extract(normalized, r"Date of issue\s+([A-Za-z]+ [0-9]{1,2}, [0-9]{4})"))
     gross_amount = _parse_money(_extract(normalized, r"Amount due\s+\$([0-9,]+\.[0-9]{2})"))
-    previous_month_start, previous_month_end = _previous_month_bounds(invoice_date)
+    billing_period_start, billing_period_end = _invoice_month_bounds(invoice_date)
     return SyncWithInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
@@ -84,9 +84,9 @@ def parse_syncwith_text(text: str, *, original_filename: str) -> SyncWithInvoice
         billed_company_name=COMPANY_NAME,
         invoice_number=invoice_number,
         invoice_date=invoice_date,
-        billing_period_start=previous_month_start,
-        billing_period_end=previous_month_end,
-        period_yyyymm=previous_month_start.strftime("%Y%m"),
+        billing_period_start=billing_period_start,
+        billing_period_end=billing_period_end,
+        period_yyyymm=invoice_date.strftime("%Y%m"),
         currency_code="USD",
         vat_percent=Decimal("0"),
         gross_amount=gross_amount,
@@ -115,7 +115,7 @@ def _parse_english_date(raw: str) -> date:
     return date(year, MONTHS_EN[month_name.lower()], day)
 
 
-def _previous_month_bounds(invoice_date: date) -> tuple[date, date]:
-    previous_month_last_day = invoice_date.replace(day=1) - timedelta(days=1)
-    previous_month_start = previous_month_last_day.replace(day=1)
-    return previous_month_start, previous_month_last_day
+def _invoice_month_bounds(invoice_date: date) -> tuple[date, date]:
+    next_month_start = (invoice_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+    invoice_month_end = next_month_start - timedelta(days=1)
+    return invoice_date.replace(day=1), invoice_month_end

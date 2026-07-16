@@ -13,7 +13,15 @@ from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
 from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _document_cost_amount as inc_document_cost_amount, _map_expense_subcategory as map_inc_expense_subcategory
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, _map_expense_subcategory as map_ltd_expense_subcategory
-from lector_facturas.pyg_sl_workbook import ExpenseRow, ProviderCatalogRow, PygSlDataBundle, StageRow, _normalize_company_name
+from lector_facturas.pyg_sl_workbook import (
+    ExpenseRow,
+    ProviderCatalogRow,
+    PygSlDataBundle,
+    StageRow,
+    _artlink_stock_reference_keys,
+    _normalize_company_name,
+    _should_exclude_sl_artlink_document,
+)
 from lector_facturas.pyg_snapshot import PygSnapshot, PygSnapshotRow, _build_consolidated_snapshot, _build_simple_company_snapshot, _build_sl_snapshot
 
 
@@ -35,6 +43,37 @@ def _snapshot_row(code: str, amount: str, *, label: str | None = None) -> PygSna
 class PygConsistencyTests(unittest.TestCase):
     def test_sl_company_name_normalization_treats_punctuation_variants_as_same_company(self) -> None:
         self.assertEqual(_normalize_company_name("ARTESTA STORE, S.L."), _normalize_company_name("ARTESTA STORE S.L."))
+
+    def test_sl_artlink_stock_duplicates_are_excluded_but_dct_freight_is_kept(self) -> None:
+        excluded_refs = _artlink_stock_reference_keys([
+            {"invoice_number": "000205098", "amount_net": Decimal("16525.55")},
+            {"invoice_number": "000205189", "amount_net": Decimal("2950.00")},
+        ])
+
+        self.assertTrue(
+            _should_exclude_sl_artlink_document(
+                supplier_code="ARTLINK",
+                invoice_number="000205098",
+                amount_net=Decimal("16525.55"),
+                excluded_refs=excluded_refs,
+            )
+        )
+        self.assertFalse(
+            _should_exclude_sl_artlink_document(
+                supplier_code="ARTLINK",
+                invoice_number="000205191",
+                amount_net=Decimal("705.40"),
+                excluded_refs=excluded_refs,
+            )
+        )
+        self.assertFalse(
+            _should_exclude_sl_artlink_document(
+                supplier_code="DCT",
+                invoice_number="26-1058",
+                amount_net=Decimal("3032.69"),
+                excluded_refs=excluded_refs,
+            )
+        )
 
     def test_inc_jondo_uses_gross_amount_as_cost(self) -> None:
         row = {"gross_amount": Decimal("52.87"), "net_amount": Decimal("44.06")}
@@ -157,8 +196,11 @@ class PygConsistencyTests(unittest.TestCase):
             rows=(
                 _snapshot_row("shopify", "100", label="Shopify"),
                 _snapshot_row("marketplaces", "10", label="Marketplaces"),
+                _snapshot_row("marketplace_hannun", "6", label="HANNUN"),
+                _snapshot_row("marketplace_choose", "4", label="CHOOSE"),
                 _snapshot_row("rappels", "-1", label="Rappels"),
                 _snapshot_row("supplies", "-2", label="Supplies"),
+                _snapshot_row("supplies_rever", "-2", label="REVER"),
                 _snapshot_row("otros_ingresos_group", "3", label="Otros ingresos"),
                 _snapshot_row("manufacturing", "20", label="Manufacturing"),
                 _snapshot_row("manufacturing_bbvacnc", "0", label="BBVACNC"),
@@ -251,6 +293,11 @@ class PygConsistencyTests(unittest.TestCase):
         self.assertEqual(rows["royalties"].values_eur[0], Decimal("10"))
         self.assertEqual(rows["administration"].values_eur[0], Decimal("12"))
         self.assertEqual(rows["shopify"].values_eur[0], Decimal("170"))
+        self.assertEqual(rows["marketplace_hannun"].values_eur[0], Decimal("6"))
+        self.assertEqual(rows["marketplace_choose"].values_eur[0], Decimal("4"))
+        self.assertEqual(rows["marketplaces"].values_eur[0], Decimal("10"))
+        self.assertEqual(rows["supplies_rever"].values_eur[0], Decimal("-2"))
+        self.assertEqual(rows["supplies"].values_eur[0], Decimal("-2"))
         self.assertEqual(rows["product_sales"].values_eur[0], Decimal("177"))
         self.assertEqual(rows["turnover"].values_eur[0], Decimal("184"))
 
