@@ -154,7 +154,11 @@ def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
 
 def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, Any]]:
     amount_currency_sql = """
-        COALESCE(NULLIF(j.raw_json ->> 'currency', ''), d.payment_currency)
+        CASE
+            WHEN d.payment_currency = 'EUR' THEN 'EUR'
+            WHEN NULLIF(j.raw_json ->> 'currency', '') IS NOT NULL THEN j.raw_json ->> 'currency'
+            ELSE d.payment_currency
+        END
     """
     shop_presentment_net_sql = """
         (
@@ -170,6 +174,7 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
     """
     amount_net_sql = f"""
         CASE
+            WHEN d.payment_currency = 'EUR' THEN d.shown_net_presentment
             WHEN {shop_presentment_net_sql} <> 0
              AND {shop_eur_net_sql} <> 0
             THEN ROUND(
