@@ -155,7 +155,6 @@ def collect_pyg_ltd_data(*, year: int, database_url: str | None) -> PygLtdDataBu
               AND payment_currency = 'GBP'
               AND shipping_country_code = 'GB'
               AND COALESCE(is_hannun_tag, 0) = 0
-              AND COALESCE(is_rever_tag, 0) = 0
             GROUP BY order_month_yyyymm, shipping_country_code, payment_currency
             ORDER BY order_month_yyyymm
             """,
