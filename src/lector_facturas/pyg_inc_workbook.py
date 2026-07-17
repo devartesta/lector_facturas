@@ -155,7 +155,6 @@ def collect_pyg_inc_data(*, year: int, database_url: str | None) -> PygIncDataBu
               AND payment_currency = 'USD'
               AND shipping_country_code = 'US'
               AND COALESCE(is_hannun_tag, 0) = 0
-              AND COALESCE(is_rever_tag, 0) = 0
             GROUP BY order_month_yyyymm, shipping_country_code, payment_currency
             ORDER BY order_month_yyyymm
             """,
