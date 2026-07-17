@@ -233,6 +233,11 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         WHERE COALESCE(d.is_hannun_tag, 0) = 0
           AND COALESCE(v.is_choose_tag, 0) = 0
           AND COALESCE(v.is_toasty_tag, 0) = 0
+          AND (
+                COALESCE(d.is_rever_tag, 0) = 0
+                OR COALESCE(d.payment_gateway_names, '[]'::jsonb)
+                   @> '["shopify_payments"]'::jsonb
+          )
         """
         for table_name in table_names
     )
