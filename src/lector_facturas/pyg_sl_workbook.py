@@ -152,6 +152,27 @@ def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
     return tuple(ordered + extras) if "XX" not in seen else tuple(ordered[:-1] + extras + ["XX"])
 
 
+def _collect_sl_shopify_sales_rows_from_pyg(*, conn: Any, year: int) -> list[dict[str, Any]]:
+    """Read the normalized Shopify sales aggregates used by every PYG report."""
+    return conn.execute(
+        """
+        SELECT
+            order_month_yyyymm,
+            COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
+            payment_currency,
+            SUM(net) AS amount_net
+        FROM finance.ventas_pyg
+        WHERE order_month_yyyymm LIKE %(period)s
+          AND COALESCE(is_hannun_tag, 0) = 0
+          AND COALESCE(is_choose_tag, 0) = 0
+          AND COALESCE(is_toasty_tag, 0) = 0
+        GROUP BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
+        ORDER BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
+        """,
+        {"period": f"{year}%"},
+    ).fetchall()
+
+
 def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, Any]]:
     amount_currency_sql = """
         CASE
@@ -285,7 +306,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """,
             {"period": f"{year}%"},
         ).fetchall()
-        sales = _collect_sl_shopify_sales_rows(conn=conn, year=year)
+        sales = _collect_sl_shopify_sales_rows_from_pyg(conn=conn, year=year)
         docs = conn.execute(
             """
             SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date, parser_name
@@ -418,7 +439,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             continue
         if shipping_country_code in {"GB", "US"}:
             continue
-        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.informe_vat_gestorias_detalle"))
+        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.ventas_pyg"))
     for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])

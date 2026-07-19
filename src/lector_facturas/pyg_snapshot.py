@@ -125,8 +125,17 @@ def build_pyg_snapshot(
     raise ValueError(f"Unsupported company: {company}")
 
 
-def _build_sl_snapshot(*, months: list[str], database_url: str, settings: AppSettings | None) -> PygSnapshot:
-    bundles = [collect_pyg_sl_data(year=year, database_url=database_url) for year in _years_for_months(months)]
+def _build_sl_snapshot(
+    *,
+    months: list[str],
+    database_url: str,
+    settings: AppSettings | None,
+    preloaded_bundles: list | None = None,
+) -> PygSnapshot:
+    bundles = preloaded_bundles or [
+        collect_pyg_sl_data(year=year, database_url=database_url)
+        for year in _years_for_months(months)
+    ]
     provider_rows = tuple(row for bundle in bundles for row in bundle.provider_catalog_rows)
     groups = _provider_groups(provider_rows)
     fx_service = EcbFxService()
@@ -647,7 +656,16 @@ def _build_simple_company_snapshot(
 
 
 def _build_consolidated_snapshot(*, months: list[str], database_url: str, settings: AppSettings | None) -> PygSnapshot:
-    sl = _build_sl_snapshot(months=months, database_url=database_url, settings=settings)
+    sl_bundles = [
+        collect_pyg_sl_data(year=year, database_url=database_url)
+        for year in _years_for_months(months)
+    ]
+    sl = _build_sl_snapshot(
+        months=months,
+        database_url=database_url,
+        settings=settings,
+        preloaded_bundles=sl_bundles,
+    )
     ltd = _build_ltd_snapshot(months=months, database_url=database_url, settings=settings)
     inc = _build_inc_snapshot(months=months, database_url=database_url, settings=settings)
     fx_service = EcbFxService()
@@ -656,7 +674,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
     source_rows = {"sl": _snapshot_row_map(sl), "ltd": _snapshot_row_map(ltd), "inc": _snapshot_row_map(inc)}
     services_external_by_month: dict[str, Decimal] = {month: Decimal("0") for month in months}
 
-    for bundle in [collect_pyg_sl_data(year=year, database_url=database_url) for year in _years_for_months(months)]:
+    for bundle in sl_bundles:
         for row in bundle.service_rows:
             if row.yyyymm not in months:
                 continue
