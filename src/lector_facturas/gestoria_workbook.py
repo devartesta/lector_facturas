@@ -139,6 +139,70 @@ class GestoriaReportData:
     monthly_total_fee: Decimal          # SUM(total_cost_amount) from payment_fee_monthly_summary (INC only, else 0)
 
 
+def _validate_refund_tax_sync(conn: Any, period_yyyymm: str) -> None:
+    """Prevent publishing a sales report from a stale monthly sales table."""
+    ventas_table = f"shopify.ventas_{period_yyyymm}"
+    refunds_table = f"shopify.ventas_refunds_samemonth_{period_yyyymm}"
+
+    result = conn.execute(
+        f"""
+        WITH refund_agg AS (
+          SELECT
+            r.order_id,
+            ROUND(
+              SUM(
+                CASE
+                  WHEN COALESCE(
+                    r.tax_rate,
+                    (
+                      SELECT (tl->>'rate')::numeric
+                      FROM jsonb_array_elements(jo.raw_json->'tax_lines') tl
+                      LIMIT 1
+                    )
+                  ) IS NOT NULL
+                  THEN r.amount_presentment - r.amount_presentment / (
+                    1 + COALESCE(
+                      r.tax_rate,
+                      (
+                        SELECT (tl->>'rate')::numeric
+                        FROM jsonb_array_elements(jo.raw_json->'tax_lines') tl
+                        LIMIT 1
+                      )
+                    )
+                  )
+                  ELSE 0
+                END
+              ),
+              2
+            ) AS refund_tax_presentment
+          FROM {refunds_table} r
+          LEFT JOIN shopify.json_orders jo ON jo.order_id = r.order_id
+          GROUP BY r.order_id
+        ), mismatches AS (
+          SELECT v.order_name
+          FROM {ventas_table} v
+          JOIN refund_agg r ON r.order_id = v.order_id
+          WHERE ABS(
+            COALESCE(v.shown_tax_presentment, 0)
+            - GREATEST(
+                COALESCE(v.tax_presentment_original, 0) - r.refund_tax_presentment,
+                0
+              )
+          ) > 0.01
+        )
+        SELECT COUNT(*) AS mismatch_count,
+               COALESCE(string_agg(order_name, ', ' ORDER BY order_name), '') AS orders
+        FROM mismatches
+        """
+    ).fetchone()
+    mismatch_count = int(result["mismatch_count"] or 0)
+    if mismatch_count:
+        raise RuntimeError(
+            f"Sales report blocked: refund VAT is stale for {mismatch_count} order(s) "
+            f"in {period_yyyymm}: {result['orders']}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -169,6 +233,8 @@ def collect_gestoria_data(
     detalle_table = f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
 
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
+        _validate_refund_tax_sync(conn, period_yyyymm)
+
         resumen_rows = conn.execute(
             f"""
             SELECT *
