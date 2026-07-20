@@ -163,6 +163,7 @@ def _collect_sl_shopify_sales_rows_from_pyg(*, conn: Any, year: int) -> list[dic
             SUM(net) AS amount_net
         FROM finance.ventas_pyg
         WHERE order_month_yyyymm LIKE %(period)s
+          AND COALESCE(shipping_country_code, 'XX') NOT IN ('GB', 'US')
           AND COALESCE(is_hannun_tag, 0) = 0
           AND COALESCE(is_choose_tag, 0) = 0
           AND COALESCE(is_toasty_tag, 0) = 0
@@ -231,6 +232,7 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
             LEFT JOIN shopify.json_orders j
               ON j.raw_json ->> 'name' = d.order_name
             WHERE d.order_month_yyyymm LIKE %(period)s
+              AND COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US')
               AND COALESCE(d.is_hannun_tag, 0) = 0
             GROUP BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'), {amount_currency_sql}
             ORDER BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'), {amount_currency_sql}
@@ -252,6 +254,7 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         LEFT JOIN shopify.json_orders j
           ON j.raw_json ->> 'name' = d.order_name
         WHERE COALESCE(d.is_hannun_tag, 0) = 0
+          AND COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US')
           AND COALESCE(v.is_choose_tag, 0) = 0
           AND COALESCE(v.is_toasty_tag, 0) = 0
           AND (
