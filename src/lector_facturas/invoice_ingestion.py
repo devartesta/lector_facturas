@@ -43,7 +43,7 @@ from lector_facturas.parsers.masmovil import parse_masmovil_pdf
 from lector_facturas.parsers.marketing_ads import parse_google_ads_pdf, parse_meta_ads_pdf
 from lector_facturas.parsers.microsoft import parse_microsoft_pdf
 from lector_facturas.parsers.noda import parse_noda_pdf
-from lector_facturas.parsers.notarios_monte_esquinza import parse_notarios_monte_esquinza_pdf
+from lector_facturas.parsers.notarios_monte_esquinza import parse_notarios_monte_esquinza_pdf, parse_notarios_monte_esquinza_text
 from lector_facturas.parsers.openai import parse_openai_pdf
 from lector_facturas.parsers.partner_income_fr import parse_choose_pdf, parse_toasty_pdf
 from lector_facturas.parsers.portclearance import parse_portclearance_pdf
@@ -332,6 +332,21 @@ def parse_with_rule(
         from lector_facturas.parsers.tgi import parse_tgi_text  # noqa: PLC0415
 
         return parse_tgi_text(ocr_text, original_filename=original_filename)
+
+    if rule.supplier_code == "NOTARIOSMONTESQUINZA":
+        # The PDF uses an embedded font for digits; keep the original filename
+        # because the invoice number is not reliably extractable from its text.
+        text = pdf_text
+        if not text.strip():
+            suffix = Path(original_filename).suffix or ".pdf"
+            with NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+                handle.write(content)
+                temp_path = Path(handle.name)
+            try:
+                text = "\n".join((page.extract_text() or "") for page in PdfReader(str(temp_path)).pages)
+            finally:
+                temp_path.unlink(missing_ok=True)
+        return parse_notarios_monte_esquinza_text(text, original_filename=original_filename)
 
     if rule.supplier_code == "HUSHED":
         # Extract receipt number from original filename e.g. "Receipt-2260-8475.pdf"
