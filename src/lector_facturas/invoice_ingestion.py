@@ -43,6 +43,7 @@ from lector_facturas.parsers.masmovil import parse_masmovil_pdf
 from lector_facturas.parsers.marketing_ads import parse_google_ads_pdf, parse_meta_ads_pdf
 from lector_facturas.parsers.microsoft import parse_microsoft_pdf
 from lector_facturas.parsers.noda import parse_noda_pdf
+from lector_facturas.parsers.notarios_monte_esquinza import parse_notarios_monte_esquinza_pdf
 from lector_facturas.parsers.openai import parse_openai_pdf
 from lector_facturas.parsers.partner_income_fr import parse_choose_pdf, parse_toasty_pdf
 from lector_facturas.parsers.portclearance import parse_portclearance_pdf
@@ -165,6 +166,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("METAADS", "meta_ads", parse_meta_ads_pdf, sender_contains=("meta", "facebook"), text_contains=("meta platforms ireland", "facebook")),
     ParserRule("MICROSOFT", "microsoft", parse_microsoft_pdf, sender_contains=("microsoft",), filename_contains=("microsoft",), text_contains=("microsoft iberica", "numero de facturacion g")),
     ParserRule("NODA", "noda", parse_noda_pdf, sender_contains=("noda",), filename_contains=("020-26", "noda", "factura enero 2026"), text_contains=("asesoria fiscal noda", "noda y asociados")),
+    ParserRule("NOTARIOSMONTESQUINZA", "notarios_monte_esquinza", parse_notarios_monte_esquinza_pdf, sender_contains=("menotarios.com",), filename_contains=("l1033", "i-l7956", "i-l12487"), text_contains=("notarios monte esquinza",)),
     ParserRule("OPENAI", "openai", parse_openai_pdf, filename_contains=("bzhjntub", "7bsdv5am", "invoice-bzhjntub", "invoice-7bsdv5am"), sender_contains=("openai",), text_contains=("openai", "chatgpt",)),
     ParserRule("PORTCLEARANCE", "portclearance", parse_portclearance_pdf, sender_contains=("port clearance", "portclearance"), filename_contains=("pcsi",), text_contains=("port clearance services",)),
     ParserRule("PRESSING", "pressing", parse_pressing_pdf, text_contains=("pressing impressi digital", "detalle en hoja excel adjunta")),
