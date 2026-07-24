@@ -138,8 +138,6 @@ def _extract_period_range(text: str, *, invoice_date: date) -> tuple[date, date]
 
 def _extract_totals(text: str) -> tuple[str, Decimal, Decimal, Decimal, Decimal, tuple[CorreosTaxBreakdown, ...]]:
     tax_breakdowns = _extract_tax_breakdowns(text)
-    net_total_match = re.search(r"Total importe neto antes de impuesto\s+([0-9.,]+)", text, flags=re.IGNORECASE)
-    vat_total_match = re.search(r"Total impuesto\s+([0-9.,]+)", text, flags=re.IGNORECASE)
     gross_match = re.search(r"Total factura en Euros\s+([0-9.,]+)", text, flags=re.IGNORECASE)
     if not tax_breakdowns or not gross_match:
         raise ValueError("Could not extract Correos totals.")
@@ -147,13 +145,16 @@ def _extract_totals(text: str) -> tuple[str, Decimal, Decimal, Decimal, Decimal,
     tax_label = "IGIC" if "IGIC" in tax_labels else next(iter(tax_labels))
     taxable_breakdowns = [item for item in tax_breakdowns if item.vat_percent > 0]
     vat_percent = taxable_breakdowns[0].vat_percent if taxable_breakdowns else tax_breakdowns[0].vat_percent
-    declared_net_amount = _parse_decimal(net_total_match.group(1)) if net_total_match else None
-    declared_vat_amount = _parse_decimal(vat_total_match.group(1)) if vat_total_match else None
+    # Correos Canarias can contain several IGIC bases (e.g. exempt + 7%).
+    # Use every extracted tax line instead of accidentally retaining only the
+    # first base when the PDF text layout is flattened by the PDF extractor.
+    breakdown_net_amount = sum((item.net_amount for item in tax_breakdowns), Decimal("0.00"))
+    breakdown_vat_amount = sum((item.vat_amount for item in tax_breakdowns), Decimal("0.00"))
     return (
         tax_label,
         vat_percent,
-        declared_net_amount if declared_net_amount is not None else sum((item.net_amount for item in tax_breakdowns), Decimal("0.00")),
-        declared_vat_amount if declared_vat_amount is not None else sum((item.vat_amount for item in tax_breakdowns), Decimal("0.00")),
+        breakdown_net_amount,
+        breakdown_vat_amount,
         _parse_decimal(gross_match.group(1)),
         tuple(tax_breakdowns),
     )

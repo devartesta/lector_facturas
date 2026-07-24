@@ -131,6 +131,7 @@ class CorreosParserTests(unittest.TestCase):
         self.assertEqual(parsed.invoice_number, "4004673698")
         self.assertEqual(parsed.vat_percent, Decimal("7.00"))
         self.assertEqual(parsed.net_amount, Decimal("12.98"))
+        self.assertEqual(parsed.net_amount, sum(item.net_amount for item in parsed.tax_breakdowns))
         self.assertEqual(parsed.vat_amount, Decimal("0.58"))
         self.assertEqual(parsed.gross_amount, Decimal("13.56"))
         self.assertEqual(len(parsed.tax_breakdowns), 2)
