@@ -62,6 +62,8 @@ from lector_facturas.api.schemas import (
     HourlyStepResult,
     PaymentReconciliationSyncIn,
     PaymentReconciliationSyncOut,
+    SalesPeriodFreezeIn,
+    SalesPeriodFreezeOut,
     PygRunOut,
     SalesReportsRunOut,
     StockDetailSyncOut,
@@ -104,6 +106,7 @@ from lector_facturas.review_notifications import (
 )
 from lector_facturas.review_notifications import NightlyReviewDigest
 from lector_facturas.settings import AppSettings, load_settings
+from lector_facturas.period_lock import freeze_sales_period
 
 
 def create_app() -> FastAPI:
@@ -1432,6 +1435,23 @@ def create_app() -> FastAPI:
             drive_file_name=result.drive_file_name,
             drive_file_url=result.drive_file_url,
         )
+
+    @app.post("/supply/sales-periods/freeze", response_model=SalesPeriodFreezeOut)
+    def freeze_sales_period_endpoint(payload: SalesPeriodFreezeIn) -> SalesPeriodFreezeOut:
+        """Close a sales month permanently after its reports are validated."""
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not database_url:
+            raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
+        try:
+            result = freeze_sales_period(
+                database_url=database_url,
+                company_code=payload.company_code,
+                period_yyyymm=payload.period_yyyymm,
+                frozen_by=payload.frozen_by,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return SalesPeriodFreezeOut(**result)
 
     @app.post("/bank/income/sl/run", response_model=BankIncomeRunOut)
     def run_bank_income_sl(

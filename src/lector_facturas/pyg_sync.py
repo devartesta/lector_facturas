@@ -16,6 +16,7 @@ from lector_facturas.payment_reconciliation import build_reconciliation
 from lector_facturas.payment_reconciliation_workbook import build_reconciliation_workbook
 from lector_facturas.folder_structure import ENTITY_ALIASES
 from lector_facturas.supply_stock import refresh_frame_consumption_month
+from lector_facturas.period_lock import get_period_freeze
 
 
 @dataclass(frozen=True)
@@ -513,6 +514,28 @@ def sync_payment_reconciliation_to_drive(
 
     file_name = f"payment_reconciliation_{company_code.lower()}_{period_yyyymm}.xlsx"
     existing = client.list_files(parent_id=target_folder_id, name=file_name)
+    if existing and _is_sales_period_frozen(
+        database_url=database_url,
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+    ):
+        # A closed period is a published accounting artifact. Do not replace
+        # its Drive file, even when an automated job runs again.
+        current = existing[0]
+        return PaymentReconciliationSyncResult(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            drive_folder_id=target_folder_id,
+            drive_file_id=str(current["id"]),
+            drive_file_name=str(current["name"]),
+            drive_file_url=str(current.get("webViewLink", "")),
+            shopify_only_accounting=len(report.shopify.only_accounting),
+            shopify_only_payment=len(report.shopify.only_payment),
+            shopify_amount_diff=len(report.shopify.amount_diff),
+            paypal_only_accounting=len(report.paypal.only_accounting),
+            paypal_only_payment=len(report.paypal.only_payment),
+            paypal_amount_diff=len(report.paypal.amount_diff),
+        )
 
     # Before trashing the existing file, read the Bank Transfer sheet to
     # preserve manually entered Pagado / Fecha cobro values, and read Comments
@@ -690,6 +713,22 @@ def sync_gestoria_to_drive(
 
     file_name = f"shopify_sales_{company_code.lower()}_{period_yyyymm}.xlsx"
     existing  = client.list_files(parent_id=target_folder_id, name=file_name)
+    if existing and _is_sales_period_frozen(
+        database_url=database_url,
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+    ):
+        current = existing[0]
+        return GestoriaSyncResult(
+            company_code=company_code,
+            period_yyyymm=period_yyyymm,
+            drive_folder_id=target_folder_id,
+            drive_file_id=str(current["id"]),
+            drive_file_name=str(current["name"]),
+            drive_file_url=str(current.get("webViewLink", "")),
+            n_resumen_rows=len(report.resumen_rows),
+            n_detalle_rows=len(report.detalle_rows),
+        )
 
     content = build_gestoria_workbook(report)
 
@@ -712,6 +751,18 @@ def sync_gestoria_to_drive(
         n_resumen_rows=len(report.resumen_rows),
         n_detalle_rows=len(report.detalle_rows),
     )
+
+
+def _is_sales_period_frozen(*, database_url: str, company_code: str, period_yyyymm: str) -> bool:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+        return get_period_freeze(
+            conn,
+            company_code=company_code.upper(),
+            period_yyyymm=period_yyyymm,
+        ) is not None
 
 
 def _refresh_frame_stock_month(

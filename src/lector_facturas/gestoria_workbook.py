@@ -79,6 +79,8 @@ except ImportError:  # pragma: no cover
     psycopg = None  # type: ignore[assignment]
     dict_row = None  # type: ignore[assignment]
 
+from lector_facturas.period_lock import get_period_freeze
+
 # ---------------------------------------------------------------------------
 # Styles (mirrors payment_reconciliation_workbook.py)
 # ---------------------------------------------------------------------------
@@ -314,68 +316,79 @@ def collect_gestoria_data(
     detalle_table = f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
 
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
-        _validate_refund_tax_sync(conn, period_yyyymm)
-
-        resumen_rows = conn.execute(
-            f"""
-            SELECT *
-            FROM {resumen_table}
-            WHERE payment_currency = %s
-              AND is_hannun_tag = 0
-            ORDER BY country, tax_rate_teorical
-            """,
-            (currency,),
-        ).fetchall()
-
-        detalle_rows = conn.execute(
-            f"""
-            SELECT
-                d.order_month_yyyymm,
-                v.order_date,
-                d.order_name,
-                d.shipping_country_code,
-                d.shipping_state_code,
-                d.payment_gateway_names,
-                d.is_rever_tag,
-                d.is_hannun_tag,
-                d.is_mirakl_tag,
-                d.standard_rate,
-                d.payment_currency,
-                d.tax_rate,
-                d.shown_tax_presentment,
-                d.shown_gross_presentment,
-                d.shown_net_presentment,
-                d.tags,
-                d.descuadre,
-                j.raw_json -> 'current_total_price_set' -> 'presentment_money' ->> 'amount' AS _current_price_presentment,
-                j.raw_json -> 'current_total_price_set' -> 'shop_money' ->> 'amount' AS _current_price_shop,
-                j.raw_json -> 'current_total_tax_set' -> 'presentment_money' ->> 'amount' AS _current_tax_presentment,
-                j.raw_json -> 'current_total_tax_set' -> 'shop_money' ->> 'amount' AS _current_tax_shop
-            FROM {detalle_table} d
-            LEFT JOIN shopify.ventas_{period_yyyymm} v
-              ON d.order_name = v.order_name
-             AND d.payment_currency = v.payment_currency
-            LEFT JOIN shopify.json_orders j
-              ON j.raw_json ->> 'name' = d.order_name
-            WHERE d.is_hannun_tag = 0
-              AND (
-                    COALESCE(d.is_rever_tag, 0) = 0
-                    OR COALESCE(d.payment_gateway_names, '[]'::jsonb)
-                       @> '["shopify_payments"]'::jsonb
-                  )
-              AND (
-                    (%s = 'SL' AND COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US'))
-                    OR (%s <> 'SL' AND d.payment_currency = %s)
-                  )
-            ORDER BY d.shipping_country_code, v.order_date, d.order_name
-            """,
-            (company_code.upper(), company_code.upper(), currency),
-        ).fetchall()
-
-        detalle_rows = [dict(row) for row in detalle_rows]
-        if company_code.upper() == "SL":
-            detalle_rows = [_convert_sl_detail_to_eur(row) for row in detalle_rows]
+        frozen = get_period_freeze(
+            conn,
+            company_code=company_code.upper(),
+            period_yyyymm=period_yyyymm,
+        )
+        if frozen and company_code.upper() == "SL":
+            # A frozen month is deliberately independent of live Shopify and
+            # VAT tables. This is the canonical detail for every sales report.
+            detalle_rows = [dict(row) for row in frozen["detail_rows"]]
             resumen_rows = _build_summary_from_detail(detalle_rows)
+        else:
+            _validate_refund_tax_sync(conn, period_yyyymm)
+
+            resumen_rows = conn.execute(
+                f"""
+                SELECT *
+                FROM {resumen_table}
+                WHERE payment_currency = %s
+                  AND is_hannun_tag = 0
+                ORDER BY country, tax_rate_teorical
+                """,
+                (currency,),
+            ).fetchall()
+
+            detalle_rows = conn.execute(
+                f"""
+                SELECT
+                    d.order_month_yyyymm,
+                    v.order_date,
+                    d.order_name,
+                    d.shipping_country_code,
+                    d.shipping_state_code,
+                    d.payment_gateway_names,
+                    d.is_rever_tag,
+                    d.is_hannun_tag,
+                    d.is_mirakl_tag,
+                    d.standard_rate,
+                    d.payment_currency,
+                    d.tax_rate,
+                    d.shown_tax_presentment,
+                    d.shown_gross_presentment,
+                    d.shown_net_presentment,
+                    d.tags,
+                    d.descuadre,
+                    j.raw_json -> 'current_total_price_set' -> 'presentment_money' ->> 'amount' AS _current_price_presentment,
+                    j.raw_json -> 'current_total_price_set' -> 'shop_money' ->> 'amount' AS _current_price_shop,
+                    j.raw_json -> 'current_total_tax_set' -> 'presentment_money' ->> 'amount' AS _current_tax_presentment,
+                    j.raw_json -> 'current_total_tax_set' -> 'shop_money' ->> 'amount' AS _current_tax_shop
+                FROM {detalle_table} d
+                LEFT JOIN shopify.ventas_{period_yyyymm} v
+                  ON d.order_name = v.order_name
+                 AND d.payment_currency = v.payment_currency
+                LEFT JOIN shopify.json_orders j
+                  ON j.raw_json ->> 'name' = d.order_name
+                WHERE d.is_hannun_tag = 0
+                  AND (
+                        COALESCE(d.is_rever_tag, 0) = 0
+                        OR COALESCE(d.payment_gateway_names, '[]'::jsonb)
+                           @> '["shopify_payments"]'::jsonb
+                      )
+                  AND (
+                        (%s = 'SL' AND COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US'))
+                        OR (%s <> 'SL' AND d.payment_currency = %s)
+                      )
+                ORDER BY d.shipping_country_code, v.order_date, d.order_name
+                """,
+                (company_code.upper(), company_code.upper(), currency),
+            ).fetchall()
+
+            detalle_rows = [dict(row) for row in detalle_rows]
+            if company_code.upper() == "SL":
+                detalle_rows = [_convert_sl_detail_to_eur(row) for row in detalle_rows]
+                resumen_rows = _build_summary_from_detail(detalle_rows)
 
         fees_by_order: dict[str, Decimal] = {}
         monthly_total_fee: Decimal = Decimal("0")

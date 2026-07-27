@@ -498,6 +498,20 @@ class GestoriaSyncOut(BaseModel):
     drive_file_url: str
 
 
+class SalesPeriodFreezeIn(BaseModel):
+    company_code: str = "SL"
+    period_yyyymm: str
+    frozen_by: str = "system"
+
+
+class SalesPeriodFreezeOut(BaseModel):
+    company_code: str
+    period_yyyymm: str
+    source_hash: str
+    frozen_at: str
+    totals: dict[str, object]
+
+
 class HourlyStepResult(BaseModel):
     step: str
     status: str          # "ok" | "error"

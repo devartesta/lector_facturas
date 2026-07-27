@@ -7,7 +7,13 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 import lector_facturas.fx_rates as fx_rates
-from lector_facturas.pyg_sl_workbook import PygSlDataBundle, ProviderCatalogRow, StageRow, build_pyg_sl_workbook
+from lector_facturas.pyg_sl_workbook import (
+    PygSlDataBundle,
+    ProviderCatalogRow,
+    StageRow,
+    _collect_sl_shopify_sales_rows,
+    build_pyg_sl_workbook,
+)
 
 
 ECB_SAMPLE_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -41,12 +47,43 @@ class _FakeResponse:
         return ECB_SAMPLE_XML
 
 
+class _FakeSalesConnection:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def execute(self, query: str, params: dict | None = None):
+        self.queries.append(query)
+        result = _FakeSalesResult()
+        if "FROM pg_tables" in query:
+            result.rows = [{"tablename": "informe_vat_gestorias_detalle_202606"}]
+        return result
+
+
+class _FakeSalesResult:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def fetchall(self) -> list[dict]:
+        return self.rows
+
+
 def _find_row(ws, label: str, column: str = "C") -> int:
     for row in range(1, ws.max_row + 1):
         value = ws[f"{column}{row}"].value
         if isinstance(value, str) and value.replace("\u00A0", " ").strip() == label.strip():
             return row
     raise AssertionError(f"Label not found: {label}")
+
+
+def test_sl_sales_source_retains_rever_gateway_filter() -> None:
+    conn = _FakeSalesConnection()
+
+    assert _collect_sl_shopify_sales_rows(conn=conn, year=2026) == []
+
+    sql = "\n".join(conn.queries)
+    assert "finance.ventas_pyg" not in sql
+    assert "payment_gateway_names" in sql
+    assert "@> '[\"shopify_payments\"]'::jsonb" in sql
 
 
 def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Path) -> None:

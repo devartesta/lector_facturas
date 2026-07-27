@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover
     dict_row = None
 
 from lector_facturas.fx_rates import EcbFxService, FxRateAuditRow
+from lector_facturas.period_lock import frozen_periods
 
 
 COMPANY_CODE = "SL"
@@ -152,28 +153,6 @@ def _ordered_shopify_markets(rows: list[StageRow]) -> tuple[str, ...]:
     return tuple(ordered + extras) if "XX" not in seen else tuple(ordered[:-1] + extras + ["XX"])
 
 
-def _collect_sl_shopify_sales_rows_from_pyg(*, conn: Any, year: int) -> list[dict[str, Any]]:
-    """Read the normalized Shopify sales aggregates used by every PYG report."""
-    return conn.execute(
-        """
-        SELECT
-            order_month_yyyymm,
-            COALESCE(shipping_country_code, 'XX') AS shipping_country_code,
-            payment_currency,
-            SUM(net) AS amount_net
-        FROM finance.ventas_pyg
-        WHERE order_month_yyyymm LIKE %(period)s
-          AND COALESCE(shipping_country_code, 'XX') NOT IN ('GB', 'US')
-          AND COALESCE(is_hannun_tag, 0) = 0
-          AND COALESCE(is_choose_tag, 0) = 0
-          AND COALESCE(is_toasty_tag, 0) = 0
-        GROUP BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
-        ORDER BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'), payment_currency
-        """,
-        {"period": f"{year}%"},
-    ).fetchall()
-
-
 def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, Any]]:
     amount_currency_sql = """
         CASE
@@ -220,7 +199,12 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         {"pattern": r"^informe_vat_gestorias_detalle_[0-9]{6}$", "prefix": f"informe_vat_gestorias_detalle_{year}%"},
     ).fetchall()
     table_names = [str(row["tablename"]) for row in table_rows]
+    frozen = frozen_periods(conn, company_code=COMPANY_CODE, year=year)
+    frozen_rows = _frozen_sl_sales_rows(conn=conn, periods=frozen)
+    table_names = [name for name in table_names if name[-6:] not in frozen]
     if not table_names:
+        if frozen_rows:
+            return frozen_rows
         return conn.execute(
             f"""
             SELECT
@@ -266,7 +250,7 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         for table_name in table_names
     )
 
-    return conn.execute(
+    live_rows = conn.execute(
         f"""
         WITH sales_rows AS (
             {union_sql}
@@ -281,6 +265,70 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         ORDER BY order_month_yyyymm, shipping_country_code, payment_currency
         """
     ).fetchall()
+    return _merge_sl_sales_rows(live_rows, frozen_rows)
+
+
+def _frozen_sl_sales_rows(*, conn: Any, periods: set[str]) -> list[dict[str, Any]]:
+    """Read the canonical EUR sales captured when a period was closed."""
+    if not periods:
+        return []
+    rows = conn.execute(
+        """
+        SELECT period_yyyymm, detail_rows
+        FROM finance.sales_period_freezes
+        WHERE company_code = 'SL' AND period_yyyymm = ANY(%s)
+        ORDER BY period_yyyymm
+        """,
+        (list(periods),),
+    ).fetchall()
+    totals: dict[tuple[str, str, str], Decimal] = {}
+    for freeze in rows:
+        details = freeze["detail_rows"]
+        if isinstance(details, str):
+            import json
+            details = json.loads(details)
+        for row in details or []:
+            amount = _decimal(row.get("shown_net_presentment"))
+            if amount == 0:
+                continue
+            key = (
+                str(row.get("order_month_yyyymm") or freeze["period_yyyymm"]),
+                str(row.get("shipping_country_code") or "XX").upper(),
+                "EUR",
+            )
+            totals[key] = totals.get(key, Decimal("0")) + amount
+    return [
+        {
+            "order_month_yyyymm": period,
+            "shipping_country_code": country,
+            "payment_currency": currency,
+            "amount_net": amount,
+        }
+        for (period, country, currency), amount in sorted(totals.items())
+    ]
+
+
+def _merge_sl_sales_rows(
+    live_rows: list[dict[str, Any]],
+    frozen_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    totals: dict[tuple[str, str, str], Decimal] = {}
+    for row in (*live_rows, *frozen_rows):
+        key = (
+            str(row["order_month_yyyymm"]),
+            str(row["shipping_country_code"] or "XX").upper(),
+            str(row["payment_currency"] or "EUR").upper(),
+        )
+        totals[key] = totals.get(key, Decimal("0")) + _decimal(row["amount_net"])
+    return [
+        {
+            "order_month_yyyymm": period,
+            "shipping_country_code": country,
+            "payment_currency": currency,
+            "amount_net": amount,
+        }
+        for (period, country, currency), amount in sorted(totals.items())
+    ]
 
 
 def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBundle:
@@ -309,7 +357,10 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             """,
             {"period": f"{year}%"},
         ).fetchall()
-        sales = _collect_sl_shopify_sales_rows_from_pyg(conn=conn, year=year)
+        # Use the VAT detail as the canonical EU sales source. The aggregated
+        # finance.ventas_pyg table does not retain payment gateways, so it
+        # cannot distinguish Shopify Rever transactions from legacy Rever.
+        sales = _collect_sl_shopify_sales_rows(conn=conn, year=year)
         docs = conn.execute(
             """
             SELECT period_yyyymm, supplier_code, billed_company_name, division_invoice, document_type, currency_code, net_amount AS amount_net, invoice_number, drive_url, billing_period_end, invoice_date, parser_name
@@ -442,7 +493,7 @@ def collect_pyg_sl_data(*, year: int, database_url: str | None) -> PygSlDataBund
             continue
         if shipping_country_code in {"GB", "US"}:
             continue
-        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.ventas_pyg"))
+        shopify_rows.append(StageRow(yyyymm, COMPANY_CODE, _normalize_shopify_market(shipping_country_code), shipping_country_code or "XX", amount_net, currency, "finance.informe_vat_gestorias_detalle"))
     for row in _filter_periodified_documents(docs):
         supplier_code = str(row["supplier_code"])
         amount_net = _decimal(row["amount_net"])

@@ -1,0 +1,15 @@
+# Local exports, temporary investigations and generated workbooks are not
+# part of the API deployment context.
+tmp/
+tmp_*/
+data/
+output/
+outputs/
+*.json
+*.log
+*.xlsx
+*.pdf
+*.csv
+node_modules/
+.pytest_cache/
+__pycache__/
