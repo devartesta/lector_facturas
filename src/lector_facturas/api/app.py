@@ -5,6 +5,7 @@ import uuid
 from functools import lru_cache
 from datetime import UTC, datetime
 from io import BytesIO
+from threading import Lock
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -99,6 +100,7 @@ from lector_facturas.payment_fees import PayPalClient, PaymentFeeService, Shopif
 from lector_facturas.pyg_sync import sync_gestoria_to_drive, sync_payment_fee_detail_to_drive, sync_payment_reconciliation_to_drive, sync_pyg_consolidated_to_drive, sync_pyg_inc_to_drive, sync_pyg_ltd_to_drive, sync_pyg_sl_to_drive, sync_stock_detail_to_drive
 from lector_facturas.pyg_cell_detail import build_pyg_cell_detail
 from lector_facturas.pyg_snapshot import build_pyg_snapshot, month_window
+from lector_facturas.pyg_snapshot_cache import get_cached_pyg_snapshot
 from lector_facturas.review_notifications import (
     ProcessedInvoiceItem,
     build_nightly_review_digest_email,
@@ -107,6 +109,9 @@ from lector_facturas.review_notifications import (
 from lector_facturas.review_notifications import NightlyReviewDigest
 from lector_facturas.settings import AppSettings, load_settings
 from lector_facturas.period_lock import freeze_sales_period
+
+
+_STORE_INIT_LOCK = Lock()
 
 
 def create_app() -> FastAPI:
@@ -1755,11 +1760,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
         months = month_window(year=year, start_yyyymm=start_yyyymm or None, mode=mode)
         try:
-            snapshot = build_pyg_snapshot(
+            snapshot = get_cached_pyg_snapshot(
                 company=company,
                 months=months,
                 database_url=database_url,
                 settings=settings,
+                builder=build_pyg_snapshot,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1809,6 +1815,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="DATABASE_URL is not configured.")
         months = month_window(year=year, start_yyyymm=start_yyyymm or None, mode=mode)
         try:
+            snapshot = get_cached_pyg_snapshot(
+                company=company,
+                months=months,
+                database_url=database_url,
+                settings=settings,
+                builder=build_pyg_snapshot,
+            )
             detail = build_pyg_cell_detail(
                 company=company,
                 row_code=row_code,
@@ -1818,6 +1831,7 @@ def create_app() -> FastAPI:
                 months=months,
                 database_url=database_url,
                 settings=settings,
+                snapshot=snapshot,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1980,14 +1994,18 @@ def create_app() -> FastAPI:
 
 @lru_cache(maxsize=1)
 def get_store() -> ReviewStore:
-    storage_path_env = os.environ.get("LECTOR_FACTURAS_REVIEW_STORE")
-    finance_root_env = os.environ.get("FINANCE_ROOT")
-    database_url_env = os.environ.get("DATABASE_URL")
-    return ReviewStore(
-        storage_path=Path(storage_path_env) if storage_path_env else None,
-        finance_root=Path(finance_root_env) if finance_root_env else None,
-        database_url=database_url_env,
-    )
+    # functools.lru_cache does not prevent two concurrent first calls. The
+    # store performs DDL during construction, so serialize that one-time work
+    # to avoid PostgreSQL deadlocks when scheduled jobs start together.
+    with _STORE_INIT_LOCK:
+        storage_path_env = os.environ.get("LECTOR_FACTURAS_REVIEW_STORE")
+        finance_root_env = os.environ.get("FINANCE_ROOT")
+        database_url_env = os.environ.get("DATABASE_URL")
+        return ReviewStore(
+            storage_path=Path(storage_path_env) if storage_path_env else None,
+            finance_root=Path(finance_root_env) if finance_root_env else None,
+            database_url=database_url_env,
+        )
 
 
 @lru_cache(maxsize=1)

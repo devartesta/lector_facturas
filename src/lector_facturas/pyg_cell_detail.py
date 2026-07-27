@@ -82,8 +82,14 @@ def build_pyg_cell_detail(
     months: list[str],
     database_url: str,
     settings: AppSettings | None = None,
+    snapshot: PygSnapshot | None = None,
 ) -> PygCellDetail:
-    snapshot = build_pyg_snapshot(company=company, months=months, database_url=database_url, settings=settings)
+    snapshot = snapshot or build_pyg_snapshot(
+        company=company,
+        months=months,
+        database_url=database_url,
+        settings=settings,
+    )
     row_map = {row.code: row for row in snapshot.rows}
     row = row_map.get(row_code)
     if row is None:

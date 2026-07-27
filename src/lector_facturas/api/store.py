@@ -65,6 +65,7 @@ def _normalize_date_text(value: object) -> str | None:
 
 
 SCHEMA_NAME = "invoices"
+DB_SCHEMA_VERSION = 1
 COMPANY_CODES = {
     "ARTESTA STORE, S.L.": "SL",
     "ARTESTA STORES (UK) LTD": "LTD",
@@ -1237,7 +1238,28 @@ class ReviewStore:
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            # DDL on the review store must happen once per database, not once
+            # per web process. Multiple Railway workers initializing the same
+            # tables while a reporting query is running can deadlock in
+            # PostgreSQL. The advisory lock also coordinates separate workers.
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (73120419,))
             conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA_NAME}")
+            conn.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {SCHEMA_NAME}.schema_meta (
+                    schema_name TEXT PRIMARY KEY,
+                    schema_version INTEGER NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            schema_row = conn.execute(
+                f"SELECT schema_version FROM {SCHEMA_NAME}.schema_meta WHERE schema_name = %s",
+                ("review_store",),
+            ).fetchone()
+            if schema_row and int(schema_row[0]) >= DB_SCHEMA_VERSION:
+                conn.commit()
+                return
             conn.execute(self._suppliers_table_sql())
             conn.execute(self._documents_table_sql())
             conn.execute(self._review_items_table_sql())
@@ -1307,6 +1329,16 @@ class ReviewStore:
             if self._count_rows(conn, f"{SCHEMA_NAME}.review_items") == 0:
                 if self._legacy_review_items_exists(conn):
                     self._migrate_legacy_review_items(conn)
+            conn.execute(
+                f"""
+                INSERT INTO {SCHEMA_NAME}.schema_meta (schema_name, schema_version, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (schema_name) DO UPDATE SET
+                    schema_version = EXCLUDED.schema_version,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                ("review_store", DB_SCHEMA_VERSION),
+            )
             conn.commit()
 
     def _seed_suppliers(self, conn) -> None:

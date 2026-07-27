@@ -9,7 +9,7 @@ outputs/
 *.log
 *.xlsx
 *.pdf
-*.csv
+# Keep packaged CSV configuration under src/lector_facturas/config/.
 node_modules/
 .pytest_cache/
 __pycache__/
