@@ -183,6 +183,60 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json(), [])
         self.assertEqual(stub_store.calls[0]["supplier_codes"], ["JONDO", "TGI"])
 
+    def test_mark_payment_returns_only_updated_invoice_group(self) -> None:
+        from lector_facturas.api.app import get_store
+
+        class StubStore:
+            def __init__(self) -> None:
+                self.list_called = False
+
+            def mark_document_payment(self, **kwargs):
+                return kwargs["document_id"] == "doc-1"
+
+            def get_document_payment_report(self, document_id):
+                self.requested_id = document_id
+                return {
+                    "id": document_id,
+                    "company_code": "SL",
+                    "supplier_code": "OPENAI",
+                    "invoice_number": "INV-1",
+                    "invoice_date": date(2026, 4, 1),
+                    "period_yyyymm": "202604",
+                    "gross_amount": Decimal("12.00"),
+                    "net_amount": Decimal("10.00"),
+                    "currency_code": "EUR",
+                    "drive_url": "https://example.test/invoice",
+                    "payment_status": "paid",
+                    "payment_date": date(2026, 4, 15),
+                    "payment_method": "bank_transfer",
+                    "payment_amount": Decimal("12.00"),
+                    "payment_due_date": date(2026, 4, 30),
+                    "is_direct_debit": False,
+                    "document_type": "invoice",
+                }
+
+            def list_documents_for_payment_report(self, **kwargs):
+                self.list_called = True
+                raise AssertionError("a checkbox update must not load the full report")
+
+        stub_store = StubStore()
+        self.client.app.dependency_overrides[get_store] = lambda: stub_store
+
+        response = self.client.post(
+            "/documents/doc-1/payment",
+            json={
+                "payment_status": "paid",
+                "payment_date": "2026-04-15",
+                "payment_method": "bank_transfer",
+                "payment_amount": "12.00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["payment_status"], "paid")
+        self.assertEqual(stub_store.requested_id, "doc-1")
+        self.assertFalse(stub_store.list_called)
+
     def test_payment_status_for_jondo_is_normalized_as_paid(self) -> None:
         from lector_facturas.api.app import get_store
 

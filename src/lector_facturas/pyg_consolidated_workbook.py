@@ -17,6 +17,7 @@ from lector_facturas.fx_rates import EcbFxService, FxRateAuditRow
 from lector_facturas.pyg_inc_workbook import PygIncDataBundle, collect_pyg_inc_data
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, collect_pyg_ltd_data
 from lector_facturas.pyg_sl_workbook import PygSlDataBundle, collect_pyg_sl_data
+from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
 
 REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
@@ -60,9 +61,9 @@ def month_keys(year: int) -> list[str]:
 def collect_pyg_consolidated_data(*, year: int, database_url: str | None) -> ConsolidatedPygBundle:
     if not database_url:
         return ConsolidatedPygBundle(year=year, generated_at=datetime.now(UTC))
-    sl = collect_pyg_sl_data(year=year, database_url=database_url)
-    ltd = collect_pyg_ltd_data(year=year, database_url=database_url)
-    inc = collect_pyg_inc_data(year=year, database_url=database_url)
+    sl = get_cached_pyg_bundle(company="sl", year=year, database_url=database_url, builder=collect_pyg_sl_data)
+    ltd = get_cached_pyg_bundle(company="ltd", year=year, database_url=database_url, builder=collect_pyg_ltd_data)
+    inc = get_cached_pyg_bundle(company="inc", year=year, database_url=database_url, builder=collect_pyg_inc_data)
     return ConsolidatedPygBundle(year=year, generated_at=datetime.now(UTC), sl_bundle=sl, ltd_bundle=ltd, inc_bundle=inc)
 
 

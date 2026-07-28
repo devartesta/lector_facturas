@@ -1069,8 +1069,7 @@ def create_app() -> FastAPI:
         )
         if not updated:
             raise HTTPException(status_code=404, detail="Document not found")
-        rows = store.list_documents_for_payment_report()
-        row = next((r for r in rows if r["id"] == document_id), None)
+        row = store.get_document_payment_report(document_id)
         if not row:
             raise HTTPException(status_code=404, detail="Document not found after update")
         return _to_payment_out(row)

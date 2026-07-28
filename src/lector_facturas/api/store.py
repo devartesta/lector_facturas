@@ -65,7 +65,7 @@ def _normalize_date_text(value: object) -> str | None:
 
 
 SCHEMA_NAME = "invoices"
-DB_SCHEMA_VERSION = 1
+DB_SCHEMA_VERSION = 2
 COMPANY_CODES = {
     "ARTESTA STORE, S.L.": "SL",
     "ARTESTA STORES (UK) LTD": "LTD",
@@ -1307,6 +1307,7 @@ class ReviewStore:
             conn.execute(self._ingestion_queue_source_index_sql())
             conn.execute(self._review_items_status_index_sql())
             conn.execute(self._documents_period_index_sql())
+            conn.execute(self._documents_payment_group_index_sql())
             conn.execute(self._shopify_payout_transactions_unique_index_sql())
             conn.execute(self._shopify_payout_transactions_period_index_sql())
             conn.execute(self._paypal_transactions_raw_unique_index_sql())
@@ -2555,6 +2556,68 @@ class ReviewStore:
             ]
         return aggregated_rows
 
+    def get_document_payment_report(self, document_id: str) -> dict | None:
+        """Return the payment-report row for one invoice group.
+
+        The payment screen groups duplicate document rows by invoice number. A
+        single checkbox update only needs that group, not a full report scan.
+        """
+        if not self.database_url:
+            return None
+
+        query = f"""
+            WITH target AS (
+                SELECT company_code, supplier_code, invoice_number,
+                       currency_code, document_type
+                FROM {SCHEMA_NAME}.documents
+                WHERE id = %s
+                  AND document_type IN ('invoice', 'credit_note')
+            )
+            SELECT
+                d.id, d.company_code, d.supplier_code, d.invoice_number,
+                d.invoice_date, d.period_yyyymm, d.gross_amount, d.net_amount,
+                d.currency_code, d.drive_url, d.payment_status, d.payment_date,
+                d.payment_method, d.payment_amount, d.payment_due_date,
+                s.is_direct_debit, d.document_type
+            FROM {SCHEMA_NAME}.documents d
+            JOIN target t
+              ON t.company_code = d.company_code
+             AND t.supplier_code = d.supplier_code
+             AND t.invoice_number = d.invoice_number
+             AND t.currency_code = d.currency_code
+             AND t.document_type = d.document_type
+            LEFT JOIN {SCHEMA_NAME}.suppliers s
+              ON s.id = d.supplier_id
+            WHERE d.document_type IN ('invoice', 'credit_note')
+        """
+        with self._connect() as conn:
+            rows = conn.execute(query, (document_id,)).fetchall()
+
+        raw_rows = [
+            {
+                "id": str(row[0]),
+                "company_code": str(row[1] or ""),
+                "supplier_code": str(row[2] or ""),
+                "invoice_number": str(row[3] or ""),
+                "invoice_date": row[4],
+                "period_yyyymm": str(row[5] or ""),
+                "gross_amount": row[6],
+                "net_amount": row[7],
+                "currency_code": str(row[8] or ""),
+                "drive_url": str(row[9] or ""),
+                "payment_status": str(row[10] or "pending"),
+                "payment_date": row[11],
+                "payment_method": str(row[12] or ""),
+                "payment_amount": row[13],
+                "payment_due_date": row[14],
+                "is_direct_debit": bool(row[15]) if row[15] is not None else False,
+                "document_type": str(row[16] or "invoice"),
+            }
+            for row in rows
+        ]
+        aggregated_rows = self._aggregate_payment_report_rows(raw_rows)
+        return aggregated_rows[0] if aggregated_rows else None
+
     def _aggregate_payment_report_rows(self, rows: list[dict]) -> list[dict]:
         """Collapse duplicate invoice rows for the payment report.
 
@@ -3216,6 +3279,15 @@ class ReviewStore:
         return f"""
             CREATE INDEX IF NOT EXISTS invoices_documents_company_period_idx
             ON {SCHEMA_NAME}.documents (company_code, period_yyyymm)
+        """
+
+    def _documents_payment_group_index_sql(self) -> str:
+        return f"""
+            CREATE INDEX IF NOT EXISTS invoices_documents_payment_group_idx
+            ON {SCHEMA_NAME}.documents (
+                company_code, supplier_code, invoice_number,
+                currency_code, document_type
+            )
         """
 
     def _shopify_payout_transactions_unique_index_sql(self) -> str:

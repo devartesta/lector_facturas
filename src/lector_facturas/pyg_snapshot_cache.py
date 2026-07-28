@@ -14,6 +14,7 @@ from typing import Callable
 
 from lector_facturas.pyg_snapshot import PygCompany, PygSnapshot
 from lector_facturas.settings import AppSettings
+from lector_facturas.pyg_data_cache import clear_pyg_data_cache
 
 
 @dataclass(frozen=True)
@@ -75,3 +76,4 @@ def get_cached_pyg_snapshot(
 def clear_pyg_snapshot_cache() -> None:
     with _LOCK:
         _CACHE.clear()
+    clear_pyg_data_cache()

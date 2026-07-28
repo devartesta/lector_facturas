@@ -45,6 +45,7 @@ from lector_facturas.pyg_sl_workbook import (
     marketplace_label,
 )
 from lector_facturas.pyg_sl_workbook import _provider_groups
+from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
 from lector_facturas.settings import AppSettings
 
 PygCompany = Literal["consolidado", "sl", "ltd", "inc"]
@@ -133,7 +134,12 @@ def _build_sl_snapshot(
     preloaded_bundles: list | None = None,
 ) -> PygSnapshot:
     bundles = preloaded_bundles or [
-        collect_pyg_sl_data(year=year, database_url=database_url)
+        get_cached_pyg_bundle(
+            company="sl",
+            year=year,
+            database_url=database_url,
+            builder=collect_pyg_sl_data,
+        )
         for year in _years_for_months(months)
     ]
     provider_rows = tuple(row for bundle in bundles for row in bundle.provider_catalog_rows)
@@ -498,7 +504,15 @@ def _build_simple_company_snapshot(
     technology_lines: tuple[str, ...],
     file_name: str,
 ) -> PygSnapshot:
-    bundles = [collect_bundle(year=year, database_url=database_url) for year in _years_for_months(months)]
+    bundles = [
+        get_cached_pyg_bundle(
+            company=company,
+            year=year,
+            database_url=database_url,
+            builder=collect_bundle,
+        )
+        for year in _years_for_months(months)
+    ]
     fx_service = EcbFxService()
     base_maps: dict[str, dict[str, Decimal]] = {}
     eur_maps: dict[str, dict[str, Decimal]] = {}
@@ -657,7 +671,12 @@ def _build_simple_company_snapshot(
 
 def _build_consolidated_snapshot(*, months: list[str], database_url: str, settings: AppSettings | None) -> PygSnapshot:
     sl_bundles = [
-        collect_pyg_sl_data(year=year, database_url=database_url)
+        get_cached_pyg_bundle(
+            company="sl",
+            year=year,
+            database_url=database_url,
+            builder=collect_pyg_sl_data,
+        )
         for year in _years_for_months(months)
     ]
     sl = _build_sl_snapshot(

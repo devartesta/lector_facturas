@@ -17,6 +17,7 @@ from lector_facturas.pyg_inc_workbook import (
     collect_pyg_inc_data,
 )
 from lector_facturas.pyg_inc_workbook import _map_expense_subcategory as map_inc_expense_subcategory
+from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
 from lector_facturas.pyg_ltd_workbook import (
     DEFAULT_ADMIN_LINES as LTD_DEFAULT_ADMIN_LINES,
     DEFAULT_LOGISTICS_LINES as LTD_DEFAULT_LOGISTICS_LINES,
@@ -172,7 +173,15 @@ def build_pyg_cell_detail(
 
 
 def _build_sl_items(*, row_code: str, selected_months: tuple[str, ...], database_url: str) -> tuple[PygCellDetailItem, ...]:
-    bundles = [collect_pyg_sl_data(year=year, database_url=database_url) for year in sorted({int(month[:4]) for month in selected_months})]
+    bundles = [
+        get_cached_pyg_bundle(
+            company="sl",
+            year=year,
+            database_url=database_url,
+            builder=collect_pyg_sl_data,
+        )
+        for year in sorted({int(month[:4]) for month in selected_months})
+    ]
     fx = EcbFxService()
     items: list[PygCellDetailItem] = []
 
@@ -245,7 +254,15 @@ def _build_simple_company_items(
     technology_lines: tuple[str, ...],
 ) -> tuple[PygCellDetailItem, ...]:
     del sales_markets, manufacturing_lines, logistics_lines, payment_fee_lines, shared_service_lines, administration_lines, technology_lines
-    bundles = [collect_bundle(year=year, database_url=database_url) for year in sorted({int(month[:4]) for month in selected_months})]
+    bundles = [
+        get_cached_pyg_bundle(
+            company=company,
+            year=year,
+            database_url=database_url,
+            builder=collect_bundle,
+        )
+        for year in sorted({int(month[:4]) for month in selected_months})
+    ]
     fx = EcbFxService()
     items: list[PygCellDetailItem] = []
 
@@ -301,7 +318,15 @@ def _build_consolidated_items(*, row_code: str, selected_months: tuple[str, ...]
 
     if row_code == "services":
         fx = EcbFxService()
-        bundles = [collect_pyg_sl_data(year=year, database_url=database_url) for year in sorted({int(month[:4]) for month in selected_months})]
+        bundles = [
+            get_cached_pyg_bundle(
+                company="sl",
+                year=year,
+                database_url=database_url,
+                builder=collect_pyg_sl_data,
+            )
+            for year in sorted({int(month[:4]) for month in selected_months})
+        ]
         for bundle in bundles:
             for row in bundle.service_rows:
                 if row.yyyymm not in selected_months:
