@@ -76,6 +76,45 @@ def ensure_period_lock_schema(conn: Any) -> None:
         $$
         """
     )
+    conn.execute(
+        """
+        CREATE OR REPLACE FUNCTION finance.reject_frozen_pyg_adjustment_change()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            -- Manual accounting corrections must opt in explicitly. No scheduled
+            -- importer or report regeneration sets this session flag.
+            IF current_setting('finance.manual_pyg_override', true) = 'on' THEN
+                RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+            END IF;
+
+            IF TG_OP IN ('UPDATE', 'DELETE') AND EXISTS (
+                SELECT 1
+                FROM finance.sales_period_freezes f
+                WHERE f.company_code = upper(OLD.company_code)
+                  AND f.period_yyyymm = OLD.period_yyyymm
+            ) THEN
+                RAISE EXCEPTION 'PYG adjustment %/% is frozen and immutable', upper(OLD.company_code), OLD.period_yyyymm
+                    USING ERRCODE = '55000';
+            END IF;
+
+            IF TG_OP IN ('INSERT', 'UPDATE') AND EXISTS (
+                SELECT 1
+                FROM finance.sales_period_freezes f
+                WHERE f.company_code = upper(NEW.company_code)
+                  AND f.period_yyyymm = NEW.period_yyyymm
+            ) THEN
+                RAISE EXCEPTION 'PYG adjustment %/% is frozen and immutable', upper(NEW.company_code), NEW.period_yyyymm
+                    USING ERRCODE = '55000';
+            END IF;
+
+            RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+        END;
+        $$
+        """
+    )
+    _install_pyg_adjustment_guard(conn)
 
 
 def is_period_frozen(conn: Any, *, company_code: str, period_yyyymm: str) -> bool:
@@ -213,6 +252,26 @@ def _install_guards(conn: Any, period_yyyymm: str) -> None:
             FOR EACH ROW EXECUTE FUNCTION finance.reject_frozen_sales_period_change()
             """
         )
+
+
+def _install_pyg_adjustment_guard(conn: Any) -> None:
+    """Protect manual PYG adjustments for already frozen sales periods."""
+    exists = conn.execute(
+        """
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'invoices' AND table_name = 'diferencias_divisas'
+        """
+    ).fetchone()
+    if not exists:
+        return
+    conn.execute("DROP TRIGGER IF EXISTS pyg_adjustment_freeze_guard ON invoices.diferencias_divisas")
+    conn.execute(
+        """
+        CREATE TRIGGER pyg_adjustment_freeze_guard
+        BEFORE INSERT OR UPDATE OR DELETE ON invoices.diferencias_divisas
+        FOR EACH ROW EXECUTE FUNCTION finance.reject_frozen_pyg_adjustment_change()
+        """
+    )
 
 
 def _jsonable(value: Any) -> Any:
