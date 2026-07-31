@@ -120,6 +120,30 @@ class GoogleDriveClient:
         response = self._request_json("GET", url)
         return list(response.get("files", []))
 
+    def search_files_by_name_prefix(self, *, prefix: str, limit: int = 250) -> list[dict[str, object]]:
+        """Return Drive files whose name contains a supplier prefix.
+
+        This is deliberately a narrow search helper for internal integrations.  It
+        does not expose arbitrary Drive queries through the API layer.
+        """
+        normalized_prefix = prefix.strip()
+        if not normalized_prefix:
+            return []
+        safe_prefix = normalized_prefix.replace("'", "\\'")
+        query = f"trashed = false and name contains '{safe_prefix}'"
+        page_size = max(1, min(limit, 1000))
+        url = (
+            "https://www.googleapis.com/drive/v3/files"
+            f"?q={quote(query, safe='')}"
+            "&fields=files(id,name,mimeType,webViewLink,createdTime)"
+            f"&pageSize={page_size}"
+            "&orderBy=createdTime%20desc"
+            "&supportsAllDrives=true"
+            "&includeItemsFromAllDrives=true"
+        )
+        response = self._request_json("GET", url)
+        return list(response.get("files", []))
+
     def upload_file(self, *, name: str, parent_id: str, content: bytes, mime_type: str = "application/pdf") -> dict[str, object]:
         boundary = "lector_facturas_boundary"
         metadata = json.dumps({"name": name, "parents": [parent_id]}).encode("utf-8")

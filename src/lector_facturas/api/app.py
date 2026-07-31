@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from functools import lru_cache
 from datetime import UTC, datetime
@@ -1567,6 +1568,57 @@ def create_app() -> FastAPI:
                 root_folder_id=settings.drive_root_folder_id,
                 error=str(exc),
             )
+
+    @app.get("/integrations/google-drive/frame-invoices")
+    def find_frame_invoices_in_drive(
+        factory: str = Query(..., min_length=2, max_length=40),
+        purchase_date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        settings: AppSettings = Depends(get_settings),
+    ) -> dict[str, object]:
+        """Find possible frame-purchase invoices without exposing Drive search."""
+        factory_key = factory.strip().casefold()
+        factory_prefixes = {
+            "pressing": ("PRESSING",),
+            "dct": ("DCT",),
+            "proco": ("PROCO",),
+            "tgi": ("TGI",),
+        }
+        prefixes = factory_prefixes.get(factory_key)
+        if not prefixes:
+            raise HTTPException(status_code=400, detail="Unsupported factory")
+        if not settings.google_oauth_ready:
+            raise HTTPException(status_code=400, detail="Google OAuth is not configured.")
+
+        try:
+            client = GoogleDriveClient(settings.to_drive_config())
+            results: list[dict[str, object]] = []
+            date_target = datetime.strptime(purchase_date, "%Y-%m-%d").date() if purchase_date else None
+            for prefix in prefixes:
+                for drive_file in client.search_files_by_name_prefix(prefix=prefix):
+                    name = str(drive_file.get("name", "")).strip()
+                    match = re.fullmatch(rf"{re.escape(prefix)}_(\d{{8}})_([^./]+)\.pdf", name, flags=re.IGNORECASE)
+                    if not match:
+                        continue
+                    invoice_date = datetime.strptime(match.group(1), "%Y%m%d").date()
+                    results.append({
+                        "id": str(drive_file.get("id", "")),
+                        "name": name,
+                        "supplier": factory.strip(),
+                        "invoice_number": match.group(2),
+                        "invoice_date": invoice_date.isoformat(),
+                        "drive_url": str(drive_file.get("webViewLink", "")),
+                        "distance_days": abs((invoice_date - date_target).days) if date_target else 0,
+                    })
+            candidates = [
+                candidate for candidate in results
+                if candidate["id"] and candidate["drive_url"]
+            ]
+            candidates.sort(key=lambda candidate: (int(candidate["distance_days"]), str(candidate["invoice_date"])), reverse=False)
+            return {"candidates": candidates[:24]}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid purchase date") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/integrations/google-drive/bootstrap", response_model=DriveBootstrapOut)
     def google_drive_bootstrap(
