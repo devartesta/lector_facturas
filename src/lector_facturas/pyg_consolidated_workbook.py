@@ -19,7 +19,6 @@ from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, collect_pyg_ltd_d
 from lector_facturas.pyg_sl_workbook import PygSlDataBundle, collect_pyg_sl_data
 from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
 from lector_facturas.pyg_daily_sales import (
-    SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL,
     SHOPIFY_DAILY_AVERAGE_LABEL,
     excel_daily_sales_formula,
 )
@@ -279,14 +278,12 @@ _ROWS: list[tuple[str, str, int, str]] = [
     ("turnover",                "TURNOVER",                                  0, "major"),
     ("product_sales",           "Product sales",                             1, "subtotal"),
     ("shopify",                 "Shopify",                                   2, "section"),
-    *[
-        item
-        for market in CONSOLIDATED_SHOPIFY_MARKETS
-        for item in (
-            (f"shopify_{market.lower()}", market, 3, "section"),
-            (f"shopify_daily_average_{market.lower()}", SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL, 4, "metric"),
-        )
-    ],
+    ("shopify_sl",              "SL",                                         3, "detail"),
+    ("shopify_sl_daily_average", "avg/day",                                  4, "metric"),
+    ("shopify_ltd",             "LTD",                                        3, "detail"),
+    ("shopify_ltd_daily_average", "avg/day",                                 4, "metric"),
+    ("shopify_inc",             "INC",                                        3, "detail"),
+    ("shopify_inc_daily_average", "avg/day",                                 4, "metric"),
     ("shopify_daily_average",   SHOPIFY_DAILY_AVERAGE_LABEL,                  3, "metric"),
     ("marketplaces",            "Marketplaces",                              2, "section"),
     ("rappels",                 "Rappels",                                   2, "section"),
@@ -384,15 +381,19 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     rm = row_map
 
     # ── Data rows (SUMIFS on data sheets with inline FX conversion) ─────────
-    country_rows: list[int] = []
-    for market in CONSOLIDATED_SHOPIFY_MARKETS:
-        market_key = market.lower()
-        country_row = rm[f"shopify_{market_key}"]
-        country_rows.append(country_row)
-        ws[f"{col}{country_row}"] = f"={sl(f'shopify_{market_key}')}+{ltd(f'shopify_{market_key}')}+{inc(f'shopify_{market_key}')}"
-        daily_row = rm[f"shopify_daily_average_{market_key}"]
-        ws[f"{col}{daily_row}"] = excel_daily_sales_formula(column=col, shopify_row=country_row)
-    ws[f"{col}{rm['shopify']}"]      = "=" + "+".join(f"{col}{row}" for row in country_rows)
+    company_rows = {
+        "shopify_sl": sl("shopify"),
+        "shopify_ltd": ltd("product_sales"),
+        "shopify_inc": inc("product_sales"),
+    }
+    for code, source_formula in company_rows.items():
+        row = rm[code]
+        ws[f"{col}{row}"] = f"={source_formula}"
+        daily_row = rm[f"{code}_daily_average"]
+        ws[f"{col}{daily_row}"] = excel_daily_sales_formula(column=col, shopify_row=row)
+    ws[f"{col}{rm['shopify']}"]      = (
+        f"={col}{rm['shopify_sl']}+{col}{rm['shopify_ltd']}+{col}{rm['shopify_inc']}"
+    )
     ws[f"{col}{rm['product_sales']}"] = (
         f"={col}{rm['shopify']}+{col}{rm['marketplaces']}"
         f"+{col}{rm['rappels']}+{col}{rm['supplies']}"
