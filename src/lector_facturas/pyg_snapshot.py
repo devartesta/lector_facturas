@@ -233,7 +233,7 @@ def _build_sl_snapshot(
                     _add_amount(eur_maps, code, yyyymm, amount)
 
     shopify_country_defs: list[_RowDef] = []
-    shopify_company_daily_formulas: dict[str, tuple[str, str]] = {}
+    shopify_country_formulas: dict[str, tuple[str, str]] = {}
     for market in bundles[0].shopify_markets:
         market_key = market.lower()
         country_code = f"shopify_{market_key}"
@@ -783,7 +783,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
             _set_amount(base_maps, key, month, sl_value + load(key, month, "ltd") + load(key, month, "inc"))
         _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
     shopify_company_defs: list[_RowDef] = []
-    shopify_country_formulas: dict[str, tuple[str, str]] = {}
+    shopify_company_daily_formulas: dict[str, tuple[str, str]] = {}
     for company_key, company_label in (("sl", "SL"), ("ltd", "Ltd"), ("inc", "Inc")):
         company_code = f"shopify_{company_key}"
         # The consolidated P&G is grouped by legal entity. Country detail stays
