@@ -18,7 +18,11 @@ from lector_facturas.pyg_inc_workbook import PygIncDataBundle, collect_pyg_inc_d
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, collect_pyg_ltd_data
 from lector_facturas.pyg_sl_workbook import PygSlDataBundle, collect_pyg_sl_data
 from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
-from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, excel_daily_sales_formula
+from lector_facturas.pyg_daily_sales import (
+    SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL,
+    SHOPIFY_DAILY_AVERAGE_LABEL,
+    excel_daily_sales_formula,
+)
 
 REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
@@ -40,6 +44,7 @@ BOLD = Font(bold=True)
 TITLE_FONT = Font(size=12, bold=True, color="FFFFFF")
 THIN_TOP_BORDER = Border(top=Side(style="thin", color="A6A6A6"))
 MEDIUM_TOP_BORDER = Border(top=Side(style="medium", color="7F7F7F"))
+CONSOLIDATED_SHOPIFY_MARKETS = ("ES", "FR", "DE", "IT", "AT", "BE", "NL", "PT", "CZ", "DK", "IE", "LU", "PL", "SE", "XX", "GB", "US")
 
 
 @dataclass(frozen=True)
@@ -110,6 +115,8 @@ def _aggregate_all(
         for row in b.shopify_rows:
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "shopify")] += c.amount_reporting; fx_audit.append(a)
+            market = (row.line_item or "XX").strip().upper()
+            sl_amounts[(row.yyyymm, f"shopify_{market.lower()}")] += c.amount_reporting
         for row in b.marketplace_rows:
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "marketplaces")] += c.amount_reporting; fx_audit.append(a)
@@ -149,6 +156,8 @@ def _aggregate_all(
         for row in b.sales_rows:
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             ltd_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
+            market = (row.line_item or "GB").strip().upper()
+            ltd_amounts[(row.yyyymm, f"shopify_{market.lower()}")] += c.amount_reporting
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "administration", "technology", "otros_gastos"}:
                 # shared_services excluded entirely from consolidated
@@ -172,6 +181,8 @@ def _aggregate_all(
         for row in b.sales_rows:
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency=RC, yyyymm=row.yyyymm)
             inc_amounts[(row.yyyymm, "product_sales")] += c.amount_reporting; fx_audit.append(a)
+            market = (row.line_item or "US").strip().upper()
+            inc_amounts[(row.yyyymm, f"shopify_{market.lower()}")] += c.amount_reporting
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "administration", "technology", "otros_gastos"}:
                 # shared_services excluded entirely from consolidated
@@ -268,6 +279,14 @@ _ROWS: list[tuple[str, str, int, str]] = [
     ("turnover",                "TURNOVER",                                  0, "major"),
     ("product_sales",           "Product sales",                             1, "subtotal"),
     ("shopify",                 "Shopify",                                   2, "section"),
+    *[
+        item
+        for market in CONSOLIDATED_SHOPIFY_MARKETS
+        for item in (
+            (f"shopify_{market.lower()}", market, 3, "section"),
+            (f"shopify_daily_average_{market.lower()}", SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL, 4, "metric"),
+        )
+    ],
     ("shopify_daily_average",   SHOPIFY_DAILY_AVERAGE_LABEL,                  3, "metric"),
     ("marketplaces",            "Marketplaces",                              2, "section"),
     ("rappels",                 "Rappels",                                   2, "section"),
@@ -365,7 +384,15 @@ def _write_col_formulas(ws, col: str, row_map: dict[str, int]) -> None:
     rm = row_map
 
     # ── Data rows (SUMIFS on data sheets with inline FX conversion) ─────────
-    ws[f"{col}{rm['shopify']}"]      = f"={sl('shopify')}+{ltd('product_sales')}+{inc('product_sales')}"
+    country_rows: list[int] = []
+    for market in CONSOLIDATED_SHOPIFY_MARKETS:
+        market_key = market.lower()
+        country_row = rm[f"shopify_{market_key}"]
+        country_rows.append(country_row)
+        ws[f"{col}{country_row}"] = f"={sl(f'shopify_{market_key}')}+{ltd(f'shopify_{market_key}')}+{inc(f'shopify_{market_key}')}"
+        daily_row = rm[f"shopify_daily_average_{market_key}"]
+        ws[f"{col}{daily_row}"] = excel_daily_sales_formula(column=col, shopify_row=country_row)
+    ws[f"{col}{rm['shopify']}"]      = "=" + "+".join(f"{col}{row}" for row in country_rows)
     ws[f"{col}{rm['product_sales']}"] = (
         f"={col}{rm['shopify']}+{col}{rm['marketplaces']}"
         f"+{col}{rm['rappels']}+{col}{rm['supplies']}"

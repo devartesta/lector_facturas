@@ -20,7 +20,11 @@ except ImportError:  # pragma: no cover
     dict_row = None
 
 from lector_facturas.fx_rates import EcbFxService, FxRateAuditRow
-from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, excel_daily_sales_formula
+from lector_facturas.pyg_daily_sales import (
+    SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL,
+    SHOPIFY_DAILY_AVERAGE_LABEL,
+    excel_daily_sales_formula,
+)
 
 
 COMPANY_CODE = "LTD"
@@ -503,10 +507,17 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     pos["turnover"] = row; ws[f"A{row}"] = "Turnover"; ws[f"A{row}"].font = BOLD; row += 1
     pos["product_sales"] = row; ws[f"A{row}"] = "  Product sales"; ws[f"A{row}"].font = BOLD; row += 1
     pos["shopify"] = row; ws[f"A{row}"] = "    Shopify"; ws[f"A{row}"].font = BOLD; row += 1
-    sales_rows = list(range(row, row + len(DEFAULT_SALES_MARKETS)))
-    for idx, market in enumerate(DEFAULT_SALES_MARKETS):
-        ws[f"A{row + idx}"] = f"      {market}"
-    row += len(sales_rows)
+    sales_rows: list[int] = []
+    daily_average_rows: list[int] = []
+    for market in DEFAULT_SALES_MARKETS:
+        market_row = row
+        daily_row = row + 1
+        sales_rows.append(market_row)
+        daily_average_rows.append(daily_row)
+        ws[f"A{market_row}"] = f"      {market}"
+        ws[f"A{daily_row}"] = f"        {SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL}"
+        ws[f"A{daily_row}"].font = INFO_FONT
+        row += 2
     pos["services"] = row; ws[f"A{row}"] = "  Services"; ws[f"A{row}"].font = BOLD; row += 1
     pos["otros_ingresos"] = row; ws[f"A{row}"] = "  Uncategorized income"; ws[f"A{row}"].font = BOLD; row += 2
 
@@ -566,6 +577,7 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         ws,
         pos=pos,
         sales_rows=sales_rows,
+        daily_average_rows=daily_average_rows,
         manufacturing_rows=manufacturing_rows,
         logistics_rows=logistics_rows,
         payment_fee_rows=payment_fee_rows,
@@ -601,6 +613,7 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
         ws,
         pos=pos,
         detail_rows=sales_rows + manufacturing_rows + logistics_rows + payment_fee_rows + shared_service_rows + administration_rows + technology_rows,
+        daily_average_rows=daily_average_rows,
     )
     _add_navigation_links(
         ws,
@@ -642,6 +655,7 @@ def _fill_ltd_formulas(
     *,
     pos: dict[str, int],
     sales_rows: list[int],
+    daily_average_rows: list[int],
     manufacturing_rows: list[int],
     logistics_rows: list[int],
     payment_fee_rows: list[int],
@@ -652,7 +666,9 @@ def _fill_ltd_formulas(
     for col in [get_column_letter(i) for i in range(4, 16)]:
         for row in sales_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-shopify-ltd\'!$I:$I,\'i-shopify-ltd\'!$A:$A,{col}$1,\'i-shopify-ltd\'!$C:$C,TRIM($A{row}))'
-        ws[f"{col}{pos['shopify']}"] = f"=SUM({col}{sales_rows[0]}:{col}{sales_rows[-1]})"
+        for sales_row, daily_row in zip(sales_rows, daily_average_rows):
+            ws[f"{col}{daily_row}"] = excel_daily_sales_formula(column=col, shopify_row=sales_row)
+        ws[f"{col}{pos['shopify']}"] = "=" + "+".join(f"{col}{row}" for row in sales_rows)
         ws[f"{col}{pos['product_sales']}"] = f"={col}{pos['shopify']}"
         ws[f"{col}{pos['services']}"] = "=0"
         ws[f"{col}{pos['turnover']}"] = f"={col}{pos['product_sales']}+{col}{pos['services']}+{col}{pos['otros_ingresos']}"
@@ -923,11 +939,12 @@ def _count_sheet_ltd(wb: Workbook, bundle: PygLtdDataBundle) -> None:
                 ws.cell(row=r, column=last_col_idx).fill = red_fill
 
 
-def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int]) -> None:
+def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int], daily_average_rows: list[int]) -> None:
     major_rows = {pos["turnover"], pos["expenses"], pos["gross_margin"], pos["contributive_margin"], pos["profit"]}
     subtotal_rows = {pos["product_sales"], pos["services"], pos["cogs"], pos["opex"]}
     section_rows = {pos["shopify"], pos["manufacturing"], pos["logistics"], pos["payment_fees"], pos["shared_services"], pos["administration"], pos["technology"], pos["otros_gastos"], pos["otros_ingresos"], pos["diferencias_divisas"]}
     percent_rows = {pos["manufacturing_pct"], pos["logistics_pct"], pos["payment_fees_pct"], pos["gross_margin_pct"], pos["contributive_margin_pct"], pos["profit_pct"]}
+    daily_average_rows = set(daily_average_rows)
 
     for row_idx in range(2, pos["profit_pct"] + 1):
         ws.row_dimensions[row_idx].height = ROW_HEIGHT
@@ -950,6 +967,11 @@ def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int]) -> Non
             elif row_idx in percent_rows:
                 if col_idx == 1:
                     cell.font = INFO_FONT
+            elif row_idx in daily_average_rows:
+                if col_idx == 1:
+                    cell.font = Font(size=8, italic=True, color="666666")
+                elif col_idx >= 4:
+                    cell.font = Font(size=8, italic=True, color="666666")
         if row_idx in detail_rows:
             ws.row_dimensions[row_idx].outlineLevel = 3
             ws.row_dimensions[row_idx].hidden = True

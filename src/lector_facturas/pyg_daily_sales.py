@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
 SHOPIFY_DAILY_AVERAGE_LABEL = "Shopify daily average"
+SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL = "avg/day"
 MINIMUM_ELAPSED_DAYS = Decimal("0.0416666666666667")
 
 

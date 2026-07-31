@@ -143,10 +143,12 @@ def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Pa
     assert ws["P2"].value == "Total"
     assert ws["A4"].value == "Turnover"
     assert ws["C7"].value == "ES"
-    assert ws["D6"].value == "=SUM(D7:D8)"
-    assert ws["C8"].value == "FR"
-    assert ws["C9"].value == "Marketplaces"
-    assert ws["D10"].value == '=SUMIFS(\'i-marketplaces-sl\'!$I:$I,\'i-marketplaces-sl\'!$A:$A,D$1,\'i-marketplaces-sl\'!$C:$C,"HANNUN")'
+    assert ws["D6"].value == "=D7+D9"
+    assert ws["C9"].value == "FR"
+    assert ws["C8"].value == "avg/day"
+    marketplaces_row = _find_row(ws, "Marketplaces", column="C")
+    hannun_row = _find_row(ws, "HANNUN", column="C")
+    assert ws[f"D{hannun_row}"].value == '=SUMIFS(\'i-marketplaces-sl\'!$I:$I,\'i-marketplaces-sl\'!$A:$A,D$1,\'i-marketplaces-sl\'!$C:$C,"HANNUN")'
     product_sales_row = _find_row(ws, "  Product sales", column="A")
     manufacturing_row = _find_row(ws, "Manufacturing (% sales)", column="C")
     logistics_row = _find_row(ws, "Logistics (% sales)", column="C")

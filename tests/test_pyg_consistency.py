@@ -398,7 +398,9 @@ class PygConsistencyTests(unittest.TestCase):
             workbook = load_workbook(output_path, data_only=False)
 
         ws = workbook["P&G-CONSOLIDADO"]
-        self.assertEqual(ws["D4"].value, "=D5+D11+D12")
+        services_row = next(row for row in range(1, ws.max_row + 1) if ws[f"A{row}"].value == "Services")
+        income_row = next(row for row in range(1, ws.max_row + 1) if ws[f"A{row}"].value == "Uncategorized income")
+        self.assertEqual(ws["D4"].value, f"=D5+D{services_row}+D{income_row}")
 
     def test_consolidated_workbook_aggregate_includes_frame_consumption_in_manufacturing(self) -> None:
         bundle = ConsolidatedPygBundle(

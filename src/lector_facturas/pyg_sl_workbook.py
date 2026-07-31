@@ -20,7 +20,11 @@ except ImportError:  # pragma: no cover
     dict_row = None
 
 from lector_facturas.fx_rates import EcbFxService, FxRateAuditRow
-from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, excel_daily_sales_formula
+from lector_facturas.pyg_daily_sales import (
+    SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL,
+    SHOPIFY_DAILY_AVERAGE_LABEL,
+    excel_daily_sales_formula,
+)
 from lector_facturas.period_lock import frozen_periods
 
 
@@ -970,10 +974,17 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     pos["turnover"] = row; ws[f"A{row}"] = "Turnover"; ws[f"A{row}"].font = BOLD; row += 1
     pos["product_sales"] = row; ws[f"B{row}"] = "Product sales"; ws[f"B{row}"].font = BOLD; row += 1
     pos["shopify_header"] = row; ws[f"C{row}"] = "Shopify"; ws[f"C{row}"].font = BOLD; row += 1
-    shopify_rows = list(range(row, row + len(bundle.shopify_markets)))
-    for idx, market in enumerate(bundle.shopify_markets):
-        ws[f"C{row + idx}"] = market
-    row += len(bundle.shopify_markets)
+    shopify_rows: list[int] = []
+    shopify_daily_rows: list[int] = []
+    for market in bundle.shopify_markets:
+        market_row = row
+        daily_row = row + 1
+        shopify_rows.append(market_row)
+        shopify_daily_rows.append(daily_row)
+        ws[f"C{market_row}"] = market
+        ws[f"C{daily_row}"] = SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL
+        ws[f"C{daily_row}"].font = INFO_FONT
+        row += 2
     pos["marketplaces_header"] = row; ws[f"C{row}"] = "Marketplaces"; ws[f"C{row}"].font = BOLD; row += 1
     marketplace_codes = DEFAULT_MARKETPLACE_CODES
     marketplace_rows = list(range(row, row + len(marketplace_codes)))
@@ -1090,6 +1101,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
         ws,
         pos=pos,
         shopify_rows=shopify_rows,
+        shopify_daily_rows=shopify_daily_rows,
         marketplace_rows=marketplace_rows,
         marketplace_codes=marketplace_codes,
         service_rows=service_rows,
@@ -1120,6 +1132,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
         ws,
         pos=pos,
         shopify_rows=shopify_rows,
+        shopify_daily_rows=shopify_daily_rows,
         marketplace_rows=marketplace_rows,
         service_rows=service_rows,
         manufacturing_rows=manufacturing_rows,
@@ -1358,6 +1371,7 @@ def _fill_month_formulas(
     *,
     pos: dict[str, int],
     shopify_rows: list[int],
+    shopify_daily_rows: list[int],
     marketplace_rows: list[int],
     marketplace_codes: list[str],
     service_rows: list[int],
@@ -1375,7 +1389,9 @@ def _fill_month_formulas(
     for col in [get_column_letter(i) for i in range(4, 16)]:
         for row in shopify_rows:
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-shopify-sl\'!$I:$I,\'i-shopify-sl\'!$A:$A,{col}$1,\'i-shopify-sl\'!$C:$C,$C{row})'
-        ws[f"{col}{pos['shopify_header']}"] = f"=SUM({col}{shopify_rows[0]}:{col}{shopify_rows[-1]})"
+        for sales_row, daily_row in zip(shopify_rows, shopify_daily_rows):
+            ws[f"{col}{daily_row}"] = excel_daily_sales_formula(column=col, shopify_row=sales_row)
+        ws[f"{col}{pos['shopify_header']}"] = "=" + "+".join(f"{col}{row}" for row in shopify_rows)
         for row, code in zip(marketplace_rows, marketplace_codes):
             ws[f"{col}{row}"] = f'=SUMIFS(\'i-marketplaces-sl\'!$I:$I,\'i-marketplaces-sl\'!$A:$A,{col}$1,\'i-marketplaces-sl\'!$C:$C,"{code}")'
         for row, sheet in (
@@ -1436,7 +1452,8 @@ def _fill_month_formulas(
         ws[f"{col}{pos['marketing_meta']}"] = f"=SUM({col}{marketing_meta_detail_rows[0]}:{col}{marketing_meta_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_google']}"] = f"=SUM({col}{marketing_google_detail_rows[0]}:{col}{marketing_google_detail_rows[-1]})"
         ws[f"{col}{pos['marketing_header']}"] = f"={col}{pos['marketing_meta']}+{col}{pos['marketing_google']}"
-        ws[f"{col}{pos['marketing_pct']}"] = f'=IFERROR(SUM({col}{shopify_rows[0]}:{col}{shopify_rows[-2]})/({col}{marketing_meta_detail_rows[0]}+{col}{marketing_google_detail_rows[0]}),0)'
+        shopify_total_for_ratio = "+".join(f"{col}{row}" for row in shopify_rows)
+        ws[f"{col}{pos['marketing_pct']}"] = f'=IFERROR(({shopify_total_for_ratio})/({col}{marketing_meta_detail_rows[0]}+{col}{marketing_google_detail_rows[0]}),0)'
         ws[f"{col}{pos['staff_header']}"] = f"=SUM({col}{staff_rows[0]}:{col}{staff_rows[-1]})"
         ws[f"{col}{pos['administration_header']}"] = "=" + "+".join(f"{col}{row}" for row in administration_rows)
         ws[f"{col}{pos['technology_header']}"] = f"=SUM({col}{technology_rows[0]}:{col}{technology_rows[-1]})"
@@ -1454,7 +1471,8 @@ def _fill_month_formulas(
     ws[f"P{pos['payment_fees_pct']}"]        = f'=IFERROR(P{pos["payment_fees_header"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['gross_margin_pct']}"]        = f'=IFERROR(P{pos["gross_margin"]}/P{pos["product_sales"]},0)'
     ws[f"P{pos['contributive_margin_pct']}"] = f'=IFERROR(P{pos["contributive_margin"]}/P{pos["product_sales"]},0)'
-    ws[f"P{pos['marketing_pct']}"]           = f'=IFERROR(SUM(P{shopify_rows[0]}:P{shopify_rows[-2]})/(P{marketing_meta_detail_rows[0]}+P{marketing_google_detail_rows[0]}),0)'
+    shopify_total_for_ratio = "+".join(f"P{row}" for row in shopify_rows)
+    ws[f"P{pos['marketing_pct']}"]           = f'=IFERROR(({shopify_total_for_ratio})/(P{marketing_meta_detail_rows[0]}+P{marketing_google_detail_rows[0]}),0)'
     ws[f"P{pos['profit_pct']}"]              = f'=IFERROR(P{pos["profit"]}/P{pos["product_sales"]},0)'
 
 
@@ -1807,6 +1825,7 @@ def _apply_layout(
     *,
     pos: dict[str, int],
     shopify_rows: list[int],
+    shopify_daily_rows: list[int],
     marketplace_rows: list[int],
     service_rows: list[int],
     manufacturing_rows: list[int],
@@ -1826,6 +1845,7 @@ def _apply_layout(
         pos["gross_margin_pct"], pos["contributive_margin_pct"], pos["profit_pct"],
     }
     ratio_rows = {pos["marketing_pct"]}
+    daily_average_rows = set(shopify_daily_rows)
     major_rows = {pos["turnover"], pos["expenses"], pos["gross_margin"], pos["contributive_margin"], pos["profit"]}
     subtotal_rows = {
         pos["product_sales"], pos["services_header"], pos["cogs"], pos["opex"],
@@ -1907,6 +1927,11 @@ def _apply_layout(
             for col in range(1, 18):
                 ws.cell(row=row, column=col).fill = PERCENT_ROW_FILL
             label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=2)
+        elif row in daily_average_rows:
+            label_cell.font = INFO_FONT
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=4)
+            for col in range(4, 18):
+                ws.cell(row=row, column=col).font = Font(size=8, italic=True, color="666666")
         elif row in detail_rows and ws.cell(row=row, column=1).value:
             ws.cell(row=row, column=1).alignment = Alignment(horizontal="left", vertical="center", indent=3)
             ws.cell(row=row, column=1).font = Font(size=9)

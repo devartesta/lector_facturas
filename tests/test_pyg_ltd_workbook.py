@@ -46,12 +46,15 @@ def test_build_pyg_ltd_workbook_creates_expected_sheets_and_formulas(tmp_path: P
     assert ws["P2"].value == "Total"
     assert ws["A4"].value == "Turnover"
     assert ws["A7"].value.strip() == "GB"
-    assert ws["D6"].value == "=SUM(D7:D7)"
-    assert ws["A14"].value.strip() == "ARTLINK"
-    assert ws["A15"].value.strip() == "JONDO"
-    assert ws["D14"].value == "=SUMIFS('g-expenses-ltd'!$K:$K,'g-expenses-ltd'!$A:$A,D$1,'g-expenses-ltd'!$D:$D,\"manufacturing\",'g-expenses-ltd'!$E:$E,TRIM($A14))"
-    assert "% Manufacturing / sales" in str(ws["A18"].value)
-    assert ws["D18"].value == '=IFERROR(D13/D5,0)'
+    assert ws["D6"].value == "=D7"
+    artlink_row = _find_row(ws, "ARTLINK")
+    jondo_row = _find_row(ws, "JONDO")
+    assert ws[f"A{artlink_row}"].value.strip() == "ARTLINK"
+    assert ws[f"A{jondo_row}"].value.strip() == "JONDO"
+    assert ws[f"D{artlink_row}"].value == f"=SUMIFS('g-expenses-ltd'!$K:$K,'g-expenses-ltd'!$A:$A,D$1,'g-expenses-ltd'!$D:$D,\"manufacturing\",'g-expenses-ltd'!$E:$E,TRIM($A{artlink_row}))"
+    manufacturing_pct_row = _find_row(ws, "% Manufacturing / sales")
+    manufacturing_row = _find_row(ws, "    Manufacturing")
+    assert ws[f"D{manufacturing_pct_row}"].value == f'=IFERROR(D{manufacturing_row}/D5,0)'
     royalties_row = _find_row(ws, "    Royalties")
     cogs_row = _find_row(ws, "  COGS")
     manufacturing_row = _find_row(ws, "    Manufacturing")

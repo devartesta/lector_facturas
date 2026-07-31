@@ -46,7 +46,11 @@ from lector_facturas.pyg_sl_workbook import (
 )
 from lector_facturas.pyg_sl_workbook import _provider_groups
 from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
-from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, daily_sales_divisor
+from lector_facturas.pyg_daily_sales import (
+    SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL,
+    SHOPIFY_DAILY_AVERAGE_LABEL,
+    daily_sales_divisor,
+)
 from lector_facturas.settings import AppSettings
 
 PygCompany = Literal["consolidado", "sl", "ltd", "inc"]
@@ -228,11 +232,25 @@ def _build_sl_snapshot(
                     _add_amount(base_maps, code, yyyymm, amount)
                     _add_amount(eur_maps, code, yyyymm, amount)
 
+    shopify_country_defs: list[_RowDef] = []
+    shopify_country_formulas: dict[str, tuple[str, str]] = {}
+    for market in bundles[0].shopify_markets:
+        market_key = market.lower()
+        country_code = f"shopify_{market_key}"
+        daily_code = f"shopify_daily_average_{market_key}"
+        shopify_country_defs.extend(
+            (
+                _RowDef(country_code, market, 3, "detail", "shopify", "detail", True),
+                _RowDef(daily_code, SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL, 4, "metric", country_code, "metric"),
+            )
+        )
+        shopify_country_formulas[daily_code] = ("daily_average", country_code)
+
     row_defs: list[_RowDef] = [
         _RowDef("turnover", "Turnover", 0, "major", None, "major", True),
         _RowDef("product_sales", "Product sales", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
-        *[_RowDef(f"shopify_{market.lower()}", market, 3, "detail", "shopify", "detail") for market in bundles[0].shopify_markets],
+        *shopify_country_defs,
         _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
@@ -310,6 +328,7 @@ def _build_sl_snapshot(
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            **shopify_country_formulas,
             "shopify_daily_average": ("daily_average", "shopify"),
             "marketplaces": ("sum_children",),
             "rappels": ("sum_children",),
@@ -592,11 +611,25 @@ def _build_simple_company_snapshot(
                 _add_amount(base_maps, "stock_final", yyyymm, amount)
                 _add_amount(eur_maps, "stock_final", yyyymm, _to_currency(fx_service, amount, reporting_currency, "EUR", yyyymm))
 
+    shopify_country_defs: list[_RowDef] = []
+    shopify_country_formulas: dict[str, tuple[str, str]] = {}
+    for market in sales_markets:
+        market_key = market.lower()
+        country_code = f"shopify_{market_key}"
+        daily_code = f"shopify_daily_average_{market_key}"
+        shopify_country_defs.extend(
+            (
+                _RowDef(country_code, market, 3, "detail", "shopify", "detail", True),
+                _RowDef(daily_code, SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL, 4, "metric", country_code, "metric"),
+            )
+        )
+        shopify_country_formulas[daily_code] = ("daily_average", country_code)
+
     row_defs = [
         _RowDef("turnover", "Turnover", 0, "major", None, "major", True),
         _RowDef("product_sales", "Product sales", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
-        *[_RowDef(f"shopify_{market.lower()}", market, 3, "detail", "shopify", "detail") for market in sales_markets],
+        *shopify_country_defs,
         _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("services", "Services", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("otros_ingresos_group", "Uncategorized income", 1, "section", "turnover", "section", True),
@@ -641,6 +674,7 @@ def _build_simple_company_snapshot(
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            **shopify_country_formulas,
             "shopify_daily_average": ("daily_average", "shopify"),
             "services": ("sum_children",),
             "otros_ingresos_group": ("sum_children",),
@@ -750,13 +784,41 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
     eur_maps = {key: dict(values) for key, values in base_maps.items()}
 
+    shopify_company_defs: list[_RowDef] = []
+    shopify_company_formulas: dict[str, tuple[str, ...]] = {}
+    shopify_country_formulas: dict[str, tuple[str, str]] = {}
+    for company_key, company_label in (("sl", "SL"), ("ltd", "Ltd"), ("inc", "Inc")):
+        company_code = f"shopify_{company_key}"
+        country_rows = [
+            row
+            for row in source_rows[company_key].values()
+            if row.parent_code == "shopify" and row.kind == "detail"
+        ]
+        if country_rows:
+            shopify_company_defs.append(_RowDef(company_code, company_label, 3, "section", "shopify", "section", True))
+            shopify_company_formulas[company_code] = ("sum_children",)
+        else:
+            shopify_company_defs.append(_RowDef(company_code, company_label, 3, "detail", "shopify", "detail"))
+        for source_row in country_rows:
+            country = source_row.code.removeprefix("shopify_")
+            country_code = f"{company_code}_{country}"
+            daily_code = f"{country_code}_daily_average"
+            shopify_company_defs.extend(
+                (
+                    _RowDef(country_code, source_row.label, 4, "detail", company_code, "detail", True),
+                    _RowDef(daily_code, SHOPIFY_COUNTRY_DAILY_AVERAGE_LABEL, 5, "metric", country_code, "metric"),
+                )
+            )
+            shopify_country_formulas[daily_code] = ("daily_average", country_code)
+            for month in months:
+                idx = sl.months.index(month)
+                _set_amount(base_maps, country_code, month, source_row.values_eur[idx])
+
     row_defs = [
         _RowDef("turnover", "TURNOVER", 0, "major", None, "major", True),
         _RowDef("product_sales", "Product sales", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
-        _RowDef("shopify_sl", "SL", 3, "detail", "shopify", "detail"),
-        _RowDef("shopify_ltd", "Ltd", 3, "detail", "shopify", "detail"),
-        _RowDef("shopify_inc", "Inc", 3, "detail", "shopify", "detail"),
+        *shopify_company_defs,
         _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
@@ -792,6 +854,8 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            **shopify_company_formulas,
+            **shopify_country_formulas,
             "shopify_daily_average": ("daily_average", "shopify"),
             "marketplaces": ("sum_children",),
             "supplies": ("sum_children",),
