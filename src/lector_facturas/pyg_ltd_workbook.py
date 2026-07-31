@@ -612,7 +612,7 @@ def _main_sheet(wb: Workbook, bundle: PygLtdDataBundle) -> None:
     _apply_ltd_layout(
         ws,
         pos=pos,
-        detail_rows=sales_rows + manufacturing_rows + logistics_rows + payment_fee_rows + shared_service_rows + administration_rows + technology_rows,
+        detail_rows=manufacturing_rows + logistics_rows + payment_fee_rows + shared_service_rows + administration_rows + technology_rows,
         daily_average_rows=daily_average_rows,
     )
     _add_navigation_links(
@@ -972,7 +972,10 @@ def _apply_ltd_layout(ws, *, pos: dict[str, int], detail_rows: list[int], daily_
                     cell.font = Font(size=8, italic=True, color="666666")
                 elif col_idx >= 4:
                     cell.font = Font(size=8, italic=True, color="666666")
-        if row_idx in detail_rows:
+        if row_idx in daily_average_rows:
+            ws.row_dimensions[row_idx].outlineLevel = 3
+            ws.row_dimensions[row_idx].hidden = True
+        elif row_idx in detail_rows:
             ws.row_dimensions[row_idx].outlineLevel = 3
             ws.row_dimensions[row_idx].hidden = True
         elif row_idx in section_rows:

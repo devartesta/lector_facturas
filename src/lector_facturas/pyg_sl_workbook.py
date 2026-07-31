@@ -1942,7 +1942,8 @@ def _apply_layout(
         if row in major_rows | subtotal_rows:
             ws[f"P{row}"].font = BOLD
 
-    _collapse_group(ws, shopify_rows, level=1)
+    # Keep country sales visible; the daily averages are supporting detail.
+    _collapse_group(ws, shopify_daily_rows, level=1)
     _collapse_group(ws, marketplace_rows, level=1)
     _collapse_group(ws, [pos["rappels_detail"]], level=1)
     _collapse_group(ws, [pos["supplies_detail"]], level=1)
