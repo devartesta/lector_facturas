@@ -782,8 +782,6 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
                 sl_value -= load("administration_bbvacnc", month, "sl")
             _set_amount(base_maps, key, month, sl_value + load(key, month, "ltd") + load(key, month, "inc"))
         _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
-    eur_maps = {key: dict(values) for key, values in base_maps.items()}
-
     shopify_company_defs: list[_RowDef] = []
     shopify_company_formulas: dict[str, tuple[str, ...]] = {}
     shopify_country_formulas: dict[str, tuple[str, str]] = {}
@@ -813,6 +811,8 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
             for month in months:
                 idx = sl.months.index(month)
                 _set_amount(base_maps, country_code, month, source_row.values_eur[idx])
+
+    eur_maps = {key: dict(values) for key, values in base_maps.items()}
 
     row_defs = [
         _RowDef("turnover", "TURNOVER", 0, "major", None, "major", True),
