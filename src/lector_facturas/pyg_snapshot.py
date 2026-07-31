@@ -46,6 +46,7 @@ from lector_facturas.pyg_sl_workbook import (
 )
 from lector_facturas.pyg_sl_workbook import _provider_groups
 from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
+from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, daily_sales_divisor
 from lector_facturas.settings import AppSettings
 
 PygCompany = Literal["consolidado", "sl", "ltd", "inc"]
@@ -232,6 +233,7 @@ def _build_sl_snapshot(
         _RowDef("product_sales", "Product sales", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"shopify_{market.lower()}", market, 3, "detail", "shopify", "detail") for market in bundles[0].shopify_markets],
+        _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
         _RowDef("rappels", "Rappels", 2, "section", "product_sales", "section"),
@@ -308,6 +310,7 @@ def _build_sl_snapshot(
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            "shopify_daily_average": ("daily_average", "shopify"),
             "marketplaces": ("sum_children",),
             "rappels": ("sum_children",),
             "supplies": ("sum_children",),
@@ -481,6 +484,12 @@ def _compute_values(
         numerator = _compute_values(formula[1], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
         denominator = _compute_values(formula[2], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
         cache[code] = tuple((numerator[idx] / denominator[idx]) if denominator[idx] else Decimal("0") for idx in range(len(months)))
+    elif op == "daily_average":
+        sales = _compute_values(formula[1], months, maps, child_map, row_kind_map, formulas, cache, (*stack, code))
+        cache[code] = tuple(
+            (sales[idx] / divisor) if (divisor := daily_sales_divisor(months[idx])) else Decimal("0")
+            for idx in range(len(months))
+        )
     else:
         cache[code] = tuple(maps.get(code, {}).get(month, Decimal("0")) for month in months)
     return cache[code]
@@ -588,6 +597,7 @@ def _build_simple_company_snapshot(
         _RowDef("product_sales", "Product sales", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("shopify", "Shopify", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"shopify_{market.lower()}", market, 3, "detail", "shopify", "detail") for market in sales_markets],
+        _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("services", "Services", 1, "subtotal", "turnover", "subtotal", True),
         _RowDef("otros_ingresos_group", "Uncategorized income", 1, "section", "turnover", "section", True),
         _RowDef("otros_ingresos", "Uncategorized income", 2, "detail", "otros_ingresos_group", "detail"),
@@ -631,6 +641,7 @@ def _build_simple_company_snapshot(
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            "shopify_daily_average": ("daily_average", "shopify"),
             "services": ("sum_children",),
             "otros_ingresos_group": ("sum_children",),
             "product_sales": ("sum_codes", ("shopify",)),
@@ -746,6 +757,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         _RowDef("shopify_sl", "SL", 3, "detail", "shopify", "detail"),
         _RowDef("shopify_ltd", "Ltd", 3, "detail", "shopify", "detail"),
         _RowDef("shopify_inc", "Inc", 3, "detail", "shopify", "detail"),
+        _RowDef("shopify_daily_average", SHOPIFY_DAILY_AVERAGE_LABEL, 3, "metric", "shopify", "metric"),
         _RowDef("marketplaces", "Marketplaces", 2, "section", "product_sales", "section", True),
         *[_RowDef(f"marketplace_{code.lower()}", marketplace_label(code), 3, "detail", "marketplaces", "detail") for code in DEFAULT_MARKETPLACE_CODES],
         _RowDef("rappels", "Rappels", 2, "section", "product_sales", "section"),
@@ -780,6 +792,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         eur_maps=eur_maps,
         formulas={
             "shopify": ("sum_children",),
+            "shopify_daily_average": ("daily_average", "shopify"),
             "marketplaces": ("sum_children",),
             "supplies": ("sum_children",),
             "product_sales": ("sum_codes", ("shopify", "marketplaces", "rappels", "supplies")),

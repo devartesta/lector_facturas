@@ -66,6 +66,9 @@ class _FakeSalesResult:
     def fetchall(self) -> list[dict]:
         return self.rows
 
+    def fetchone(self) -> dict | None:
+        return self.rows[0] if self.rows else None
+
 
 def _find_row(ws, label: str, column: str = "C") -> int:
     for row in range(1, ws.max_row + 1):

@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover
     dict_row = None
 
 from lector_facturas.fx_rates import EcbFxService, FxRateAuditRow
+from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, excel_daily_sales_formula
 from lector_facturas.period_lock import frozen_periods
 
 
@@ -949,7 +950,7 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
     ws["A2"] = f"P&G {COMPANY_CODE} {bundle.year}"
     ws.merge_cells("A2:C2")
     generated_at_local = bundle.generated_at.astimezone(DISPLAY_TIMEZONE) if bundle.generated_at.tzinfo else bundle.generated_at.replace(tzinfo=UTC).astimezone(DISPLAY_TIMEZONE)
-    ws["A3"] = f"Actualizado: {generated_at_local.strftime('%d/%m/%Y %H:%M')} h"
+    ws["A3"] = f"{SHOPIFY_DAILY_AVERAGE_LABEL} | Actualizado: {generated_at_local.strftime('%d/%m/%Y %H:%M')} h"
     ws.merge_cells("A3:C3")
     for row in (1, 2):
         for cell in ws[row]:
@@ -1112,15 +1113,9 @@ def _main_sheet(wb: Workbook, bundle: PygSlDataBundle) -> dict[str, int]:
             ws.cell(row=pos["diferencias_divisas"], column=idx).value = float(amount_dd)
     # Fila 3: facturación diaria = Product sales / días transcurridos del mes
     # Meses pasados: dividir por días del mes. Mes actual: dividir por días+horas transcurridos.
-    ps = pos["product_sales"]
+    shopify = pos["shopify_header"]
     for col in [get_column_letter(i) for i in range(4, 16)]:
-        d = f'DATE(VALUE(LEFT({col}$1,4)),VALUE(RIGHT({col}$1,2)),1)'
-        ws[f"{col}3"] = (
-            f'=IFERROR(IF({d}>TODAY(),"",'
-            f'IF(EOMONTH({d},0)<TODAY(),'
-            f'{col}{ps}/DAY(EOMONTH({d},0)),'
-            f'{col}{ps}/MAX(NOW()-{d},1/24))),"")'
-        )
+        ws[f"{col}3"] = excel_daily_sales_formula(column=col, shopify_row=shopify)
     _apply_layout(
         ws,
         pos=pos,

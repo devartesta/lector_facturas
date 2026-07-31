@@ -18,6 +18,7 @@ from lector_facturas.pyg_inc_workbook import PygIncDataBundle, collect_pyg_inc_d
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, collect_pyg_ltd_data
 from lector_facturas.pyg_sl_workbook import PygSlDataBundle, collect_pyg_sl_data
 from lector_facturas.pyg_data_cache import get_cached_pyg_bundle
+from lector_facturas.pyg_daily_sales import SHOPIFY_DAILY_AVERAGE_LABEL, excel_daily_sales_formula
 
 REPORTING_CURRENCY = "EUR"
 DISPLAY_TIMEZONE = ZoneInfo("Europe/Madrid")
@@ -262,11 +263,12 @@ def _write_fx_rates_sheet(wb: Workbook, rows: list[list[Any]]) -> None:
 # ── Main P&G sheet ─────────────────────────────────────────────────────────
 
 # P&G row definitions: (key, label, indent_level, row_type)
-# row_type: "major" | "subtotal" | "section" | "detail" | "percent" | "blank"
+# row_type: "major" | "subtotal" | "section" | "metric" | "detail" | "percent" | "blank"
 _ROWS: list[tuple[str, str, int, str]] = [
     ("turnover",                "TURNOVER",                                  0, "major"),
     ("product_sales",           "Product sales",                             1, "subtotal"),
     ("shopify",                 "Shopify",                                   2, "section"),
+    ("shopify_daily_average",   SHOPIFY_DAILY_AVERAGE_LABEL,                  3, "metric"),
     ("marketplaces",            "Marketplaces",                              2, "section"),
     ("rappels",                 "Rappels",                                   2, "section"),
     ("supplies",                "Supplies",                                  2, "section"),
@@ -316,7 +318,7 @@ def _build_main_sheet(wb: Workbook, bundle: ConsolidatedPygBundle) -> None:
     ws["P2"] = "Total"
 
     # Row 3: generated_at
-    ws["A3"] = f"Actualizado: {generated_at_local.strftime('%d/%m/%Y %H:%M')} h"
+    ws["A3"] = f"{SHOPIFY_DAILY_AVERAGE_LABEL} | Actualizado: {generated_at_local.strftime('%d/%m/%Y %H:%M')} h"
     ws.merge_cells("A3:C3")
 
     # Build row_map
@@ -331,6 +333,7 @@ def _build_main_sheet(wb: Workbook, bundle: ConsolidatedPygBundle) -> None:
     for col_idx in range(4, 16):
         col = get_column_letter(col_idx)
         _write_col_formulas(ws, col, row_map)
+        ws[f"{col}3"] = excel_daily_sales_formula(column=col, shopify_row=row_map["shopify"])
 
     # Total column P
     for key in row_map:
@@ -466,6 +469,9 @@ def _apply_main_styles(ws, row_map: dict[str, int]) -> None:
             _border_row(ws, rr, THIN_TOP_BORDER)
         elif rtype == "section":
             label_cell.font = Font(size=9)
+            label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=indent + 1)
+        elif rtype == "metric":
+            label_cell.font = Font(size=9, italic=True, color="666666")
             label_cell.alignment = Alignment(horizontal="left", vertical="center", indent=indent + 1)
 
         # Number format

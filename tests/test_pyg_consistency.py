@@ -13,6 +13,7 @@ from lector_facturas.fx_rates import EcbFxService
 from lector_facturas.pyg_consolidated_workbook import ConsolidatedPygBundle, _aggregate_all, build_pyg_consolidated_workbook
 from lector_facturas.pyg_inc_workbook import PygIncDataBundle, ProviderCatalogRow as IncProviderCatalogRow, _document_cost_amount as inc_document_cost_amount, _map_expense_subcategory as map_inc_expense_subcategory
 from lector_facturas.pyg_ltd_workbook import PygLtdDataBundle, _map_expense_subcategory as map_ltd_expense_subcategory
+from lector_facturas.pyg_daily_sales import daily_sales_divisor, excel_daily_sales_formula
 from lector_facturas.pyg_sl_workbook import (
     ExpenseRow,
     ProviderCatalogRow,
@@ -41,6 +42,14 @@ def _snapshot_row(code: str, amount: str, *, label: str | None = None) -> PygSna
 
 
 class PygConsistencyTests(unittest.TestCase):
+    def test_shopify_daily_average_uses_calendar_days_for_closed_months(self) -> None:
+        self.assertEqual(daily_sales_divisor("202602", now=datetime(2026, 7, 31, 12, 0, 0)), Decimal("28"))
+        self.assertEqual(daily_sales_divisor("202607", now=datetime(2026, 7, 31, 12, 0, 0)), Decimal("30.5"))
+        self.assertEqual(daily_sales_divisor("202608", now=datetime(2026, 7, 31, 12, 0, 0)), Decimal("0"))
+        formula = excel_daily_sales_formula(column="D", shopify_row=6)
+        self.assertIn("D6/DAY(EOMONTH", formula)
+        self.assertIn("D6/MAX(NOW()-DATE", formula)
+
     def test_sl_company_name_normalization_treats_punctuation_variants_as_same_company(self) -> None:
         self.assertEqual(_normalize_company_name("ARTESTA STORE, S.L."), _normalize_company_name("ARTESTA STORE S.L."))
 
@@ -389,7 +398,7 @@ class PygConsistencyTests(unittest.TestCase):
             workbook = load_workbook(output_path, data_only=False)
 
         ws = workbook["P&G-CONSOLIDADO"]
-        self.assertEqual(ws["D4"].value, "=D5+D10+D11")
+        self.assertEqual(ws["D4"].value, "=D5+D11+D12")
 
     def test_consolidated_workbook_aggregate_includes_frame_consumption_in_manufacturing(self) -> None:
         bundle = ConsolidatedPygBundle(
