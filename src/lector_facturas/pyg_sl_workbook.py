@@ -26,6 +26,7 @@ from lector_facturas.pyg_daily_sales import (
     excel_daily_sales_formula,
 )
 from lector_facturas.period_lock import frozen_periods
+from lector_facturas.sales_normalization import normalize_sl_sales_detail_row
 
 
 COMPANY_CODE = "SL"
@@ -233,9 +234,19 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         f"""
         SELECT
             d.order_month_yyyymm,
+            d.order_name,
             COALESCE(d.shipping_country_code, 'XX') AS shipping_country_code,
-            {amount_currency_sql} AS payment_currency,
-            {amount_net_sql} AS amount_net
+            d.standard_rate,
+            d.tax_rate,
+            d.shown_gross_presentment,
+            d.shown_tax_presentment,
+            d.shown_net_presentment,
+            d.payment_currency,
+            d.descuadre,
+            j.raw_json AS _raw_json,
+            v.same_month_refund_yyyymm AS _same_month_refund_yyyymm,
+            v.same_month_refund_amount_presentment AS _same_month_refund_amount_presentment,
+            v.gross_presentment_original AS _gross_presentment_original
         FROM finance.{table_name} d
         LEFT JOIN shopify.ventas_{table_name[-6:]} v
           ON d.order_name = v.order_name
@@ -255,21 +266,33 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         for table_name in table_names
     )
 
-    live_rows = conn.execute(
+    detail_rows = conn.execute(
         f"""
         WITH sales_rows AS (
             {union_sql}
         )
-        SELECT
-            order_month_yyyymm,
-            shipping_country_code,
-            payment_currency,
-            SUM(amount_net) AS amount_net
-        FROM sales_rows
-        GROUP BY order_month_yyyymm, shipping_country_code, payment_currency
-        ORDER BY order_month_yyyymm, shipping_country_code, payment_currency
+        SELECT * FROM sales_rows
+        ORDER BY order_month_yyyymm, shipping_country_code, order_name
         """
     ).fetchall()
+    totals: dict[tuple[str, str, str], Decimal] = {}
+    for detail_row in detail_rows:
+        normalized = normalize_sl_sales_detail_row(detail_row)
+        key = (
+            str(normalized["order_month_yyyymm"]),
+            str(normalized.get("shipping_country_code") or "XX").upper(),
+            "EUR",
+        )
+        totals[key] = totals.get(key, Decimal("0")) + _decimal(normalized["shown_net_presentment"])
+    live_rows = [
+        {
+            "order_month_yyyymm": period,
+            "shipping_country_code": country,
+            "payment_currency": currency,
+            "amount_net": amount,
+        }
+        for (period, country, currency), amount in sorted(totals.items())
+    ]
     return _merge_sl_sales_rows(live_rows, frozen_rows)
 
 

@@ -80,6 +80,7 @@ except ImportError:  # pragma: no cover
     dict_row = None  # type: ignore[assignment]
 
 from lector_facturas.period_lock import get_period_freeze
+from lector_facturas.sales_normalization import normalize_sl_sales_detail_row
 
 # ---------------------------------------------------------------------------
 # Styles (mirrors payment_reconciliation_workbook.py)
@@ -327,7 +328,12 @@ def collect_gestoria_data(
             detalle_rows = [dict(row) for row in frozen["detail_rows"]]
             resumen_rows = _build_summary_from_detail(detalle_rows)
         else:
-            _validate_refund_tax_sync(conn, period_yyyymm)
+            # SL rows are normalized from the underlying Shopify JSON below.
+            # The source partition can temporarily contain presentment-currency
+            # refunds, so validating that stale representation would block the
+            # self-healing report before normalization runs.
+            if company_code.upper() != "SL":
+                _validate_refund_tax_sync(conn, period_yyyymm)
 
             resumen_rows = conn.execute(
                 f"""
@@ -363,7 +369,11 @@ def collect_gestoria_data(
                     j.raw_json -> 'current_total_price_set' -> 'presentment_money' ->> 'amount' AS _current_price_presentment,
                     j.raw_json -> 'current_total_price_set' -> 'shop_money' ->> 'amount' AS _current_price_shop,
                     j.raw_json -> 'current_total_tax_set' -> 'presentment_money' ->> 'amount' AS _current_tax_presentment,
-                    j.raw_json -> 'current_total_tax_set' -> 'shop_money' ->> 'amount' AS _current_tax_shop
+                    j.raw_json -> 'current_total_tax_set' -> 'shop_money' ->> 'amount' AS _current_tax_shop,
+                    j.raw_json AS _raw_json,
+                    v.same_month_refund_yyyymm AS _same_month_refund_yyyymm,
+                    v.same_month_refund_amount_presentment AS _same_month_refund_amount_presentment,
+                    v.gross_presentment_original AS _gross_presentment_original
                 FROM {detalle_table} d
                 LEFT JOIN shopify.ventas_{period_yyyymm} v
                   ON d.order_name = v.order_name
@@ -387,7 +397,10 @@ def collect_gestoria_data(
 
             detalle_rows = [dict(row) for row in detalle_rows]
             if company_code.upper() == "SL":
-                detalle_rows = [_convert_sl_detail_to_eur(row) for row in detalle_rows]
+                detalle_rows = [
+                    normalize_sl_sales_detail_row(_convert_sl_detail_to_eur(row))
+                    for row in detalle_rows
+                ]
                 resumen_rows = _build_summary_from_detail(detalle_rows)
 
         fees_by_order: dict[str, Decimal] = {}

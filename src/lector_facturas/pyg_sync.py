@@ -687,6 +687,18 @@ def sync_gestoria_to_drive(
 
     from lector_facturas.gestoria_workbook import collect_gestoria_data, build_gestoria_workbook
 
+    if company_code.upper() == "SL" and not _is_sales_period_frozen(
+        database_url=database_url,
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+    ):
+        from lector_facturas.sales_period_repair import normalize_sl_sales_period_in_database
+
+        normalize_sl_sales_period_in_database(
+            database_url=database_url,
+            period_yyyymm=period_yyyymm,
+        )
+
     report = collect_gestoria_data(
         database_url=database_url,
         company_code=company_code,
