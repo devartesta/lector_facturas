@@ -19,6 +19,19 @@ def test_full_swedish_refund_uses_shop_money_eur() -> None:
         "_raw_json": {
             "currency": "EUR",
             "presentment_currency": "SEK",
+            "refunds": [
+                {
+                    "processed_at": "2026-07-31T11:51:12+02:00",
+                    "refund_line_items": [
+                        {
+                            "subtotal_set": {
+                                "shop_money": {"amount": "336.60"},
+                                "presentment_money": {"amount": "3736.00"},
+                            }
+                        }
+                    ],
+                }
+            ],
             "total_price_set": {
                 "shop_money": {"amount": "336.60"},
                 "presentment_money": {"amount": "3736.00"},
@@ -69,6 +82,47 @@ def test_foreign_refund_equal_to_presentment_tax_uses_shop_tax() -> None:
     assert result["shown_gross_presentment"] == Decimal("273.74")
     assert result["shown_tax_presentment"] == Decimal("51.19")
     assert result["shown_net_presentment"] == Decimal("222.55")
+
+
+def test_foreign_refund_prefers_refund_line_shop_money_over_ratio() -> None:
+    row = {
+        "order_month_yyyymm": "202607",
+        "shipping_country_code": "SE",
+        "standard_rate": Decimal("0.25"),
+        "tax_rate": Decimal("0.25"),
+        "shown_gross_presentment": Decimal("50.00"),
+        "shown_tax_presentment": Decimal("10.00"),
+        "shown_net_presentment": Decimal("40.00"),
+        "_same_month_refund_yyyymm": "202607",
+        "_same_month_refund_amount_presentment": Decimal("-50.00"),
+        "_gross_presentment_original": Decimal("100.00"),
+        "_raw_json": {
+            "currency": "EUR",
+            "presentment_currency": "SEK",
+            "refunds": [
+                {
+                    "processed_at": "2026-07-31T11:51:12+02:00",
+                    "refund_line_items": [
+                        {"subtotal_set": {"shop_money": {"amount": "10.00"}}}
+                    ],
+                }
+            ],
+            "total_price_set": {
+                "shop_money": {"amount": "100.00"},
+                "presentment_money": {"amount": "400.00"},
+            },
+            "total_tax_set": {
+                "shop_money": {"amount": "20.00"},
+                "presentment_money": {"amount": "80.00"},
+            },
+        },
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+
+    assert result["shown_gross_presentment"] == Decimal("90.00")
+    assert result["shown_tax_presentment"] == Decimal("18.00")
+    assert result["shown_net_presentment"] == Decimal("72.00")
 
 
 def test_polish_zero_vat_incident_derives_tax_from_tax_inclusive_gross() -> None:

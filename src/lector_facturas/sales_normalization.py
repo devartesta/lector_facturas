@@ -23,6 +23,29 @@ def _round_money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def _refund_line_items_shop_amount(raw: Mapping[str, Any], period: str) -> Decimal | None:
+    total = Decimal("0")
+    found = False
+    for refund in raw.get("refunds") or []:
+        if not isinstance(refund, Mapping):
+            continue
+        refund_date = str(refund.get("processed_at") or refund.get("created_at") or "")
+        if period and refund_date[:7].replace("-", "") != period:
+            continue
+        for line in refund.get("refund_line_items") or []:
+            if not isinstance(line, Mapping):
+                continue
+            subtotal_set = line.get("subtotal_set") or {}
+            if not isinstance(subtotal_set, Mapping):
+                continue
+            shop_money = subtotal_set.get("shop_money") or {}
+            if not isinstance(shop_money, Mapping) or shop_money.get("amount") in (None, ""):
+                continue
+            total += abs(_decimal(shop_money.get("amount")))
+            found = True
+    return _round_money(total) if found else None
+
+
 def _foreign_refund_in_shop_currency(row: Mapping[str, Any], raw: Mapping[str, Any]) -> Decimal | None:
     refund = abs(_decimal(row.get("_same_month_refund_amount_presentment")))
     if refund == 0:
@@ -32,6 +55,13 @@ def _foreign_refund_in_shop_currency(row: Mapping[str, Any], raw: Mapping[str, A
     presentment_currency = str(raw.get("presentment_currency") or shop_currency).upper()
     if not shop_currency or presentment_currency == shop_currency:
         return None
+
+    line_items_shop = _refund_line_items_shop_amount(
+        raw,
+        str(row.get("order_month_yyyymm") or ""),
+    )
+    if line_items_shop is not None:
+        return line_items_shop
 
     presentment_tax = _money_set(raw, "total_tax_set", "presentment_money")
     shop_tax = _money_set(raw, "total_tax_set", "shop_money")
