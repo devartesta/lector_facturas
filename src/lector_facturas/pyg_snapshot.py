@@ -698,7 +698,7 @@ def _build_simple_company_snapshot(
             "diferencias_divisas_group": ("sum_children",),
             "opex": ("sum_codes", ("shared_services", "administration", "technology", "otros_gastos_group")),
             "expenses": ("sum_codes", ("cogs", "opex")),
-            "profit": ("subtract_many", "turnover", ("cogs", "opex", "royalties", "diferencias_divisas_group")),
+            "profit": ("subtract_many", "turnover", ("cogs", "opex", "diferencias_divisas_group")),
             "profit_pct": ("ratio", "profit", "product_sales"),
         },
     )
