@@ -29,6 +29,12 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
     summary_table = _period_table("finance", "informe_vat_gestorias_resumen", period_yyyymm)
 
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
+        # Hourly reports and an on-demand PYG can overlap. Serialize repairs
+        # for the same month so both jobs cannot rebuild the same rows at once.
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))",
+            (f"normalize-sl-sales:{period_yyyymm}",),
+        )
         frozen = conn.execute(
             """
             SELECT 1 FROM finance.sales_period_freezes
