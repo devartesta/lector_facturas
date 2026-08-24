@@ -234,6 +234,9 @@ def freeze_sales_period(
             """,
             (company, period_yyyymm, frozen_by, source_hash, Jsonb(detail_rows), Jsonb(totals)),
         )
+        from lector_facturas.sales_period_repair import rebuild_frozen_ventas_pyg
+
+        rebuild_frozen_ventas_pyg(conn, period_yyyymm=period_yyyymm)
         _install_guards(conn, period_yyyymm)
         conn.commit()
 

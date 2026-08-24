@@ -19,6 +19,72 @@ def _period_table(schema: str, prefix: str, period_yyyymm: str) -> str:
     return f"{schema}.{prefix}_{period_yyyymm}"
 
 
+def rebuild_frozen_ventas_pyg(conn: Any, *, period_yyyymm: str) -> None:
+    """Mirror the immutable SL snapshot into ``finance.ventas_pyg``.
+
+    Frozen detail is already the final Shopify scope: marketplace-tagged
+    orders and non-Shopify Rever movements were resolved before closing.
+    Rebuilding from that JSON keeps direct SQL queries aligned with every
+    report without reopening the monthly source tables.
+    """
+    conn.execute("DELETE FROM finance.ventas_pyg WHERE order_month_yyyymm = %s", (period_yyyymm,))
+    conn.execute(
+        """
+        INSERT INTO finance.ventas_pyg (
+            order_month_yyyymm, shipping_country_code, payment_currency,
+            is_rever_tag, is_hannun_tag, is_mirakl_tag,
+            tax, gross, net, shipping_country_code_raw,
+            source_payment_currency, is_choose_tag, is_toasty_tag
+        )
+        SELECT
+            f.period_yyyymm,
+            COALESCE(NULLIF(d.shipping_country_code, ''), 'XX'),
+            COALESCE(NULLIF(d.payment_currency, ''), 'EUR'),
+            COALESCE(d.is_rever_tag, 0),
+            COALESCE(d.is_hannun_tag, 0),
+            COALESCE(d.is_mirakl_tag, 0),
+            SUM(COALESCE(d.shown_tax_presentment, 0)),
+            SUM(COALESCE(d.shown_gross_presentment, 0)),
+            SUM(COALESCE(d.shown_net_presentment, 0)),
+            NULL,
+            COALESCE(
+                NULLIF(d._source_payment_currency, ''),
+                NULLIF(d.payment_currency, ''),
+                'EUR'
+            ),
+            0,
+            0
+        FROM finance.sales_period_freezes f
+        CROSS JOIN LATERAL jsonb_to_recordset(f.detail_rows) AS d(
+            shipping_country_code text,
+            payment_currency text,
+            _source_payment_currency text,
+            is_rever_tag integer,
+            is_hannun_tag integer,
+            is_mirakl_tag integer,
+            shown_tax_presentment numeric,
+            shown_gross_presentment numeric,
+            shown_net_presentment numeric
+        )
+        WHERE f.company_code = 'SL'
+          AND f.period_yyyymm = %s
+        GROUP BY
+            f.period_yyyymm,
+            COALESCE(NULLIF(d.shipping_country_code, ''), 'XX'),
+            COALESCE(NULLIF(d.payment_currency, ''), 'EUR'),
+            COALESCE(d.is_rever_tag, 0),
+            COALESCE(d.is_hannun_tag, 0),
+            COALESCE(d.is_mirakl_tag, 0),
+            COALESCE(
+                NULLIF(d._source_payment_currency, ''),
+                NULLIF(d.payment_currency, ''),
+                'EUR'
+            )
+        """,
+        (period_yyyymm,),
+    )
+
+
 def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: str) -> dict[str, Any]:
     """Persist the shared SL normalization before reports are generated."""
     if psycopg is None:
@@ -37,13 +103,24 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
         )
         frozen = conn.execute(
             """
-            SELECT 1 FROM finance.sales_period_freezes
+            SELECT totals FROM finance.sales_period_freezes
             WHERE company_code = 'SL' AND period_yyyymm = %s
             """,
             (period_yyyymm,),
         ).fetchone()
         if frozen:
-            return {"period_yyyymm": period_yyyymm, "status": "frozen", "updated_orders": 0}
+            rebuild_frozen_ventas_pyg(conn, period_yyyymm=period_yyyymm)
+            conn.commit()
+            totals = frozen.get("totals") or {}
+            return {
+                "period_yyyymm": period_yyyymm,
+                "status": "frozen",
+                "updated_orders": 0,
+                "orders": int(totals.get("orders") or 0),
+                "gross": str(totals.get("gross_eur") or 0),
+                "tax": str(totals.get("tax_eur") or 0),
+                "net": str(totals.get("net_eur") or 0),
+            }
 
         rows = conn.execute(
             f"""
