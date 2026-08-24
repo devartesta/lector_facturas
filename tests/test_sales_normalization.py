@@ -103,7 +103,12 @@ def test_foreign_refund_prefers_refund_line_shop_money_over_ratio() -> None:
                 {
                     "processed_at": "2026-07-31T11:51:12+02:00",
                     "refund_line_items": [
-                        {"subtotal_set": {"shop_money": {"amount": "10.00"}}}
+                        {
+                            "subtotal_set": {
+                                "shop_money": {"amount": "10.00"},
+                                "presentment_money": {"amount": "50.00"},
+                            }
+                        }
                     ],
                 }
             ],
@@ -174,3 +179,83 @@ def test_eur_refund_recalculates_tax_from_remaining_gross() -> None:
     assert result["shown_gross_presentment"] == Decimal("26.20")
     assert result["shown_tax_presentment"] == Decimal("4.18")
     assert result["shown_net_presentment"] == Decimal("22.02")
+
+
+def test_foreign_sale_uses_original_shop_money_ratio() -> None:
+    row = {
+        "order_name": "AS-113402",
+        "order_month_yyyymm": "202608",
+        "shipping_country_code": "CZ",
+        "standard_rate": Decimal("0.21"),
+        "tax_rate": Decimal("0.21"),
+        "payment_currency": "CZK",
+        "shown_gross_presentment": Decimal("1483.00"),
+        "shown_tax_presentment": Decimal("257.43"),
+        "shown_net_presentment": Decimal("1225.57"),
+        "_raw_json": {
+            "currency": "EUR",
+            "presentment_currency": "CZK",
+            "total_price_set": {
+                "shop_money": {"amount": "61.18"},
+                "presentment_money": {"amount": "1483.00"},
+            },
+            "total_tax_set": {
+                "shop_money": {"amount": "10.62"},
+                "presentment_money": {"amount": "257.43"},
+            },
+        },
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+
+    assert result["shown_gross_presentment"] == Decimal("61.18")
+    assert result["shown_tax_presentment"] == Decimal("10.62")
+    assert result["shown_net_presentment"] == Decimal("50.56")
+    assert result["payment_currency"] == "EUR"
+    assert result["_source_payment_currency"] == "CZK"
+
+
+def test_later_month_foreign_refund_converts_the_monthly_movement() -> None:
+    row = {
+        "order_name": "AS-111185",
+        "order_month_yyyymm": "202608",
+        "shipping_country_code": "DK",
+        "standard_rate": Decimal("0.20"),
+        "tax_rate": Decimal("0.20"),
+        "payment_currency": "DKK",
+        "shown_gross_presentment": Decimal("-458.00"),
+        "shown_tax_presentment": Decimal("-91.60"),
+        "shown_net_presentment": Decimal("-366.40"),
+        "_same_month_refund_yyyymm": "202608",
+        "_same_month_refund_amount_presentment": None,
+        "_gross_presentment_original": Decimal("1984.00"),
+        "_raw_json": {
+            "currency": "EUR",
+            "presentment_currency": "DKK",
+            "total_price_set": {
+                "shop_money": {"amount": "265.42"},
+                "presentment_money": {"amount": "1984.00"},
+            },
+            "total_tax_set": {
+                "shop_money": {"amount": "53.08"},
+                "presentment_money": {"amount": "396.74"},
+            },
+            "current_total_price_set": {
+                "shop_money": {"amount": "204.15"},
+                "presentment_money": {"amount": "1526.00"},
+            },
+        },
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+
+    assert result["shown_gross_presentment"] == Decimal("-61.27")
+    assert result["shown_tax_presentment"] == Decimal("-12.26")
+    assert result["shown_net_presentment"] == Decimal("-49.01")
+    assert result["_gross_presentment_original"] == Decimal("265.42")
+
+    # Persisted rows are EUR on subsequent runs and must remain unchanged.
+    second = normalize_sl_sales_detail_row({**result, "_raw_json": row["_raw_json"]})
+    assert second["shown_gross_presentment"] == result["shown_gross_presentment"]
+    assert second["shown_tax_presentment"] == result["shown_tax_presentment"]
+    assert second["shown_net_presentment"] == result["shown_net_presentment"]

@@ -90,6 +90,7 @@ def sync_pyg_sl_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _normalize_sl_sales_year(database_url=database_url, year=year)
     _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("SL",))
 
     root = output_root or Path(__file__).resolve().parents[2]
@@ -235,6 +236,7 @@ def sync_pyg_consolidated_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+    _normalize_sl_sales_year(database_url=database_url, year=year)
     _rebuild_payment_fee_summaries(database_url=database_url, company_codes=("SL", "LTD", "INC"))
     _refresh_frame_stock_for_pyg_year(
         database_url=database_url,
@@ -485,6 +487,18 @@ def sync_payment_reconciliation_to_drive(
     database_url = _database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured.")
+
+    if company_code.upper() == "SL" and not _is_sales_period_frozen(
+        database_url=database_url,
+        company_code=company_code,
+        period_yyyymm=period_yyyymm,
+    ):
+        from lector_facturas.sales_period_repair import normalize_sl_sales_period_in_database
+
+        normalize_sl_sales_period_in_database(
+            database_url=database_url,
+            period_yyyymm=period_yyyymm,
+        )
 
     shopify_config = settings.to_shopify_config() if settings.shopify_ready else None
     report = build_reconciliation(
@@ -763,6 +777,40 @@ def sync_gestoria_to_drive(
         n_resumen_rows=len(report.resumen_rows),
         n_detalle_rows=len(report.detalle_rows),
     )
+
+
+def _normalize_sl_sales_year(*, database_url: str, year: int) -> None:
+    """Normalize every available live SL month before a yearly PYG is read."""
+    import psycopg
+
+    from lector_facturas.sales_period_repair import normalize_sl_sales_period_in_database
+
+    with psycopg.connect(database_url) as conn:
+        periods = [
+            str(row[0])
+            for row in conn.execute(
+                """
+                SELECT RIGHT(d.tablename, 6) AS period_yyyymm
+                FROM pg_tables d
+                WHERE d.schemaname = 'finance'
+                  AND d.tablename ~ %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM pg_tables v
+                      WHERE v.schemaname = 'shopify'
+                        AND v.tablename = 'ventas_' || RIGHT(d.tablename, 6)
+                  )
+                ORDER BY period_yyyymm
+                """,
+                (rf"^informe_vat_gestorias_detalle_{year}[0-9]{{2}}$",),
+            ).fetchall()
+        ]
+
+    for period in periods:
+        normalize_sl_sales_period_in_database(
+            database_url=database_url,
+            period_yyyymm=period,
+        )
 
 
 def _is_sales_period_frozen(*, database_url: str, company_code: str, period_yyyymm: str) -> bool:

@@ -50,7 +50,6 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
             FROM {detail_table} d
             JOIN {ventas_table} v
               ON v.order_name = d.order_name
-             AND v.payment_currency = d.payment_currency
             LEFT JOIN shopify.json_orders j
               ON j.raw_json ->> 'name' = d.order_name
             WHERE COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US')
@@ -67,12 +66,16 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                 Decimal(str(source["shown_tax_presentment"])),
                 Decimal(str(source["shown_net_presentment"])),
                 Decimal(str(source["tax_rate"] or 0)),
+                Decimal(str(source["descuadre"] or 0)),
+                str(source["payment_currency"] or "").upper(),
             )
             normalized_values = (
                 Decimal(str(normalized["shown_gross_presentment"])),
                 Decimal(str(normalized["shown_tax_presentment"])),
                 Decimal(str(normalized["shown_net_presentment"])),
                 Decimal(str(normalized["tax_rate"] or 0)),
+                Decimal(str(normalized["descuadre"] or 0)),
+                str(normalized["payment_currency"] or "").upper(),
             )
             if source_values != normalized_values:
                 changed.append(normalized)
@@ -84,6 +87,7 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                 row["shown_net_presentment"],
                 row["tax_rate"],
                 row["descuadre"],
+                row["payment_currency"],
                 row["order_name"],
             )
             conn.execute(
@@ -92,10 +96,19 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                 SET shown_gross_presentment = %s,
                     shown_tax_presentment = %s,
                     shown_net_presentment = %s,
-                    tax_rate = %s
+                    tax_rate = %s,
+                    payment_currency = %s,
+                    gross_presentment_original = %s,
+                    same_month_refund_amount_presentment = %s
                 WHERE order_name = %s
                 """,
-                values[:4] + values[5:],
+                values[:4]
+                + (
+                    values[5],
+                    row.get("_gross_presentment_original"),
+                    row.get("_same_month_refund_amount_presentment"),
+                    values[6],
+                ),
             )
             conn.execute(
                 f"""
@@ -104,7 +117,8 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                     shown_tax_presentment = %s,
                     shown_net_presentment = %s,
                     tax_rate = %s,
-                    descuadre = %s
+                    descuadre = %s,
+                    payment_currency = %s
                 WHERE order_name = %s
                 """,
                 values,
@@ -116,18 +130,18 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                     shown_tax_presentment = %s,
                     shown_net_presentment = %s,
                     tax_rate = %s,
-                    descuadre = %s
+                    descuadre = %s,
+                    payment_currency = %s
                 WHERE order_month_yyyymm = %s AND order_name = %s
                 """,
-                values[:5] + (period_yyyymm, row["order_name"]),
+                values[:6] + (period_yyyymm, row["order_name"]),
             )
 
         # Rebuild only the SL/EUR slice of the monthly summary.
         conn.execute(
             f"""
             DELETE FROM {summary_table}
-            WHERE payment_currency = 'EUR'
-              AND COALESCE(country, 'XX') NOT IN ('GB', 'US')
+            WHERE COALESCE(country, 'XX') NOT IN ('GB', 'US')
             """
         )
         conn.execute(
@@ -174,25 +188,53 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                 source_payment_currency, is_choose_tag, is_toasty_tag
             )
             SELECT
-                order_month_yyyymm,
-                COALESCE(shipping_country_code, 'XX'),
-                payment_currency,
-                is_rever_tag,
-                is_hannun_tag,
-                is_mirakl_tag,
-                SUM(shown_tax_presentment),
-                SUM(shown_gross_presentment),
-                SUM(shown_net_presentment),
+                d.order_month_yyyymm,
+                COALESCE(d.shipping_country_code, 'XX'),
+                d.payment_currency,
+                d.is_rever_tag,
+                d.is_hannun_tag,
+                d.is_mirakl_tag,
+                SUM(d.shown_tax_presentment),
+                SUM(d.shown_gross_presentment),
+                SUM(d.shown_net_presentment),
                 NULL,
-                NULL,
-                is_choose_tag,
-                is_toasty_tag
-            FROM {ventas_table}
-            GROUP BY order_month_yyyymm, COALESCE(shipping_country_code, 'XX'),
-                     payment_currency, is_rever_tag, is_hannun_tag, is_mirakl_tag,
-                     is_choose_tag, is_toasty_tag
+                COALESCE(NULLIF(j.raw_json ->> 'presentment_currency', ''), d.payment_currency),
+                v.is_choose_tag,
+                v.is_toasty_tag
+            FROM {detail_table} d
+            JOIN {ventas_table} v
+              ON v.order_name = d.order_name
+            LEFT JOIN shopify.json_orders j
+              ON j.raw_json ->> 'name' = d.order_name
+            WHERE COALESCE(d.is_rever_tag, 0) = 0
+               OR COALESCE(d.payment_gateway_names, '[]'::jsonb)
+                  @> '["shopify_payments"]'::jsonb
+            GROUP BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'),
+                     d.payment_currency, d.is_rever_tag, d.is_hannun_tag, d.is_mirakl_tag,
+                     v.is_choose_tag, v.is_toasty_tag,
+                     COALESCE(NULLIF(j.raw_json ->> 'presentment_currency', ''), d.payment_currency)
             """
         )
+
+        integrity = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) FILTER (WHERE d.payment_currency <> 'EUR') AS foreign_rows,
+                COUNT(*) FILTER (WHERE ABS(COALESCE(d.descuadre, 0)) > 0.01) AS unbalanced_rows
+            FROM {detail_table} d
+            WHERE COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US')
+            """
+        ).fetchone()
+        if int(integrity["foreign_rows"] or 0):
+            raise RuntimeError(
+                f"SL sales normalization left {integrity['foreign_rows']} foreign-currency "
+                f"row(s) in {period_yyyymm}"
+            )
+        if int(integrity["unbalanced_rows"] or 0):
+            raise RuntimeError(
+                f"SL sales normalization left {integrity['unbalanced_rows']} unbalanced "
+                f"row(s) in {period_yyyymm}"
+            )
 
         totals = conn.execute(
             f"""
@@ -202,7 +244,7 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                    SUM(d.shown_net_presentment) AS net
             FROM {detail_table} d
             LEFT JOIN {ventas_table} v
-              ON v.order_name = d.order_name AND v.payment_currency = d.payment_currency
+              ON v.order_name = d.order_name
             WHERE COALESCE(d.shipping_country_code, 'XX') NOT IN ('GB', 'US')
               AND COALESCE(d.is_hannun_tag, 0) = 0
               AND COALESCE(v.is_choose_tag, 0) = 0
@@ -214,6 +256,30 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
                   )
             """
         ).fetchone()
+        pyg_totals = conn.execute(
+            """
+            SELECT
+                SUM(gross) AS gross,
+                SUM(tax) AS tax,
+                SUM(net) AS net
+            FROM finance.ventas_pyg
+            WHERE order_month_yyyymm = %s
+              AND payment_currency = 'EUR'
+              AND COALESCE(shipping_country_code, 'XX') NOT IN ('GB', 'US')
+              AND COALESCE(is_hannun_tag, 0) = 0
+              AND COALESCE(is_choose_tag, 0) = 0
+              AND COALESCE(is_toasty_tag, 0) = 0
+            """,
+            (period_yyyymm,),
+        ).fetchone()
+        for field in ("gross", "tax", "net"):
+            canonical_value = Decimal(str(totals[field] or 0))
+            pyg_value = Decimal(str(pyg_totals[field] or 0))
+            if abs(canonical_value - pyg_value) > Decimal("0.01"):
+                raise RuntimeError(
+                    f"SL sales normalization mismatch in {period_yyyymm}: "
+                    f"detail {field}={canonical_value}, ventas_pyg {field}={pyg_value}"
+                )
         conn.commit()
 
     return {

@@ -250,7 +250,6 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
         FROM finance.{table_name} d
         LEFT JOIN shopify.ventas_{table_name[-6:]} v
           ON d.order_name = v.order_name
-         AND d.payment_currency = v.payment_currency
         LEFT JOIN shopify.json_orders j
           ON j.raw_json ->> 'name' = d.order_name
         WHERE COALESCE(d.is_hannun_tag, 0) = 0

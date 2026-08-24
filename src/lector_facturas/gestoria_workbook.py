@@ -206,49 +206,6 @@ def _validate_refund_tax_sync(conn: Any, period_yyyymm: str) -> None:
         )
 
 
-def _convert_sl_detail_to_eur(row: dict[str, Any]) -> dict[str, Any]:
-    """Convert non-EUR EU orders using the same shop-money ratios as the PYG."""
-    converted = dict(row)
-    if str(row.get("payment_currency") or "EUR").upper() == "EUR":
-        return converted
-
-    presentment_price = _dec(row.get("_current_price_presentment"))
-    shop_price = _dec(row.get("_current_price_shop"))
-    presentment_tax = _dec(row.get("_current_tax_presentment"))
-    shop_tax = _dec(row.get("_current_tax_shop"))
-
-    if presentment_price and shop_price:
-        converted["shown_gross_presentment"] = (
-            _dec(row["shown_gross_presentment"])
-            * shop_price
-            / presentment_price
-        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-    if presentment_tax and shop_tax:
-        converted["shown_tax_presentment"] = (
-            _dec(row["shown_tax_presentment"])
-            * shop_tax
-            / presentment_tax
-        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-    presentment_net = presentment_price - presentment_tax
-    shop_net = shop_price - shop_tax
-    if presentment_net and shop_net:
-        converted["shown_net_presentment"] = (
-            _dec(row["shown_net_presentment"])
-            * shop_net
-            / presentment_net
-        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-    converted["payment_currency"] = "EUR"
-    converted["descuadre"] = (
-        _dec(converted["shown_gross_presentment"])
-        - _dec(converted["shown_net_presentment"])
-        - _dec(converted["shown_tax_presentment"])
-    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return converted
-
-
 def _build_summary_from_detail(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Aggregate converted detail rows so Summary and Detail share one source."""
     from collections import defaultdict
@@ -377,7 +334,6 @@ def collect_gestoria_data(
                 FROM {detalle_table} d
                 LEFT JOIN shopify.ventas_{period_yyyymm} v
                   ON d.order_name = v.order_name
-                 AND d.payment_currency = v.payment_currency
                 LEFT JOIN shopify.json_orders j
                   ON j.raw_json ->> 'name' = d.order_name
                 WHERE d.is_hannun_tag = 0
@@ -398,7 +354,7 @@ def collect_gestoria_data(
             detalle_rows = [dict(row) for row in detalle_rows]
             if company_code.upper() == "SL":
                 detalle_rows = [
-                    normalize_sl_sales_detail_row(_convert_sl_detail_to_eur(row))
+                    normalize_sl_sales_detail_row(row)
                     for row in detalle_rows
                 ]
                 resumen_rows = _build_summary_from_detail(detalle_rows)
