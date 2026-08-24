@@ -25,10 +25,25 @@ except ImportError:  # pragma: no cover
 
 
 LOCK_TABLE = "finance.sales_period_freezes"
+SCHEMA_LOCK_NAME = "finance.sales_period_freezes.schema"
 
 
-def ensure_period_lock_schema(conn: Any) -> None:
-    """Create the lock store and the database-level guard function."""
+def _ensure_period_lock_store(conn: Any) -> None:
+    """Create the freeze table only when it is genuinely absent.
+
+    Reports call this helper on their read path. Avoiding repeated
+    ``CREATE OR REPLACE`` statements keeps concurrent PYG requests from
+    contending on PostgreSQL's system catalog.
+    """
+    existing = conn.execute("SELECT to_regclass(%s) AS table_name", (LOCK_TABLE,)).fetchone()
+    if existing and existing["table_name"]:
+        return
+
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (SCHEMA_LOCK_NAME,))
+    existing = conn.execute("SELECT to_regclass(%s) AS table_name", (LOCK_TABLE,)).fetchone()
+    if existing and existing["table_name"]:
+        return
+
     conn.execute("CREATE SCHEMA IF NOT EXISTS finance")
     conn.execute(
         """
@@ -45,6 +60,12 @@ def ensure_period_lock_schema(conn: Any) -> None:
         )
         """
     )
+
+
+def ensure_period_lock_schema(conn: Any) -> None:
+    """Create the lock store and the database-level guard function."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (SCHEMA_LOCK_NAME,))
+    _ensure_period_lock_store(conn)
     conn.execute(
         """
         CREATE OR REPLACE FUNCTION finance.reject_frozen_sales_period_change()
@@ -118,7 +139,7 @@ def ensure_period_lock_schema(conn: Any) -> None:
 
 
 def is_period_frozen(conn: Any, *, company_code: str, period_yyyymm: str) -> bool:
-    ensure_period_lock_schema(conn)
+    _ensure_period_lock_store(conn)
     row = conn.execute(
         f"""
         SELECT 1 FROM {LOCK_TABLE}
@@ -130,7 +151,7 @@ def is_period_frozen(conn: Any, *, company_code: str, period_yyyymm: str) -> boo
 
 
 def get_period_freeze(conn: Any, *, company_code: str, period_yyyymm: str) -> dict[str, Any] | None:
-    ensure_period_lock_schema(conn)
+    _ensure_period_lock_store(conn)
     row = conn.execute(
         f"""
         SELECT company_code, period_yyyymm, frozen_at, frozen_by, source_hash,
@@ -149,7 +170,7 @@ def get_period_freeze(conn: Any, *, company_code: str, period_yyyymm: str) -> di
 
 
 def frozen_periods(conn: Any, *, company_code: str, year: int) -> set[str]:
-    ensure_period_lock_schema(conn)
+    _ensure_period_lock_store(conn)
     rows = conn.execute(
         f"""
         SELECT period_yyyymm FROM {LOCK_TABLE}
