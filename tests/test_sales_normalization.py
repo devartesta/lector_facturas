@@ -259,3 +259,101 @@ def test_later_month_foreign_refund_converts_the_monthly_movement() -> None:
     assert second["shown_gross_presentment"] == result["shown_gross_presentment"]
     assert second["shown_tax_presentment"] == result["shown_tax_presentment"]
     assert second["shown_net_presentment"] == result["shown_net_presentment"]
+
+
+def test_same_month_foreign_refund_is_idempotent_from_current_shop_balance() -> None:
+    row = {
+        "order_name": "AS-113441",
+        "order_month_yyyymm": "202608",
+        "shipping_country_code": "DK",
+        "standard_rate": Decimal("0.20"),
+        "tax_rate": Decimal("0.20"),
+        "payment_currency": "DKK",
+        "shown_gross_presentment": Decimal("1144.00"),
+        "shown_tax_presentment": Decimal("228.78"),
+        "shown_net_presentment": Decimal("915.22"),
+        "_same_month_refund_yyyymm": "202608",
+        "_same_month_refund_amount_presentment": Decimal("-838.00"),
+        "_gross_presentment_original": Decimal("1982.00"),
+        "_raw_json": {
+            "created_at": "2026-08-01T18:10:42+02:00",
+            "currency": "EUR",
+            "presentment_currency": "DKK",
+            "total_price_set": {
+                "shop_money": {"amount": "265.26"},
+                "presentment_money": {"amount": "1982.00"},
+            },
+            "current_total_price_set": {
+                "shop_money": {"amount": "153.11"},
+                "presentment_money": {"amount": "1144.00"},
+            },
+            "total_tax_set": {
+                "shop_money": {"amount": "53.05"},
+                "presentment_money": {"amount": "396.38"},
+            },
+        },
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+    assert result["shown_gross_presentment"] == Decimal("153.11")
+    assert result["shown_tax_presentment"] == Decimal("30.62")
+    assert result["shown_net_presentment"] == Decimal("122.49")
+
+    second = normalize_sl_sales_detail_row({**result, "_raw_json": row["_raw_json"]})
+    assert second["shown_gross_presentment"] == result["shown_gross_presentment"]
+    assert second["shown_tax_presentment"] == result["shown_tax_presentment"]
+    assert second["shown_net_presentment"] == result["shown_net_presentment"]
+
+
+def test_manual_foreign_refund_uses_shop_money_adjustment() -> None:
+    row = {
+        "order_name": "AS-113594",
+        "order_month_yyyymm": "202608",
+        "shipping_country_code": "PL",
+        "standard_rate": Decimal("0.23"),
+        "tax_rate": Decimal("0.23"),
+        "payment_currency": "PLN",
+        "shown_gross_presentment": Decimal("677.60"),
+        "shown_tax_presentment": Decimal("126.72"),
+        "shown_net_presentment": Decimal("550.88"),
+        "_same_month_refund_yyyymm": "202608",
+        "_same_month_refund_amount_presentment": Decimal("-290.40"),
+        "_gross_presentment_original": Decimal("968.00"),
+        "_raw_json": {
+            "created_at": "2026-08-02T21:00:55+02:00",
+            "currency": "EUR",
+            "presentment_currency": "PLN",
+            "total_price_set": {
+                "shop_money": {"amount": "224.60"},
+                "presentment_money": {"amount": "968.00"},
+            },
+            "current_total_price_set": {
+                "shop_money": {"amount": "224.60"},
+                "presentment_money": {"amount": "968.00"},
+            },
+            "total_tax_set": {
+                "shop_money": {"amount": "42.00"},
+                "presentment_money": {"amount": "181.02"},
+            },
+            "refunds": [
+                {
+                    "processed_at": "2026-08-06T16:28:18+02:00",
+                    "order_adjustments": [
+                        {
+                            "kind": "refund_discrepancy",
+                            "amount_set": {"shop_money": {"amount": "-67.56"}},
+                        },
+                        {
+                            "kind": "refund_discrepancy",
+                            "amount_set": {"shop_money": {"amount": "67.56"}},
+                        },
+                    ],
+                }
+            ],
+        },
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+    assert result["shown_gross_presentment"] == Decimal("157.04")
+    assert result["shown_tax_presentment"] == Decimal("29.37")
+    assert result["shown_net_presentment"] == Decimal("127.67")

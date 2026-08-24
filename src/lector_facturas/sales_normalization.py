@@ -159,6 +159,79 @@ def _foreign_refund_in_shop_currency(row: Mapping[str, Any], raw: Mapping[str, A
     return None
 
 
+def _same_month_foreign_order_balance(
+    raw: Mapping[str, Any],
+    period: str,
+) -> Decimal | None:
+    """Return the EUR balance for an order created and refunded this month."""
+
+    created_period = str(raw.get("created_at") or "")[:7].replace("-", "")
+    shop_currency = str(raw.get("currency") or "").upper()
+    presentment_currency = str(raw.get("presentment_currency") or shop_currency).upper()
+    if created_period != period or not shop_currency or presentment_currency == shop_currency:
+        return None
+
+    original_shop = _money_set(raw, "total_price_set", "shop_money")
+    original_presentment = _money_set(raw, "total_price_set", "presentment_money")
+    if not original_shop or not original_presentment:
+        return None
+
+    current_price_set = raw.get("current_total_price_set") or {}
+    current_shop = _money_set(raw, "current_total_price_set", "shop_money")
+    current_presentment = _money_set(raw, "current_total_price_set", "presentment_money")
+    if current_price_set and (
+        current_shop != original_shop or current_presentment != original_presentment
+    ):
+        return _round_money(current_shop)
+
+    refund_shop = Decimal("0")
+    for refund in raw.get("refunds") or []:
+        if not isinstance(refund, Mapping):
+            continue
+        refund_date = str(refund.get("processed_at") or refund.get("created_at") or "")
+        if refund_date[:7].replace("-", "") != period:
+            continue
+
+        adjustment_candidates: list[Decimal] = []
+        for adjustment in refund.get("order_adjustments") or []:
+            if not isinstance(adjustment, Mapping):
+                continue
+            if str(adjustment.get("kind") or "") != "refund_discrepancy":
+                continue
+            amount_set = adjustment.get("amount_set") or {}
+            if not isinstance(amount_set, Mapping):
+                continue
+            shop_money = amount_set.get("shop_money") or {}
+            if isinstance(shop_money, Mapping) and shop_money.get("amount") not in (None, ""):
+                adjustment_candidates.append(abs(_decimal(shop_money.get("amount"))))
+        if adjustment_candidates:
+            # Shopify emits positive, negative and pending copies of the same
+            # discrepancy. They represent one refund, so take the largest.
+            refund_shop += max(adjustment_candidates)
+            continue
+
+        refund_presentment = Decimal("0")
+        for transaction in refund.get("transactions") or []:
+            if not isinstance(transaction, Mapping):
+                continue
+            transaction_date = str(transaction.get("processed_at") or "")
+            if transaction_date[:7].replace("-", "") != period:
+                continue
+            if str(transaction.get("kind") or "") != "refund":
+                continue
+            if str(transaction.get("status") or "") not in ("", "success"):
+                continue
+            if str(transaction.get("currency") or "").upper() != presentment_currency:
+                continue
+            refund_presentment += abs(_decimal(transaction.get("amount")))
+        if refund_presentment:
+            refund_shop += refund_presentment * original_shop / original_presentment
+
+    if refund_shop:
+        return _round_money(max(original_shop - refund_shop, Decimal("0")))
+    return None
+
+
 def normalize_sl_sales_detail_row(row: Mapping[str, Any]) -> dict[str, Any]:
     """Return one SL sales row normalized to accounting EUR.
 
@@ -193,7 +266,17 @@ def normalize_sl_sales_detail_row(row: Mapping[str, Any]) -> dict[str, Any]:
             )
 
     same_month_refund = str(normalized.get("_same_month_refund_yyyymm") or "") == period
-    if same_month_refund and source_currency == "EUR":
+    same_month_foreign_balance = (
+        _same_month_foreign_order_balance(raw, period) if same_month_refund else None
+    )
+    if same_month_foreign_balance is not None:
+        gross = same_month_foreign_balance
+        original_shop_gross = _money_set(raw, "total_price_set", "shop_money")
+        original_shop_tax = _money_set(raw, "total_tax_set", "shop_money")
+        if original_shop_gross:
+            tax = _round_money(original_shop_tax * gross / original_shop_gross)
+            net = _round_money(gross - tax)
+    elif same_month_refund and source_currency == "EUR":
         refund_shop = _foreign_refund_in_shop_currency(normalized, raw)
         if refund_shop is not None:
             original_gross = normalized.get("_gross_presentment_original")

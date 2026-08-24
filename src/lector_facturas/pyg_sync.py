@@ -499,6 +499,9 @@ def sync_payment_reconciliation_to_drive(
             database_url=database_url,
             period_yyyymm=period_yyyymm,
         )
+        from lector_facturas.pyg_snapshot_cache import clear_pyg_snapshot_cache
+
+        clear_pyg_snapshot_cache()
 
     shopify_config = settings.to_shopify_config() if settings.shopify_ready else None
     report = build_reconciliation(
@@ -712,6 +715,9 @@ def sync_gestoria_to_drive(
             database_url=database_url,
             period_yyyymm=period_yyyymm,
         )
+        from lector_facturas.pyg_snapshot_cache import clear_pyg_snapshot_cache
+
+        clear_pyg_snapshot_cache()
 
     report = collect_gestoria_data(
         database_url=database_url,
@@ -811,6 +817,9 @@ def _normalize_sl_sales_year(*, database_url: str, year: int) -> None:
             database_url=database_url,
             period_yyyymm=period,
         )
+    from lector_facturas.pyg_snapshot_cache import clear_pyg_snapshot_cache
+
+    clear_pyg_snapshot_cache()
 
 
 def _is_sales_period_frozen(*, database_url: str, company_code: str, period_yyyymm: str) -> bool:
