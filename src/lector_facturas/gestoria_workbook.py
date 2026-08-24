@@ -142,10 +142,20 @@ class GestoriaReportData:
     monthly_total_fee: Decimal          # SUM(total_cost_amount) from payment_fee_monthly_summary (INC only, else 0)
 
 
-def _validate_refund_tax_sync(conn: Any, period_yyyymm: str) -> None:
+def _validate_refund_tax_sync(
+    conn: Any,
+    period_yyyymm: str,
+    *,
+    company_code: str,
+    currency: str,
+) -> None:
     """Prevent publishing a sales report from a stale monthly sales table."""
     ventas_table = f"shopify.ventas_{period_yyyymm}"
     refunds_table = f"shopify.ventas_refunds_samemonth_{period_yyyymm}"
+    detail_table = f"finance.informe_vat_gestorias_detalle_{period_yyyymm}"
+    target_country = {"LTD": "GB", "INC": "US"}.get(company_code.upper())
+    if not target_country:
+        return
 
     result = conn.execute(
         f"""
@@ -185,7 +195,10 @@ def _validate_refund_tax_sync(conn: Any, period_yyyymm: str) -> None:
           SELECT v.order_name
           FROM {ventas_table} v
           JOIN refund_agg r ON r.order_id = v.order_id
-          WHERE ABS(
+          JOIN {detail_table} d ON d.order_name = v.order_name
+          WHERE d.payment_currency = %(currency)s
+            AND COALESCE(d.shipping_country_code, 'XX') = %(country)s
+            AND ABS(
             COALESCE(v.shown_tax_presentment, 0)
             - GREATEST(
                 COALESCE(v.tax_presentment_original, 0) - r.refund_tax_presentment,
@@ -196,7 +209,8 @@ def _validate_refund_tax_sync(conn: Any, period_yyyymm: str) -> None:
         SELECT COUNT(*) AS mismatch_count,
                COALESCE(string_agg(order_name, ', ' ORDER BY order_name), '') AS orders
         FROM mismatches
-        """
+        """,
+        {"currency": currency, "country": target_country},
     ).fetchone()
     mismatch_count = int(result["mismatch_count"] or 0)
     if mismatch_count:
@@ -290,7 +304,12 @@ def collect_gestoria_data(
             # refunds, so validating that stale representation would block the
             # self-healing report before normalization runs.
             if company_code.upper() != "SL":
-                _validate_refund_tax_sync(conn, period_yyyymm)
+                _validate_refund_tax_sync(
+                    conn,
+                    period_yyyymm,
+                    company_code=company_code,
+                    currency=currency,
+                )
 
             resumen_rows = conn.execute(
                 f"""

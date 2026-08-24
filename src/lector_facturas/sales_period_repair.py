@@ -27,7 +27,48 @@ def rebuild_frozen_ventas_pyg(conn: Any, *, period_yyyymm: str) -> None:
     Rebuilding from that JSON keeps direct SQL queries aligned with every
     report without reopening the monthly source tables.
     """
+    detail_table = _period_table("finance", "informe_vat_gestorias_detalle", period_yyyymm)
+    ventas_table = _period_table("shopify", "ventas", period_yyyymm)
     conn.execute("DELETE FROM finance.ventas_pyg WHERE order_month_yyyymm = %s", (period_yyyymm,))
+    conn.execute(
+        f"""
+        INSERT INTO finance.ventas_pyg (
+            order_month_yyyymm, shipping_country_code, payment_currency,
+            is_rever_tag, is_hannun_tag, is_mirakl_tag,
+            tax, gross, net, shipping_country_code_raw,
+            source_payment_currency, is_choose_tag, is_toasty_tag
+        )
+        SELECT
+            d.order_month_yyyymm,
+            COALESCE(d.shipping_country_code, 'XX'),
+            d.payment_currency,
+            d.is_rever_tag,
+            d.is_hannun_tag,
+            d.is_mirakl_tag,
+            SUM(d.shown_tax_presentment),
+            SUM(d.shown_gross_presentment),
+            SUM(d.shown_net_presentment),
+            NULL,
+            COALESCE(NULLIF(j.raw_json ->> 'presentment_currency', ''), d.payment_currency),
+            v.is_choose_tag,
+            v.is_toasty_tag
+        FROM {detail_table} d
+        JOIN {ventas_table} v
+          ON v.order_name = d.order_name
+        LEFT JOIN shopify.json_orders j
+          ON j.raw_json ->> 'name' = d.order_name
+        WHERE COALESCE(d.shipping_country_code, 'XX') IN ('GB', 'US')
+          AND (
+                COALESCE(d.is_rever_tag, 0) = 0
+                OR COALESCE(d.payment_gateway_names, '[]'::jsonb)
+                   @> '["shopify_payments"]'::jsonb
+              )
+        GROUP BY d.order_month_yyyymm, COALESCE(d.shipping_country_code, 'XX'),
+                 d.payment_currency, d.is_rever_tag, d.is_hannun_tag, d.is_mirakl_tag,
+                 v.is_choose_tag, v.is_toasty_tag,
+                 COALESCE(NULLIF(j.raw_json ->> 'presentment_currency', ''), d.payment_currency)
+        """
+    )
     conn.execute(
         """
         INSERT INTO finance.ventas_pyg (

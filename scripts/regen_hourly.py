@@ -136,6 +136,19 @@ def _summarise(step_name: str, body: str) -> str:
     return ""
 
 
+def _embedded_failures(body: str) -> list[str]:
+    """Return failed substeps from a successful HTTP job response."""
+    try:
+        data = json.loads(body)
+    except Exception:
+        return []
+    return [
+        str(item.get("step") or "unknown")
+        for item in data.get("results", [])
+        if item.get("status") != "ok"
+    ]
+
+
 def main() -> None:
     api_base = os.environ.get("API_BASE_URL", "").rstrip("/")
     if not api_base:
@@ -207,6 +220,10 @@ def main() -> None:
             )
         else:
             ok, detail = _post(url, payload, bearer_token)
+        embedded_failures = _embedded_failures(detail) if ok else []
+        if embedded_failures:
+            ok = False
+            detail = f"Failed substeps: {', '.join(embedded_failures)}\n{detail}"
         elapsed = time.monotonic() - t0
         if ok:
             summary = _summarise(step_name, detail)
@@ -227,6 +244,8 @@ def main() -> None:
     total = (finished_at - started_at).total_seconds()
     status = "OK" if not failures else f"FAILED steps: {', '.join(failures)}"
     print(f"[hourly] === END {finished_at.isoformat()} | {total:.0f}s | {status} ===", flush=True)
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
