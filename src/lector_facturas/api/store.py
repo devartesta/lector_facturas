@@ -1258,6 +1258,9 @@ class ReviewStore:
                 ("review_store",),
             ).fetchone()
             if schema_row and int(schema_row[0]) >= DB_SCHEMA_VERSION:
+                # Keep the supplier catalog in sync even when no schema migration is needed.
+                self._ensure_suppliers_columns(conn)
+                self._seed_suppliers(conn)
                 conn.commit()
                 return
             conn.execute(self._suppliers_table_sql())

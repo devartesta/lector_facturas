@@ -26,6 +26,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.",MICROSOFT,MICROSOFT IBERICA S.R.L.,MICROSOFT,expenses/opex/technology,,
 "ARTESTA STORE, S.L.","NODA Asesores","ASESORIA FISCAL NODA Y ASOCIADOS, S.L.",NODA,expenses/opex/administration,,
 "ARTESTA STORE, S.L.","Notarios Monte Esquinza","NOTARIOS MONTE ESQUINZA 6 CB",NOTARIOSMONTESQUINZA,expenses/opex/administration,Notary and registry invoices,
+"ARTESTA STORE, S.L.",PHOENIX,"PHOENIX MAINTENANCE SL",PHOENIX,expenses/opex/administration,Office cleaning services,info@equipdeservei.com
 "ARTESTA STORE, S.L.",Pressing,"PRESSING IMPRESSIO DIGITAL, S.A.",PRESSING,expenses/cogs/manufacturing,,
 "ARTESTA STORE, S.L.",ProductHERO,PRODUCTHERO,PRODUCTHERO,expenses/opex/technology,,
 "ARTESTA STORE, S.L.",RAILWAY,RAILWAY CORPORATION,RAILWAY,expenses/opex/technology,,

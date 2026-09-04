@@ -46,6 +46,7 @@ from lector_facturas.parsers.noda import parse_noda_pdf
 from lector_facturas.parsers.notarios_monte_esquinza import parse_notarios_monte_esquinza_pdf, parse_notarios_monte_esquinza_text
 from lector_facturas.parsers.openai import parse_openai_pdf
 from lector_facturas.parsers.partner_income_fr import parse_choose_pdf, parse_toasty_pdf
+from lector_facturas.parsers.phoenix import parse_phoenix_pdf
 from lector_facturas.parsers.portclearance import parse_portclearance_pdf
 from lector_facturas.parsers.pressing import parse_pressing_pdf
 from lector_facturas.parsers.proco import ProcoInvoice, parse_proco_bundle, parse_proco_pdf
@@ -168,6 +169,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
     ParserRule("NODA", "noda", parse_noda_pdf, sender_contains=("noda",), filename_contains=("020-26", "noda", "factura enero 2026"), text_contains=("asesoria fiscal noda", "noda y asociados")),
     ParserRule("NOTARIOSMONTESQUINZA", "notarios_monte_esquinza", parse_notarios_monte_esquinza_pdf, sender_contains=("menotarios.com",), filename_contains=("l1033", "i-l7956", "i-l12487"), text_contains=("notarios monte esquinza",)),
     ParserRule("OPENAI", "openai", parse_openai_pdf, filename_contains=("bzhjntub", "7bsdv5am", "invoice-bzhjntub", "invoice-7bsdv5am"), sender_contains=("openai",), text_contains=("openai", "chatgpt",)),
+    ParserRule("PHOENIX", "phoenix", parse_phoenix_pdf, filename_contains=("f260634",), sender_contains=("equipdeservei.com",), text_contains=("phoenix maintenance", "equip de servei")),
     ParserRule("PORTCLEARANCE", "portclearance", parse_portclearance_pdf, sender_contains=("port clearance", "portclearance"), filename_contains=("pcsi",), text_contains=("port clearance services",)),
     ParserRule("PRESSING", "pressing", parse_pressing_pdf, text_contains=("pressing impressi digital", "detalle en hoja excel adjunta")),
     ParserRule("PRODUCTHERO", "producthero", parse_producthero_pdf, sender_contains=("producthero",), filename_contains=("invoice_205588", "invoice_211723", "producthero"), text_contains=("producthero", "product hero")),
