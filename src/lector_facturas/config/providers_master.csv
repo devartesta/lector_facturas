@@ -4,6 +4,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.","AP Photo","A P PHOTO INDUSTRIES, S.L.",APPHOTOES,expenses/cogs/manufacturing,,apphoto@apphoto.es
 "ARTESTA STORE, S.L.","AP Photo","A P PHOTO CANARIAS, S.L.",APPHOTOCAN,expenses/cogs/manufacturing,IGIC 7%,info@apphoto.net
 "ARTESTA STORE, S.L.",canva,CANVA PTY. LTD.,CANVA,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",CAIXARENTING,"ARVAL SERVICE LEASE, SAU.",CAIXARENTING,expenses/opex/administration,Vehicle renting service,info@caixarenting-auto.es
 "ARTESTA STORE, S.L.",chatgpt,OPENAI,OPENAI,expenses/opex/technology,Groups ChatGPT and API,
 "ARTESTA STORE, S.L.",CLARIS,"CLARIS GESTIO I DOCUMENTACIO, S.L.",CLARIS,expenses/opex/administration,,
 "ARTESTA STORE, S.L.",Contasimple,"CEGID SMB, S.A.U",CONTASIMPLE,expenses/opex/administration,Accounting software subscription,

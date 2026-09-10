@@ -20,6 +20,7 @@ from lector_facturas.parsers.apphoto import parse_apphoto_pdf
 from lector_facturas.parsers.artesta_income import parse_qhands_pdf, parse_rappel_pdf
 from lector_facturas.parsers.artlink import parse_artlink_pdf
 from lector_facturas.parsers.canva import parse_canva_pdf
+from lector_facturas.parsers.caixarenting import parse_caixarenting_pdf
 from lector_facturas.parsers.claris import parse_claris_pdf
 from lector_facturas.parsers.contasimple import parse_contasimple_pdf
 from lector_facturas.parsers.continuum import parse_continuum_pdf
@@ -133,6 +134,7 @@ PARSER_RULES: tuple[ParserRule, ...] = (
         sender_contains=("canva",),
         text_contains=("canva pty",),
     ),
+    ParserRule("CAIXARENTING", "caixarenting", parse_caixarenting_pdf, sender_contains=("caixarenting-auto.es",), filename_contains=("facturadeRentingdeveh",), text_contains=("caixarenting-auto.es", "servicio de renting")),
     ParserRule("CHOOSE", "choose", parse_choose_pdf, sender_contains=("appchoose",), text_contains=("choose sas", "choose campaign")),
     ParserRule("CLARIS", "claris", parse_claris_pdf, filename_contains=("facturaf",), sender_contains=("claris",), text_contains=("claris gestio",)),
     ParserRule("CONTASIMPLE", "contasimple", parse_contasimple_pdf, filename_contains=("factura_es-",), text_contains=("cegid smb", "contasimple", "plan ultimate")),
