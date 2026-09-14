@@ -27,7 +27,7 @@ SPANISH_MONTHS = {
     "noviembre": 11,
     "diciembre": 12,
 }
-SHORT_MONTHS = {"ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6, "jul": 7, "ago": 8, "sep": 9, "oct": 10, "nov": 11, "dic": 12}
+SHORT_MONTHS = {"ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6, "jul": 7, "ago": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dic": 12}
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ def parse_konvoai_text(text: str, *, original_filename: str) -> KonvoInvoice:
     normalized = text.replace("\xa0", " ").replace("\r", "").replace("\x00", "-")
     invoice_number = _extract(normalized, r"Número de factura\s+([A-Z0-9-]+)")
     invoice_date = _parse_date(_extract(normalized, r"Fecha de emisión\s+([0-9]{1,2} de [a-z]+ de [0-9]{4})"))
-    periods = re.findall(r"([0-9]{1,2} [a-z]{3} [0-9]{4})\s*[–-]\s*([0-9]{1,2} [a-z]{3} [0-9]{4})", normalized, flags=re.IGNORECASE)
+    periods = re.findall(r"([0-9]{1,2} [a-z]{3,9} [0-9]{4})\s*[–-]\s*([0-9]{1,2} [a-z]{3,9} [0-9]{4})", normalized, flags=re.IGNORECASE)
     if periods:
         starts = [_parse_short_date(start) for start, _ in periods]
         ends = [_parse_short_date(end) for _, end in periods]
@@ -86,8 +86,10 @@ def parse_konvoai_text(text: str, *, original_filename: str) -> KonvoInvoice:
     else:
         billing_period_start = invoice_date
         billing_period_end = invoice_date
+    # The subtotal is before discounts. For reverse-charge invoices, the
+    # accounting net is the final amount due, not the pre-discount subtotal.
     gross_amount = _parse_decimal(_extract(normalized, r"Importe adeudado\s+([0-9.,]+)\s*€"))
-    net_amount = _parse_decimal(_extract(normalized, r"Subtotal\s+([0-9.,]+)\s*€"))
+    net_amount = gross_amount
     return KonvoInvoice(
         supplier_code=SUPPLIER_CODE,
         supplier_name=SUPPLIER_CODE,
