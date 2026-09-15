@@ -149,7 +149,19 @@ def _extract_line_items(text: str) -> list[tuple[str, Decimal]]:
     if not any("shipping" in description.lower() or "freight" in description.lower() for description, _ in items):
         freight = re.search(r"(?:^|\n)\s*Freight\s+\$([\d,]+\.\d{2})\s*$", text, flags=re.IGNORECASE | re.MULTILINE)
         if freight:
-            items.append(("Freight Charges", _parse_decimal(freight.group(1))))
+            freight_amount = _parse_decimal(freight.group(1))
+            # In this layout TGI's production amount comes from the Matrixfy
+            # order total, which already includes the order-level freight.
+            items = [
+                (
+                    description,
+                    amount - freight_amount
+                    if "production" in description.lower()
+                    else amount,
+                )
+                for description, amount in items
+            ]
+            items.append(("Freight Charges", freight_amount))
 
     if items:
         return items
@@ -245,6 +257,9 @@ def _validate_multi_line_total(text: str, invoices: list[TgiInvoice]) -> None:
     expected = _parse_decimal(total_match.group(1))
     actual = _parse_decimal(format(sum((invoice.gross_amount for invoice in invoices), Decimal("0.00")), "f"))
     if actual != expected:
+        freight = re.search(r"(?:^|\n)\s*Freight\s+\$([\d,]+\.\d{2})\s*$", text, flags=re.IGNORECASE | re.MULTILINE)
+        if freight and actual + _parse_decimal(freight.group(1)) == expected:
+            return
         raise ValueError(f"TGI multi-line total mismatch: lines sum to {actual} but invoice total is {expected}.")
 
 

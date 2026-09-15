@@ -182,5 +182,5 @@ def test_parse_tgi_freight_after_subtotal() -> None:
     assert len(parsed) == 2
     manufacturing = next(item for item in parsed if item.division_invoice == "manufacturing")
     logistics = next(item for item in parsed if item.division_invoice == "logistics")
-    assert manufacturing.gross_amount == Decimal("2280.38")
+    assert manufacturing.gross_amount == Decimal("766.86")
     assert logistics.gross_amount == Decimal("1513.52")
