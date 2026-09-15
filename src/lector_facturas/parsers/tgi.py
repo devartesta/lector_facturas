@@ -144,6 +144,13 @@ def _extract_line_items(text: str) -> list[tuple[str, Decimal]]:
             items.append((_normalize_description(suffixed.group(1)), _parse_decimal(suffixed.group(2))))
             continue
 
+    # Some TGI invoices put freight after the subtotal instead of in the
+    # quantity/description block. Keep it as a separate logistics line.
+    if not any("shipping" in description.lower() or "freight" in description.lower() for description, _ in items):
+        freight = re.search(r"(?:^|\n)\s*Freight\s+\$([\d,]+\.\d{2})\s*$", text, flags=re.IGNORECASE | re.MULTILINE)
+        if freight:
+            items.append(("Freight Charges", _parse_decimal(freight.group(1))))
+
     if items:
         return items
 

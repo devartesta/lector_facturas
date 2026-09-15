@@ -95,6 +95,22 @@ Subtotal
 Total  Due $4,121.52
 """
 
+TGI_FREIGHT_AFTER_SUBTOTAL_SAMPLE = """
+Today's Graphics Inc
+Invoice
+Invoice Date
+172683
+8/31/26
+Net 45 Days
+Quantity Description Amount
+$2,280.38August Production 8/1/2026-8/31/20261
+Artesta,Inc
+Sales Tax
+Subtotal
+Freight $1,513.52
+Total Due $3,793.90
+"""
+
 
 def test_parse_january_production() -> None:
     invoice = parse_tgi_text(JAN_PRODUCTION_SAMPLE, original_filename="171197.pdf")
@@ -157,3 +173,14 @@ def test_parse_tgi_multi_line_invoice() -> None:
     assert logistics.invoice_date.isoformat() == "2026-06-30"
     assert logistics.gross_amount == Decimal("2614.92")
     assert logistics.period_yyyymm == "202606"
+
+
+def test_parse_tgi_freight_after_subtotal() -> None:
+    parsed = parse_tgi_text(TGI_FREIGHT_AFTER_SUBTOTAL_SAMPLE, original_filename="172683.pdf")
+
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    manufacturing = next(item for item in parsed if item.division_invoice == "manufacturing")
+    logistics = next(item for item in parsed if item.division_invoice == "logistics")
+    assert manufacturing.gross_amount == Decimal("2280.38")
+    assert logistics.gross_amount == Decimal("1513.52")
