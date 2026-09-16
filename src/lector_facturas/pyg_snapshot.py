@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -715,23 +716,29 @@ def _build_simple_company_snapshot(
 
 
 def _build_consolidated_snapshot(*, months: list[str], database_url: str, settings: AppSettings | None) -> PygSnapshot:
-    sl_bundles = [
-        get_cached_pyg_bundle(
-            company="sl",
-            year=year,
-            database_url=database_url,
-            builder=collect_pyg_sl_data,
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        sl_bundles_future = pool.submit(
+            lambda: [
+                get_cached_pyg_bundle(
+                    company="sl",
+                    year=year,
+                    database_url=database_url,
+                    builder=collect_pyg_sl_data,
+                )
+                for year in _years_for_months(months)
+            ]
         )
-        for year in _years_for_months(months)
-    ]
-    sl = _build_sl_snapshot(
-        months=months,
-        database_url=database_url,
-        settings=settings,
-        preloaded_bundles=sl_bundles,
-    )
-    ltd = _build_ltd_snapshot(months=months, database_url=database_url, settings=settings)
-    inc = _build_inc_snapshot(months=months, database_url=database_url, settings=settings)
+        ltd_future = pool.submit(_build_ltd_snapshot, months=months, database_url=database_url, settings=settings)
+        inc_future = pool.submit(_build_inc_snapshot, months=months, database_url=database_url, settings=settings)
+        sl_bundles = sl_bundles_future.result()
+        sl = _build_sl_snapshot(
+            months=months,
+            database_url=database_url,
+            settings=settings,
+            preloaded_bundles=sl_bundles,
+        )
+        ltd = ltd_future.result()
+        inc = inc_future.result()
     fx_service = EcbFxService()
     base_maps: dict[str, dict[str, Decimal]] = {}
     eur_maps: dict[str, dict[str, Decimal]] = {}

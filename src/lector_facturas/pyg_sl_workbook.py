@@ -243,7 +243,22 @@ def _collect_sl_shopify_sales_rows(*, conn: Any, year: int) -> list[dict[str, An
             d.shown_net_presentment,
             d.payment_currency,
             d.descuadre,
-            j.raw_json AS _raw_json,
+            CASE
+                WHEN d.payment_currency = 'EUR'
+                 AND COALESCE(v.same_month_refund_yyyymm, '') <> d.order_month_yyyymm
+                 AND NOT (d.order_month_yyyymm = '202607' AND d.shipping_country_code = 'PL')
+                THEN '{{}}'::jsonb
+                ELSE jsonb_build_object(
+                    'created_at', j.raw_json -> 'created_at',
+                    'currency', j.raw_json -> 'currency',
+                    'presentment_currency', j.raw_json -> 'presentment_currency',
+                    'total_price_set', j.raw_json -> 'total_price_set',
+                    'current_total_price_set', j.raw_json -> 'current_total_price_set',
+                    'total_tax_set', j.raw_json -> 'total_tax_set',
+                    'current_total_tax_set', j.raw_json -> 'current_total_tax_set',
+                    'refunds', j.raw_json -> 'refunds'
+                )
+            END AS _raw_json,
             v.same_month_refund_yyyymm AS _same_month_refund_yyyymm,
             v.same_month_refund_amount_presentment AS _same_month_refund_amount_presentment,
             v.gross_presentment_original AS _gross_presentment_original

@@ -87,6 +87,8 @@ def test_sl_sales_source_retains_rever_gateway_filter() -> None:
     assert "finance.ventas_pyg" not in sql
     assert "payment_gateway_names" in sql
     assert "@> '[\"shopify_payments\"]'::jsonb" in sql
+    assert "jsonb_build_object" in sql
+    assert "j.raw_json AS _raw_json" not in sql
 
 
 def test_build_pyg_sl_workbook_creates_expected_sheets_and_formulas(tmp_path: Path) -> None:
