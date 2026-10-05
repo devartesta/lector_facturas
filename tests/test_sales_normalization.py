@@ -158,6 +158,34 @@ def test_polish_zero_vat_incident_derives_tax_from_tax_inclusive_gross() -> None
     assert result["tax_rate"] == Decimal("0")
 
 
+def test_order_level_accounting_override_replaces_canonical_tax_and_net() -> None:
+    row = {
+        "order_name": "AS-118876",
+        "order_month_yyyymm": "202609",
+        "shipping_country_code": "ES",
+        "standard_rate": Decimal("0.21"),
+        "tax_rate": Decimal("0.19"),
+        "payment_currency": "EUR",
+        "shown_gross_presentment": Decimal("69.95"),
+        "shown_tax_presentment": Decimal("11.17"),
+        "shown_net_presentment": Decimal("58.78"),
+        "_sales_order_override": {
+            "gross_presentment": Decimal("69.95"),
+            "tax_presentment": Decimal("12.14"),
+            "net_presentment": Decimal("57.81"),
+        },
+        "_raw_json": {"currency": "EUR", "presentment_currency": "EUR"},
+    }
+
+    result = normalize_sl_sales_detail_row(row)
+
+    assert result["shown_gross_presentment"] == Decimal("69.95")
+    assert result["shown_tax_presentment"] == Decimal("12.14")
+    assert result["shown_net_presentment"] == Decimal("57.81")
+    assert result["tax_rate"] == Decimal("0.19")
+    assert result["descuadre"] == Decimal("0.00")
+
+
 def test_eur_refund_recalculates_tax_from_remaining_gross() -> None:
     row = {
         "order_month_yyyymm": "202607",

@@ -244,6 +244,7 @@ def normalize_sl_sales_detail_row(row: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     normalized = dict(row)
+    sales_order_override = normalized.pop("_sales_order_override", None)
     raw = normalized.pop("_raw_json", None) or {}
     if not isinstance(raw, Mapping):
         raw = {}
@@ -302,6 +303,15 @@ def normalize_sl_sales_detail_row(row: Mapping[str, Any]) -> dict[str, Any]:
         tax = gross - gross / (Decimal("1") + rate)
         net = gross - tax
         normalized["tax_rate"] = Decimal("0")
+
+    # Keep source Shopify values traceable while applying an explicit,
+    # persistent accounting correction for a known order-level tax error.
+    if sales_order_override:
+        override_gross = sales_order_override.get("gross_presentment")
+        if override_gross is not None:
+            gross = _round_money(_decimal(override_gross))
+        tax = _round_money(_decimal(sales_order_override["tax_presentment"]))
+        net = _round_money(_decimal(sales_order_override["net_presentment"]))
 
     normalized["shown_gross_presentment"] = gross
     normalized["shown_tax_presentment"] = tax

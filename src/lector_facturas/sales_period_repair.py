@@ -19,6 +19,28 @@ def _period_table(schema: str, prefix: str, period_yyyymm: str) -> str:
     return f"{schema}.{prefix}_{period_yyyymm}"
 
 
+def _ensure_sales_order_override_schema(conn: Any) -> None:
+    """Create the durable order-level accounting correction table if needed."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS shopify")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shopify.sales_order_overrides (
+            order_name TEXT PRIMARY KEY,
+            period_yyyymm TEXT NOT NULL,
+            company_code TEXT NOT NULL DEFAULT 'SL',
+            gross_presentment NUMERIC(14, 2),
+            tax_presentment NUMERIC(14, 2) NOT NULL,
+            net_presentment NUMERIC(14, 2) NOT NULL,
+            effective_tax_rate NUMERIC(8, 4),
+            reason TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+
 def rebuild_frozen_ventas_pyg(conn: Any, *, period_yyyymm: str) -> None:
     """Mirror the immutable SL snapshot into ``finance.ventas_pyg``.
 
@@ -142,6 +164,7 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
             "SELECT pg_advisory_xact_lock(hashtext(%s))",
             (f"normalize-sl-sales:{period_yyyymm}",),
         )
+        _ensure_sales_order_override_schema(conn)
         frozen = conn.execute(
             """
             SELECT totals FROM finance.sales_period_freezes
@@ -181,10 +204,26 @@ def normalize_sl_sales_period_in_database(*, database_url: str, period_yyyymm: s
             ORDER BY d.order_name
             """
         ).fetchall()
+        overrides = {
+            str(row["order_name"]): row
+            for row in conn.execute(
+                """
+                SELECT order_name, gross_presentment, tax_presentment,
+                       net_presentment, effective_tax_rate, reason
+                FROM shopify.sales_order_overrides
+                WHERE company_code = 'SL' AND period_yyyymm = %s
+                """,
+                (period_yyyymm,),
+            ).fetchall()
+        }
 
         changed: list[dict[str, Any]] = []
         for source in rows:
-            normalized = normalize_sl_sales_detail_row(source)
+            source_for_normalization = dict(source)
+            override = overrides.get(str(source["order_name"]))
+            if override:
+                source_for_normalization["_sales_order_override"] = override
+            normalized = normalize_sl_sales_detail_row(source_for_normalization)
             source_values = (
                 Decimal(str(source["shown_gross_presentment"])),
                 Decimal(str(source["shown_tax_presentment"])),
