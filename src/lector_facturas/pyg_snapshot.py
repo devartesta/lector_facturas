@@ -749,7 +749,7 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         for row in bundle.service_rows:
             if row.yyyymm not in months:
                 continue
-            if row.line_item in {"Ltd", "Inc"} or row.detail in {"renting_cnc", "renting_coche"}:
+            if row.line_item in {"Ltd", "Inc"}:
                 continue
             services_external_by_month[row.yyyymm] += _to_currency(
                 fx_service,
@@ -785,8 +785,6 @@ def _build_consolidated_snapshot(*, months: list[str], database_url: str, settin
         )
         for key in ("logistics", "payment_fees", "marketing", "staff", "administration", "technology", "otros_gastos_group", "diferencias_divisas_group"):
             sl_value = load(key, month, "sl")
-            if key == "administration":
-                sl_value -= load("administration_bbvacnc", month, "sl")
             _set_amount(base_maps, key, month, sl_value + load(key, month, "ltd") + load(key, month, "inc"))
         _set_amount(base_maps, "royalties", month, load("royalties_total", month, "sl"))
     shopify_company_defs: list[_RowDef] = []

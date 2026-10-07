@@ -129,16 +129,10 @@ def _aggregate_all(
             if row.line_item in {"Ltd", "Inc"}:
                 # Shared services interco: excluded entirely from consolidated
                 continue
-            if row.detail in {"renting_cnc", "renting_coche"}:
-                # Renting interco: income from HANNUN/QHANDS, offset by the related lease expense
-                continue
             c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
             sl_amounts[(row.yyyymm, "services_ext")] += c.amount_reporting; fx_audit.append(a)
         for row in b.expense_rows:
             if row.subcategory in {"manufacturing", "logistics", "royalties", "marketing", "staff", "administration", "technology", "otros_gastos"}:
-                # Exclude BBVACNC (CNC machine leasing): offset by renting_cnc income above
-                if row.supplier_code == "BBVACNC":
-                    continue
                 c, a = fx.convert(amount=row.amount_net, source_currency=row.currency, reporting_currency="EUR", yyyymm=row.yyyymm)
                 sl_amounts[(row.yyyymm, row.subcategory)] += c.amount_reporting; fx_audit.append(a)
         for row in b.payment_fee_rows:
