@@ -48,6 +48,7 @@ company,current_folder,provider_name,supplier_code,destination_path,notes,sender
 "ARTESTA STORE, S.L.",UPS,UPS,UPS,expenses/cogs/logistics,,"[\"rechnungswesen@ups.com\", \"defcr@ups.com\", \"importinfo@ups.com\"]"
 "ARTESTA STORE, S.L.",Vitaly,"VITALY HEALTH SERVICES, S.L.",VITALY,expenses/opex/administration,Annual prevention and occupational health service,
 "ARTESTA STORE, S.L.",YUMA,YUMA AI,YUMAAI,expenses/opex/technology,,
+"ARTESTA STORE, S.L.",JEV,JEV,JEV,expenses/opex/technology,,
 "ARTESTA STORES (UK) LTD",Proco,PRECISION PRINTING CO. LTD,PROCO,expenses/cogs/manufacturing-logistics,Trading name PROCO,enquiries@precisionproco.co.uk
 "ARTESTA STORES (UK) LTD",Artlink,ART LINK BALTIC OU,ARTLINK,expenses/cogs/manufacturing,Frame purchases and related freight are treated as manufacturing,anu@artlink.ee
 "ARTESTA STORES (UK) LTD","port clearence",PORT CLEARANCE SERVICES LTD,PORTCLEARANCE,expenses/cogs/manufacturing,Import customs and clearance for frame purchases,
